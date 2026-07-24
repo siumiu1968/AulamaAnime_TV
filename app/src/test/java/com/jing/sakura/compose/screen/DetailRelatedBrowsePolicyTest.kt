@@ -21,7 +21,7 @@ class DetailRelatedBrowsePolicyTest {
     }
 
     @Test
-    fun relatedBrowsingAnchorsToSameRowForEveryHorizontalSelection() {
+    fun relatedBrowsingKeepsStableHeroAndAnchorsToSameRow() {
         val first = detailRelatedBrowsePolicy(
             playlistCount = 3,
             focusedRelatedAnimeId = "related-a"
@@ -37,6 +37,29 @@ class DetailRelatedBrowsePolicyTest {
         assertEquals(first.relatedRowIndex, second.relatedRowIndex)
         assertEquals(first.heroHeightDp, second.heroHeightDp)
         assertEquals(3, second.descriptionMaxLines)
+    }
+
+    @Test
+    fun relatedCarouselLoopsFromStableMiddleIndex() {
+        val itemCount = 7
+        val initial = detailRelatedInitialVirtualIndex(itemCount)
+
+        assertEquals(0, detailRelatedLogicalIndex(initial, itemCount))
+        assertEquals(1, detailRelatedLogicalIndex(
+            detailRelatedMoveVirtualIndex(initial, 1, itemCount),
+            itemCount
+        ))
+        assertEquals(itemCount - 1, detailRelatedLogicalIndex(
+            detailRelatedMoveVirtualIndex(initial, -1, itemCount),
+            itemCount
+        ))
+        assertEquals(Int.MAX_VALUE, detailRelatedVirtualItemCount(itemCount))
+    }
+
+    @Test
+    fun singleRelatedItemDoesNotMove() {
+        assertEquals(1, detailRelatedVirtualItemCount(1))
+        assertEquals(0, detailRelatedMoveVirtualIndex(0, 1, 1))
     }
 
     @Test

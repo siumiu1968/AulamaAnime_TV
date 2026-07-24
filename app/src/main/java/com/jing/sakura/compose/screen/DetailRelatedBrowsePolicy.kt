@@ -21,6 +21,32 @@ internal fun detailRelatedBrowsePolicy(
     )
 }
 
+internal fun detailRelatedVirtualItemCount(itemCount: Int): Int = when {
+    itemCount <= 0 -> 0
+    itemCount == 1 -> 1
+    else -> Int.MAX_VALUE
+}
+
+internal fun detailRelatedInitialVirtualIndex(itemCount: Int): Int {
+    if (itemCount <= 1) return 0
+    val midpoint = Int.MAX_VALUE / 2
+    return midpoint - midpoint % itemCount
+}
+
+internal fun detailRelatedLogicalIndex(virtualIndex: Int, itemCount: Int): Int {
+    require(itemCount > 0) { "itemCount must be positive" }
+    return Math.floorMod(virtualIndex, itemCount)
+}
+
+internal fun detailRelatedMoveVirtualIndex(
+    currentIndex: Int,
+    delta: Int,
+    itemCount: Int
+): Int {
+    if (itemCount <= 1 || delta == 0) return currentIndex
+    return (currentIndex.toLong() + delta).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+}
+
 internal fun detailBackdropImageUrl(
     detailImageUrl: String,
     relatedImageUrl: String?

@@ -13,11 +13,10 @@ class PlaybackSkipUiStateMachineTest {
     )
 
     @Test
-    fun enteringOutroFocusesNextAndStartsEightSecondCountdown() {
+    fun enteringOutroOnlyShowsChoiceAndStartsEightSecondCountdown() {
         val decision = PlaybackSkipUiStateMachine().update(outro)
 
         assertTrue(decision.isVisible)
-        assertTrue(decision.shouldRequestInitialFocus)
         assertTrue(decision.shouldStartCountdown)
         assertEquals(8_000L, PlaybackSkipUiStateMachine.AUTO_NEXT_COUNTDOWN_MS)
     }

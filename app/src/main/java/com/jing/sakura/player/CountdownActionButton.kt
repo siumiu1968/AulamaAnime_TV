@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
 import android.util.AttributeSet
@@ -26,11 +27,13 @@ class CountdownActionButton @JvmOverloads constructor(
         strokeWidth = dp(1f)
     }
     private val bounds = RectF()
+    private val capsulePath = Path()
     private var progress = 0f
     private var animator: ValueAnimator? = null
 
     init {
         background = null
+        clipToOutline = false
         setWillNotDraw(false)
     }
 
@@ -67,19 +70,29 @@ class CountdownActionButton @JvmOverloads constructor(
     }
 
     override fun onDraw(canvas: Canvas) {
-        val radius = height / 2f
-        bounds.set(0f, 0f, width.toFloat(), height.toFloat())
+        val focusedStrokeWidth = dp(if (isFocused) 2f else 1f)
+        val inset = focusedStrokeWidth / 2f
+        bounds.set(inset, inset, width - inset, height - inset)
+        val radius = bounds.height() / 2f
+        capsulePath.reset()
+        capsulePath.addRoundRect(bounds, radius, radius, Path.Direction.CW)
         surfacePaint.shader = null
         surfacePaint.color = when {
             isPressed -> 0xFFFFFFFF.toInt()
             isFocused -> 0xF2FFFFFF.toInt()
-            else -> 0xB3171C25.toInt()
+            else -> 0x99171C25.toInt()
         }
-        canvas.drawRoundRect(bounds, radius, radius, surfacePaint)
+        canvas.drawPath(capsulePath, surfacePaint)
 
         if (progress > 0f) {
             val save = canvas.save()
-            canvas.clipRect(0f, 0f, width * progress, height.toFloat())
+            canvas.clipPath(capsulePath)
+            canvas.clipRect(
+                bounds.left,
+                bounds.top,
+                bounds.left + bounds.width() * progress,
+                bounds.bottom
+            )
             surfacePaint.shader = LinearGradient(
                 0f,
                 0f,
@@ -93,24 +106,25 @@ class CountdownActionButton @JvmOverloads constructor(
                 null,
                 Shader.TileMode.CLAMP
             )
-            canvas.drawRoundRect(bounds, radius, radius, surfacePaint)
+            canvas.drawPath(capsulePath, surfacePaint)
             canvas.restoreToCount(save)
             surfacePaint.shader = null
         }
 
-        strokePaint.color = if (isFocused) 0xFFFFFFFF.toInt() else 0x66FFFFFF
-        strokePaint.strokeWidth = dp(if (isFocused) 2f else 1f)
-        val inset = strokePaint.strokeWidth / 2f
-        bounds.inset(inset, inset)
-        canvas.drawRoundRect(bounds, radius, radius, strokePaint)
-        bounds.inset(-inset, -inset)
+        strokePaint.color = if (isFocused) 0xFFFFFFFF.toInt() else 0x52FFFFFF
+        strokePaint.strokeWidth = focusedStrokeWidth
+        canvas.drawPath(capsulePath, strokePaint)
 
         val label = text.toString()
         val labelPaint = paint
         val x = (width - labelPaint.measureText(label)) / 2f
         val metrics = labelPaint.fontMetrics
         val y = (height - metrics.ascent - metrics.descent) / 2f
-        labelPaint.color = if (isFocused && progress <= 0f) 0xFF08090B.toInt() else Color.WHITE
+        labelPaint.color = when {
+            isFocused && progress <= 0f -> 0xFF08090B.toInt()
+            isFocused -> Color.WHITE
+            else -> 0xE8FFFFFF.toInt()
+        }
         canvas.drawText(label, x, y, labelPaint)
     }
 

@@ -1,7 +1,7 @@
 package com.jing.sakura.player
 
-import android.animation.ObjectAnimator
-import android.animation.ValueAnimator
+import android.app.ActivityManager
+import android.content.Context
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +14,7 @@ import android.view.WindowManager
 import android.widget.TextView
 import androidx.annotation.OptIn
 import androidx.core.graphics.drawable.toDrawable
+import androidx.core.content.res.ResourcesCompat
 import androidx.leanback.R as LeanbackR
 import androidx.leanback.app.VideoSupportFragment
 import androidx.leanback.app.VideoSupportFragmentGlueHost
@@ -39,6 +40,8 @@ import androidx.media3.effect.Presentation
 import androidx.media3.ui.leanback.LeanbackPlayerAdapter
 import com.jing.sakura.R
 import com.jing.sakura.SakuraApplication
+import com.jing.sakura.compose.common.TvLanguage
+import com.jing.sakura.compose.common.TvLanguagePreferences
 import com.jing.sakura.data.Resource
 import com.jing.sakura.extend.secondsToMinuteAndSecondText
 import com.jing.sakura.extend.showLongToast
@@ -72,16 +75,17 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var activePlaybackSkip: ActivePlaybackSkip? = null
     private val skipUiState = PlaybackSkipUiStateMachine()
     private var primaryControlsDock: ViewGroup? = null
+    private var playbackProgress: View? = null
     private var lastPrimaryControl: View? = null
     private var lastTransportFocus: View? = null
     private var focusBindAttempts = 0
     private var playerHeader: View? = null
     private var playerHeaderTitle: TextView? = null
     private var playerHeaderEpisode: TextView? = null
-    private var speedBoostIndicator: TextView? = null
+    private var speedBoostIndicator: SpeedBoostOverlay? = null
     private val centerKeyController = PlaybackCenterKeyController()
     private var speedBeforeBoost = 1f
-    private var speedBoostAnimator: ObjectAnimator? = null
+    private var wasPlayingBeforeBoost = true
     private var last4kDowngradeAtMs = 0L
     private var handledEndedEpisodeIndex = -1
 
@@ -94,9 +98,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private val centerLongPressRunnable = Runnable {
-        if (glue?.host?.isControlsOverlayVisible == false) {
-            applyCenterKeyAction(centerKeyController.onLongPressTimeout(SystemClock.uptimeMillis()))
-        }
+        applyCenterKeyAction(centerKeyController.onLongPressTimeout(SystemClock.uptimeMillis()))
     }
 
     private val analyticsListener = object : AnalyticsListener {
@@ -206,6 +208,16 @@ class AnimePlayerFragment : VideoSupportFragment() {
             }
             setOnFocusChangeListener(::animateSkipActionFocus)
         }
+        val roundedFont = ResourcesCompat.getFont(
+            requireContext(),
+            when (TvLanguagePreferences.get(requireContext()).language.value) {
+                TvLanguage.Traditional -> R.font.resource_han_rounded_hk_heavy
+                TvLanguage.Simplified -> R.font.resource_han_rounded_cn_heavy
+            }
+        )
+        skipSegmentButton?.typeface = roundedFont
+        continueOutroButton?.typeface = roundedFont
+        setSkipActionsFocusable(false)
         playerHeader = requireActivity().findViewById(R.id.player_header)
         playerHeaderTitle = requireActivity().findViewById(R.id.player_header_title)
         playerHeaderEpisode = requireActivity().findViewById(R.id.player_header_episode)
@@ -425,33 +437,51 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
     private fun apply4kMode(mode: Tv4kMode, announce: Boolean = true): Tv4kMode {
         val localPlayer = player ?: return current4kMode
-        if (mode.isEnabled && !supports4kOutput()) {
+        val supports4kOutput = supports4kOutput()
+        val effectiveMode = Tv4kRuntimePolicy.effectiveMode(
+            requested = mode,
+            supports4kOutput = supports4kOutput,
+            isLowRamDevice = isLowRamDevice()
+        )
+        if (mode.isEnabled && !supports4kOutput) {
             requireContext().showShortToast(getString(R.string.player_fast_4k_requires_4k_output))
-            return current4kMode
         }
         return runCatching {
-            val effects: List<Effect> = when (mode.strategy) {
+            val plan = effectiveMode.effectPlan
+            val effects: List<Effect> = when (plan.strategy) {
                 Tv4kEffectStrategy.NONE -> emptyList()
                 Tv4kEffectStrategy.MATRIX -> listOf(
                     Presentation.createForWidthAndHeight(
-                        mode.targetWidth,
-                        mode.targetHeight,
+                        plan.targetWidth,
+                        plan.targetHeight,
                         Presentation.LAYOUT_SCALE_TO_FIT
                     )
                 )
                 Tv4kEffectStrategy.LANCZOS -> listOf(
-                    LanczosResample.scaleToFit(mode.targetWidth, mode.targetHeight)
+                    LanczosResample.scaleToFit(plan.targetWidth, plan.targetHeight)
                 )
             }
             localPlayer.setVideoEffects(effects)
-            current4kMode = mode
-            glue?.update4kAction(mode)
-            if (announce) {
+            current4kMode = effectiveMode
+            glue?.update4kAction(effectiveMode)
+            Log.i(
+                TAG,
+                "TV effect mode=$effectiveMode strategy=${plan.strategy} " +
+                    "target=${plan.targetWidth}x${plan.targetHeight} bypass=${plan.bypass}"
+            )
+            if (announce && mode.isEnabled && effectiveMode != mode && supports4kOutput) {
                 requireContext().showShortToast(
-                    getString(R.string.player_4k_mode_applied, getString(mode.labelRes))
+                    getString(
+                        R.string.player_4k_mode_downgraded,
+                        getString(effectiveMode.labelRes)
+                    )
+                )
+            } else if (announce && effectiveMode == mode) {
+                requireContext().showShortToast(
+                    getString(R.string.player_4k_mode_applied, getString(effectiveMode.labelRes))
                 )
             }
-            mode
+            effectiveMode
         }.getOrElse { error ->
             Log.w(TAG, "Unable to apply TV quality mode $mode", error)
             localPlayer.setVideoEffects(emptyList())
@@ -480,6 +510,10 @@ class AnimePlayerFragment : VideoSupportFragment() {
         return longEdge >= FAST_4K_WIDTH && shortEdge >= FAST_4K_HEIGHT
     }
 
+    private fun isLowRamDevice(): Boolean =
+        (requireContext().getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)
+            ?.isLowRamDevice == true
+
     private fun PlaybackException.isVideoEffectFailure(): Boolean =
         errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED ||
             errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED
@@ -498,29 +532,19 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
     fun handlePlaybackKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            showPlayerHeader()
             cancelAutoNextForRemoteInteraction()
+            if (!isCenterKey(event.keyCode)) showPlayerHeader()
         }
 
         val primaryFocused = skipSegmentButton?.hasFocus() == true
         val continueFocused = continueOutroButton?.hasFocus() == true
+        if (handleSkipFocusDirection(event, primaryFocused, continueFocused)) return true
         if (primaryFocused || continueFocused) {
             return handleSkipActionKey(event, primaryFocused, continueFocused)
         }
 
-        if (
-            event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT &&
-            event.action == KeyEvent.ACTION_DOWN &&
-            skipSegmentActions?.visibility == View.VISIBLE &&
-            isLastPrimaryControlFocused()
-        ) {
-            lastTransportFocus = requireActivity().currentFocus
-            skipSegmentButton?.requestFocus()
-            return true
-        }
-
-        if (isCenterKey(event.keyCode) && glue?.host?.isControlsOverlayVisible == false) {
-            return handleHiddenCenterKey(event)
+        if (isCenterKey(event.keyCode)) {
+            return handleCenterKey(event)
         }
 
         if (event.action == KeyEvent.ACTION_DOWN && !isCenterKey(event.keyCode)) {
@@ -544,31 +568,14 @@ class AnimePlayerFragment : VideoSupportFragment() {
             }
             true
         }
-        KeyEvent.KEYCODE_DPAD_RIGHT -> {
-            if (
-                event.action == KeyEvent.ACTION_DOWN &&
-                primaryFocused &&
-                continueOutroButton?.visibility == View.VISIBLE
-            ) {
-                continueOutroButton?.requestFocus()
-            }
-            true
-        }
-        KeyEvent.KEYCODE_DPAD_LEFT -> {
-            if (event.action == KeyEvent.ACTION_DOWN) {
-                if (continueFocused) skipSegmentButton?.requestFocus() else restoreTransportFocus()
-            }
-            true
-        }
-        KeyEvent.KEYCODE_BACK,
-        KeyEvent.KEYCODE_DPAD_DOWN -> {
+        KeyEvent.KEYCODE_BACK -> {
             if (event.action == KeyEvent.ACTION_UP) restoreTransportFocus()
             true
         }
         else -> glue?.onKey(view, event.keyCode, event) == true
     }
 
-    private fun handleHiddenCenterKey(event: KeyEvent): Boolean {
+    private fun handleCenterKey(event: KeyEvent): Boolean {
         when (event.action) {
             KeyEvent.ACTION_DOWN -> {
                 val action = centerKeyController.onKeyDown(event.eventTime, event.repeatCount)
@@ -599,49 +606,35 @@ class AnimePlayerFragment : VideoSupportFragment() {
                 showPlayerHeader()
             }
             CenterKeyAction.START_BOOST -> {
-                if (!localPlayer.isPlaying) return
                 speedBeforeBoost = localPlayer.playbackParameters.speed
+                wasPlayingBeforeBoost = localPlayer.isPlaying
+                if (!wasPlayingBeforeBoost) localPlayer.play()
                 localPlayer.setPlaybackSpeed(TEMPORARY_BOOST_SPEED)
+                hidePlayerChromeForBoost()
                 showSpeedBoostIndicator()
             }
             CenterKeyAction.STOP_BOOST -> {
                 localPlayer.setPlaybackSpeed(speedBeforeBoost.coerceAtLeast(0.1f))
+                if (!wasPlayingBeforeBoost) localPlayer.pause()
                 hideSpeedBoostIndicator()
             }
         }
     }
 
     private fun showSpeedBoostIndicator() {
-        val indicator = speedBoostIndicator ?: return
-        speedBoostAnimator?.cancel()
-        indicator.animate().cancel()
-        indicator.alpha = 0f
-        indicator.scaleX = 0.96f
-        indicator.scaleY = 0.96f
-        indicator.visibility = View.VISIBLE
-        indicator.animate()
-            .alpha(1f)
-            .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(160L)
-            .start()
-        speedBoostAnimator = ObjectAnimator.ofFloat(indicator, View.ALPHA, 1f, 0.72f).apply {
-            duration = 520L
-            repeatMode = ValueAnimator.REVERSE
-            repeatCount = ValueAnimator.INFINITE
-            startDelay = 180L
-            start()
-        }
+        speedBoostIndicator?.showBoost()
     }
 
     private fun hideSpeedBoostIndicator() {
-        speedBoostAnimator?.cancel()
-        speedBoostAnimator = null
-        speedBoostIndicator?.animate()
-            ?.alpha(0f)
-            ?.setDuration(120L)
-            ?.withEndAction { speedBoostIndicator?.visibility = View.GONE }
-            ?.start()
+        speedBoostIndicator?.hideBoost()
+    }
+
+    private fun hidePlayerChromeForBoost() {
+        glue?.host?.hideControlsOverlay(false)
+        playerHeader?.removeCallbacks(hideHeaderRunnable)
+        playerHeader?.animate()?.cancel()
+        playerHeader?.alpha = 0f
+        playerHeader?.visibility = View.GONE
     }
 
     private fun showPlayerHeader() {
@@ -657,6 +650,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         val root = view ?: return
         val dock = root.findViewById<ViewGroup>(LeanbackR.id.controls_dock)
         primaryControlsDock = dock
+        playbackProgress = root.findViewById(LeanbackR.id.playback_progress)
         val focusables = ArrayList<View>()
         dock?.addFocusables(focusables, View.FOCUS_FORWARD, View.FOCUSABLES_ALL)
         lastPrimaryControl = focusables.maxByOrNull { candidate ->
@@ -667,17 +661,64 @@ class AnimePlayerFragment : VideoSupportFragment() {
         val finalControl = lastPrimaryControl
         if (finalControl != null) {
             focusBindAttempts = 0
-            finalControl.nextFocusRightId = R.id.player_skip_segment
         } else if (focusBindAttempts < MAX_FOCUS_BIND_ATTEMPTS) {
             focusBindAttempts += 1
             root.postDelayed(::bindPlaybackFocusTargets, FOCUS_BIND_RETRY_MS)
         }
     }
 
-    private fun isLastPrimaryControlFocused(): Boolean {
+    private fun isTransportControlFocused(): Boolean {
         val focused = requireActivity().currentFocus ?: return false
-        val last = lastPrimaryControl
-        return focused === last || (last == null && isDescendantOf(focused, primaryControlsDock))
+        return focused === playbackProgress ||
+            focused === primaryControlsDock ||
+            isDescendantOf(focused, primaryControlsDock)
+    }
+
+    private fun handleSkipFocusDirection(
+        event: KeyEvent,
+        primaryFocused: Boolean,
+        continueFocused: Boolean
+    ): Boolean {
+        val direction = when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> PlaybackSkipDirection.UP
+            KeyEvent.KEYCODE_DPAD_DOWN -> PlaybackSkipDirection.DOWN
+            KeyEvent.KEYCODE_DPAD_LEFT -> PlaybackSkipDirection.LEFT
+            KeyEvent.KEYCODE_DPAD_RIGHT -> PlaybackSkipDirection.RIGHT
+            else -> return false
+        }
+        val zone = when {
+            primaryFocused -> PlaybackSkipFocusZone.PRIMARY_ACTION
+            continueFocused -> PlaybackSkipFocusZone.SECONDARY_ACTION
+            isTransportControlFocused() -> PlaybackSkipFocusZone.TRANSPORT
+            else -> return false
+        }
+        val actionsVisible = skipSegmentActions?.visibility == View.VISIBLE
+        if (
+            zone == PlaybackSkipFocusZone.TRANSPORT &&
+            (!actionsVisible || direction != PlaybackSkipDirection.UP)
+        ) {
+            return false
+        }
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            when (
+                PlaybackSkipFocusPolicy.action(
+                    zone = zone,
+                    direction = direction,
+                    actionsVisible = actionsVisible,
+                    secondaryVisible = continueOutroButton?.visibility == View.VISIBLE
+                )
+            ) {
+                PlaybackSkipFocusAction.KEEP_CURRENT -> Unit
+                PlaybackSkipFocusAction.ENTER_PRIMARY -> {
+                    lastTransportFocus = requireActivity().currentFocus
+                    setSkipActionsFocusable(true)
+                    skipSegmentButton?.requestFocus()
+                }
+                PlaybackSkipFocusAction.ENTER_SECONDARY -> continueOutroButton?.requestFocus()
+                PlaybackSkipFocusAction.RETURN_TO_TRANSPORT -> restoreTransportFocus()
+            }
+        }
+        return true
     }
 
     private fun isDescendantOf(view: View, ancestor: ViewGroup?): Boolean {
@@ -697,12 +738,19 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private fun restoreTransportFocus() {
         skipSegmentButton?.clearFocus()
         continueOutroButton?.clearFocus()
+        setSkipActionsFocusable(false)
         glue?.host?.showControlsOverlay(true)
         view?.post {
             val target = lastTransportFocus?.takeIf { it.isAttachedToWindow && it.isFocusable }
                 ?: lastPrimaryControl?.takeIf { it.isAttachedToWindow && it.isFocusable }
             target?.requestFocus()
         }
+    }
+
+    private fun setSkipActionsFocusable(enabled: Boolean) {
+        skipSegmentButton?.isFocusable = enabled
+        continueOutroButton?.isFocusable =
+            enabled && continueOutroButton?.visibility == View.VISIBLE
     }
 
     private fun cancelAutoNextForRemoteInteraction() {
@@ -715,9 +763,10 @@ class AnimePlayerFragment : VideoSupportFragment() {
         target.isSelected = hasFocus
         target.animate().cancel()
         target.animate()
-            .scaleX(if (hasFocus) 1.04f else 1f)
-            .scaleY(if (hasFocus) 1.04f else 1f)
-            .setDuration(140L)
+            .scaleX(if (hasFocus) PlaybackSkipLayoutPolicy.FOCUS_SCALE else 1f)
+            .scaleY(if (hasFocus) PlaybackSkipLayoutPolicy.FOCUS_SCALE else 1f)
+            .translationZ(if (hasFocus) 6f * resources.displayMetrics.density else 0f)
+            .setDuration(120L)
             .start()
         target.invalidate()
     }
@@ -726,7 +775,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         view?.removeCallbacks(centerLongPressRunnable)
         applyCenterKeyAction(centerKeyController.cancel())
         playerHeader?.removeCallbacks(hideHeaderRunnable)
-        speedBoostAnimator?.cancel()
+        speedBoostIndicator?.hideBoost()
         skipSegmentButton?.setOnClickListener(null)
         skipSegmentButton?.onFocusChangeListener = null
         skipSegmentButton?.cancelCountdown()
@@ -737,6 +786,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         continueOutroButton = null
         activePlaybackSkip = null
         primaryControlsDock = null
+        playbackProgress = null
         lastPrimaryControl = null
         lastTransportFocus = null
         focusBindAttempts = 0
@@ -773,19 +823,14 @@ class AnimePlayerFragment : VideoSupportFragment() {
             }
         )
         continueOutroButton?.visibility = if (active.advancesEpisode) View.VISIBLE else View.GONE
+        if (skipSegmentButton?.hasFocus() != true && continueOutroButton?.hasFocus() != true) {
+            setSkipActionsFocusable(false)
+        }
         val actions = skipSegmentActions ?: return
         if (actions.visibility != View.VISIBLE) {
             actions.alpha = 0f
             actions.visibility = View.VISIBLE
             actions.animate().alpha(1f).setDuration(180L).start()
-        }
-        if (decision.shouldRequestInitialFocus) {
-            button.post {
-                if (activePlaybackSkip == active && actions.visibility == View.VISIBLE) {
-                    lastTransportFocus = requireActivity().currentFocus
-                    button.requestFocus()
-                }
-            }
         }
         if (decision.shouldStartCountdown) {
             button.cancelCountdown()
@@ -796,6 +841,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun hideSkipUi() {
+        val shouldRestoreTransport = skipSegmentButton?.hasFocus() == true ||
+            continueOutroButton?.hasFocus() == true
         skipSegmentButton?.cancelCountdown()
         skipSegmentActions?.apply {
             animate().cancel()
@@ -808,6 +855,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
             visibility = View.GONE
             clearFocus()
         }
+        setSkipActionsFocusable(false)
+        if (shouldRestoreTransport) restoreTransportFocus()
     }
 
     private fun clearSkipState() {

@@ -3,6 +3,7 @@
 package com.jing.sakura.compose.screen
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -93,7 +94,6 @@ import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.FocusGroup
 import com.jing.sakura.compose.common.Loading
-import com.jing.sakura.compose.common.VideoCard
 import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.rememberArtworkAccent
 import com.jing.sakura.compose.common.rememberDpadRepeatGate
@@ -106,12 +106,14 @@ import com.jing.sakura.data.AnimePlayListEpisode
 import com.jing.sakura.data.Resource
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.detail.DetailPageViewModel
+import com.jing.sakura.detail.relatedAnimeKey
 import com.jing.sakura.extend.secondsToMinuteAndSecondText
 import com.jing.sakura.extend.showShortToast
 import com.jing.sakura.player.NavigateToPlayerArg
 import com.jing.sakura.player.PlaybackActivity
 import com.jing.sakura.room.VideoHistoryEntity
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 private val DetailHeroHeight = 346.dp
@@ -150,12 +152,22 @@ fun DetailScreen(viewModel: DetailPageViewModel) {
     var resumeFocusSignal by remember { mutableStateOf(0) }
     var restoreEpisodePosition by remember { mutableStateOf(-1 to -1) }
     var focusedRelatedAnime by remember(detail.animeId) { mutableStateOf<AnimeData?>(null) }
-    val activeBackdropAnime = focusedRelatedAnime
+    val relatedDescriptions = viewModel.relatedDescriptions.collectAsState().value
+    val activeBackdropAnime = focusedRelatedAnime?.let { anime ->
+        relatedDescriptions[relatedAnimeKey(anime, viewModel.sourceId)]
+            ?.takeIf(String::isNotBlank)
+            ?.let { description -> anime.copy(description = description) }
+            ?: anime
+    }
     val activeBackdropImageUrl = detailBackdropImageUrl(
         detailImageUrl = detail.imageUrl,
         relatedImageUrl = activeBackdropAnime?.imageUrl
     )
     val activeBackdropAccent = rememberArtworkAccent(activeBackdropImageUrl)
+
+    LaunchedEffect(focusedRelatedAnime?.id, focusedRelatedAnime?.sourceId) {
+        focusedRelatedAnime?.let(viewModel::loadRelatedDescription)
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -444,9 +456,12 @@ fun DetailScreen(viewModel: DetailPageViewModel) {
             restoreEpisodePosition = -1 to -1
         }
     }
-    LaunchedEffect(activeBackdropAnime?.id, relatedBrowsePolicy.relatedRowIndex) {
+    LaunchedEffect(
+        relatedBrowsePolicy.isBrowsingRelated,
+        relatedBrowsePolicy.relatedRowIndex
+    ) {
         val relatedRowIndex = relatedBrowsePolicy.relatedRowIndex ?: return@LaunchedEffect
-        // Keep the parent viewport anchored while horizontal focus changes within the related row.
+        // Anchor once when entering the row; horizontal selection must not move the parent viewport.
         detailListState.scrollToItem(relatedRowIndex)
     }
 }
@@ -689,15 +704,6 @@ private fun RelatedPreviewHero(
                 .widthIn(max = 720.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-            Text(
-                text = stringResource(R.string.related_videos),
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontSize = 14.sp,
-                    lineHeight = 18.sp,
-                    fontWeight = FontWeight.SemiBold
-                ),
-                color = accent
-            )
             Text(
                 text = title,
                 maxLines = 2,
@@ -1218,8 +1224,8 @@ private fun EpisodeTile(
     Surface(
         onClick = onClick,
         modifier = modifier
-            .height(44.dp)
-            .widthIn(min = 88.dp, max = 152.dp)
+            .height(42.dp)
+            .widthIn(min = 78.dp, max = 132.dp)
             .onFocusChanged { focused = it.isFocused || it.hasFocus },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color(0x520A0E16),
@@ -1239,7 +1245,7 @@ private fun EpisodeTile(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 12.dp, vertical = 4.dp),
+                .padding(horizontal = 10.dp, vertical = 4.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -1248,9 +1254,9 @@ private fun EpisodeTile(
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.titleSmall.copy(
-                    fontSize = 15.sp,
-                    lineHeight = 19.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontSize = 14.sp,
+                    lineHeight = 18.sp,
+                    fontWeight = FontWeight.Black
                 ),
                 color = if (focused) Color(0xFF041014) else AulamaTvColors.TextPrimary,
                 modifier = Modifier
@@ -1282,6 +1288,49 @@ private fun RelatedAnimeSection(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val identity = remember(videos) {
+        videos.joinToString(separator = "|") { "${it.sourceId}:${it.id}" }
+    }
+    val virtualItemCount = remember(identity) { detailRelatedVirtualItemCount(videos.size) }
+    val initialVirtualIndex = remember(identity) { detailRelatedInitialVirtualIndex(videos.size) }
+    val rowState = rememberLazyListState(initialFirstVisibleItemIndex = initialVirtualIndex)
+    val scope = rememberCoroutineScope()
+    var selectedVirtualIndex by remember(identity) { mutableStateOf(initialVirtualIndex) }
+    var rowFocused by remember(identity) { mutableStateOf(false) }
+    var dimUnselected by remember(identity) { mutableStateOf(false) }
+    var moveJob by remember(identity) { mutableStateOf<Job?>(null) }
+    val selectedLogicalIndex = detailRelatedLogicalIndex(selectedVirtualIndex, videos.size)
+    val selectedVideo = videos[selectedLogicalIndex]
+    val selectedAccent = rememberArtworkAccent(selectedVideo.imageUrl, enabled = rowFocused)
+
+    fun moveSelection(delta: Int) {
+        val target = detailRelatedMoveVirtualIndex(
+            currentIndex = selectedVirtualIndex,
+            delta = delta,
+            itemCount = videos.size
+        )
+        if (target == selectedVirtualIndex) return
+        selectedVirtualIndex = target
+        dimUnselected = false
+        moveJob?.cancel()
+        moveJob = scope.launch { rowState.animateScrollToItem(target) }
+    }
+
+    LaunchedEffect(rowFocused, selectedVirtualIndex, identity) {
+        if (!rowFocused) {
+            dimUnselected = false
+            return@LaunchedEffect
+        }
+        dimUnselected = false
+        onVideoFocused(selectedVideo)
+        delay(3_000)
+        dimUnselected = true
+    }
+
+    DisposableEffect(identity) {
+        onDispose { moveJob?.cancel() }
+    }
+
     FocusGroup(modifier) {
         Column(
             modifier = Modifier
@@ -1312,46 +1361,164 @@ private fun RelatedAnimeSection(
                 )
             }
             Spacer(modifier = Modifier.height(10.dp))
-            LazyRow(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(RelatedRowHeight)
+                    .onFocusChanged { state ->
+                        rowFocused = state.isFocused || state.hasFocus
+                    }
                     .onPreviewKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                            onNavigateUp()
-                            true
-                        } else {
-                            false
-                        }
-                    },
-                contentPadding = PaddingValues(horizontal = 38.dp, vertical = 5.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                items(count = videos.size, key = { videos[it].id }) { videoIndex ->
-                    val video = videos[videoIndex]
-                    Box(
-                        modifier = Modifier.size(width = 160.dp, height = 238.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        VideoCard(
-                            imageUrl = video.imageUrl,
-                            title = video.title,
-                            subTitle = video.currentEpisode,
-                            focusScale = 1.06f,
-                            modifier = Modifier
-                                .size(width = 148.dp, height = 222.dp)
-                                .run {
-                                    if (videoIndex == 0) initiallyFocused() else restorableFocus()
-                                },
-                            onFocused = { onVideoFocused(video) },
-                            onClick = {
-                                DetailActivity.startActivity(context, video.id, sourceId)
+                        when {
+                            event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
+                                moveSelection(1)
+                                true
                             }
+
+                            event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft -> {
+                                moveSelection(-1)
+                                true
+                            }
+
+                            event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp -> {
+                                onNavigateUp()
+                                true
+                            }
+
+                            event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown -> true
+                            event.type == KeyEventType.KeyUp &&
+                                (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                                DetailActivity.startActivity(
+                                    context,
+                                    selectedVideo.id,
+                                    selectedVideo.sourceId.ifBlank { sourceId }
+                                )
+                                true
+                            }
+
+                            event.key == Key.DirectionCenter || event.key == Key.Enter -> true
+                            else -> false
+                        }
+                    }
+                    .initiallyFocused()
+                    .focusable()
+            ) {
+                LazyRow(
+                    state = rowState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 38.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(
+                        count = virtualItemCount,
+                        key = { virtualIndex ->
+                            val video = videos[detailRelatedLogicalIndex(virtualIndex, videos.size)]
+                            "$virtualIndex:${video.sourceId}:${video.id}"
+                        }
+                    ) { virtualIndex ->
+                        val video = videos[detailRelatedLogicalIndex(virtualIndex, videos.size)]
+                        val selected = rowFocused && virtualIndex == selectedVirtualIndex
+                        val cardAlpha by animateFloatAsState(
+                            targetValue = when {
+                                !rowFocused || selected || !dimUnselected -> 1f
+                                else -> 0.48f
+                            },
+                            animationSpec = tween(durationMillis = 420),
+                            label = "detail-related-card-alpha"
                         )
+                        Box(
+                            modifier = Modifier
+                                .size(width = 160.dp, height = 238.dp)
+                                .graphicsLayer { alpha = cardAlpha },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            RelatedPosterCard(
+                                anime = video,
+                                selected = selected,
+                                accent = selectedAccent,
+                                modifier = Modifier.size(width = 148.dp, height = 222.dp)
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RelatedPosterCard(
+    anime: AnimeData,
+    selected: Boolean,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    val title = localizedText(anime.title)
+    val subtitle = localizedText(anime.currentEpisode)
+    val posterRequest = rememberPosterImageRequest(anime.imageUrl)
+    Box(
+        modifier = modifier
+            .border(
+                BorderStroke(
+                    if (selected) 2.5.dp else 1.dp,
+                    if (selected) accent else AulamaTvColors.Outline.copy(alpha = 0.72f)
+                ),
+                AulamaCardShape
+            )
+            .clip(AulamaCardShape)
+    ) {
+        AsyncImage(
+            model = posterRequest,
+            contentDescription = title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.Transparent,
+                            Color(0x18000000),
+                            Color(0x66000000),
+                            Color(0xF2050810)
+                        )
+                    )
+                )
+        )
+        if (subtitle.isNotBlank()) {
+            Text(
+                text = subtitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                ),
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(Color(0xCC080B12))
+                    .padding(horizontal = 7.dp, vertical = 4.dp)
+            )
+        }
+        com.jing.sakura.compose.common.AutoMarqueeText(
+            text = title,
+            style = MaterialTheme.typography.headlineSmall.copy(
+                fontSize = 16.sp,
+                lineHeight = 19.sp,
+                fontWeight = FontWeight.Black
+            ),
+            color = AulamaTvColors.TextPrimary,
+            enabled = selected,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 11.dp)
+        )
     }
 }
 

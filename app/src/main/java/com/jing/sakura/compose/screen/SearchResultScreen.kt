@@ -41,7 +41,7 @@ import androidx.tv.material3.Text
 import com.jing.sakura.R
 import com.jing.sakura.compose.common.ChangeSourceDialog
 import com.jing.sakura.compose.common.ErrorTip
-import com.jing.sakura.compose.common.Loading
+import com.jing.sakura.compose.common.LoadingOverlay
 import com.jing.sakura.compose.common.VideoCard
 import com.jing.sakura.compose.common.AulamaActionButton
 import com.jing.sakura.compose.common.AulamaFocusScale
@@ -149,9 +149,8 @@ fun SearchResultScreen(viewModel: SearchResultViewModel) {
             }
         }
 
-        if (refreshState == LoadState.Loading) {
-            Loading()
-        } else if (refreshState is LoadState.Error) {
+        LoadingOverlay(visible = refreshState == LoadState.Loading && itemCount == 0)
+        if (refreshState is LoadState.Error) {
             ErrorTip(message = refreshState.error.message ?: refreshState.error.toString()) {
                 pagingItems.refresh()
             }

@@ -62,7 +62,7 @@ import com.jing.sakura.compose.common.AulamaPageHeader
 import com.jing.sakura.compose.common.AulamaSectionHeader
 import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.ErrorTip
-import com.jing.sakura.compose.common.Loading
+import com.jing.sakura.compose.common.LoadingOverlay
 import com.jing.sakura.compose.common.VideoCard
 import com.jing.sakura.compose.common.aulamaTvBackground
 import com.jing.sakura.data.AnimeData
@@ -98,8 +98,9 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
     val refreshFocusRequester = remember { FocusRequester() }
     val hasContent = library.continueWatching.isNotEmpty() || library.favorites.isNotEmpty()
 
-    if (loading && !hasContent) {
-        Loading(text = "同步片庫")
+    val showInitialLoading = loading && !hasContent
+    LoadingOverlay(visible = showInitialLoading, text = "同步片庫")
+    if (showInitialLoading) {
         return
     }
     if (error != null && !hasContent) {

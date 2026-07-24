@@ -88,6 +88,7 @@ import com.jing.sakura.compose.common.aulamaTvBackground
 import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.rememberArtworkAccent
 import com.jing.sakura.compose.common.rememberPosterImageRequest
+import com.jing.sakura.compose.common.rememberReducedMotion
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.Resource
 import com.jing.sakura.detail.DetailActivity
@@ -97,14 +98,19 @@ import com.jing.sakura.repo.VideoCategoryGroup
 import com.jing.sakura.repo.WebPageRepository
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import org.koin.core.context.GlobalContext
 
 @Composable
 fun AnimeCategoryScreen(viewModel: CategoryViewModel) {
     val categoriesResource = viewModel.categories.collectAsState().value
+    com.jing.sakura.compose.common.LoadingOverlay(
+        visible = categoriesResource is Resource.Loading
+    )
     if (categoriesResource is Resource.Loading) {
-        com.jing.sakura.compose.common.Loading()
         return
     }
     if (categoriesResource is Resource.Error) {
@@ -211,17 +217,29 @@ private fun DiscoverGrid(
     var initialFocusRequested by remember { mutableStateOf(false) }
     var focusedArtworkUrl by remember { mutableStateOf("") }
     var focusedArtworkTitle by remember { mutableStateOf("") }
+    val focusPreviewEvents = remember {
+        MutableSharedFlow<AnimeData>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST
+        )
+    }
+    val prefetchedPosterUrls = remember { hashSetOf<String>() }
+    val reducedMotion = rememberReducedMotion()
     val initialArtworkUrl = pagingItems.itemSnapshotList.items.firstOrNull()?.imageUrl.orEmpty()
     val initialArtworkTitle = pagingItems.itemSnapshotList.items.firstOrNull()?.title.orEmpty()
     val extractedAccent = rememberArtworkAccent(
         imageUrl = focusedArtworkUrl.ifBlank { initialArtworkUrl },
         enabled = focusedArtworkUrl.isNotBlank() || initialArtworkUrl.isNotBlank()
     )
-    val accent by animateColorAsState(
-        targetValue = extractedAccent,
-        animationSpec = tween(durationMillis = 420),
-        label = "discover-background-accent"
-    )
+    val accent = extractedAccent
+
+    LaunchedEffect(focusPreviewEvents, reducedMotion) {
+        focusPreviewEvents.collectLatest { anime ->
+            if (!reducedMotion) delay(120)
+            focusedArtworkUrl = anime.imageUrl
+            focusedArtworkTitle = anime.title
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -230,7 +248,8 @@ private fun DiscoverGrid(
     ) {
         DiscoverBackdrop(
             imageUrl = focusedArtworkUrl.ifBlank { initialArtworkUrl },
-            accent = accent
+            accent = accent,
+            reducedMotion = reducedMotion
         )
 
         LazyVerticalGrid(
@@ -313,13 +332,13 @@ private fun DiscoverGrid(
 
             items(
                 count = pagingItems.itemCount,
-                key = pagingItems.itemKey { it.id }
+                key = pagingItems.itemKey { "${it.sourceId}:${it.id}" }
             ) { index ->
                 val anime = pagingItems[index] ?: return@items
                 var focused by remember(anime.id) { mutableStateOf(false) }
                 val scale by animateFloatAsState(
                     targetValue = if (focused) AulamaFocusScale else 1f,
-                    animationSpec = tween(durationMillis = 200),
+                    animationSpec = tween(durationMillis = if (reducedMotion) 0 else 110),
                     label = "discover-card-scale"
                 )
 
@@ -346,8 +365,7 @@ private fun DiscoverGrid(
                                 focused = state.isFocused || state.hasFocus
                                 if (focused) {
                                     focusZone = DiscoverFocusZone.RESULTS
-                                    focusedArtworkUrl = anime.imageUrl
-                                    focusedArtworkTitle = anime.title
+                                    focusPreviewEvents.tryEmit(anime)
                                 }
                             },
                         imageUrl = anime.imageUrl,
@@ -396,6 +414,7 @@ private fun DiscoverGrid(
                     val anime = pagingItems.itemSnapshotList.items.getOrNull(index)
                         ?: return@forEach
                     if (anime.imageUrl.isBlank()) return@forEach
+                    if (!prefetchedPosterUrls.add(anime.imageUrl)) return@forEach
                     context.imageLoader.enqueue(
                         ImageRequest.Builder(context)
                             .data(anime.imageUrl)
@@ -420,13 +439,28 @@ private fun DiscoverGrid(
 }
 
 @Composable
-private fun DiscoverBackdrop(imageUrl: String, accent: Color) {
+private fun DiscoverBackdrop(
+    imageUrl: String,
+    accent: Color,
+    reducedMotion: Boolean
+) {
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedContent(
             targetState = imageUrl,
             transitionSpec = {
-                fadeIn(tween(360, easing = FastOutSlowInEasing))
-                    .togetherWith(fadeOut(tween(220, easing = FastOutSlowInEasing)))
+                fadeIn(
+                    tween(
+                        durationMillis = if (reducedMotion) 0 else 180,
+                        easing = FastOutSlowInEasing
+                    )
+                ).togetherWith(
+                    fadeOut(
+                        tween(
+                            durationMillis = if (reducedMotion) 0 else 120,
+                            easing = FastOutSlowInEasing
+                        )
+                    )
+                )
             },
             label = "discover-artwork-backdrop"
         ) { artworkUrl ->

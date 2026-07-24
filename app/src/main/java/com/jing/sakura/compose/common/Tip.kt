@@ -1,122 +1,165 @@
-@file:OptIn(ExperimentalTvMaterial3Api::class)
+@file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
 package com.jing.sakura.compose.common
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Border
-import androidx.tv.material3.Button
-import androidx.tv.material3.ButtonDefaults
-import androidx.tv.material3.ButtonScale
-import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.compose.ui.zIndex
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import com.jing.sakura.R
-
+import kotlinx.coroutines.delay
 
 @Composable
-fun Loading(text: String = "載入中"): Unit {
-    val transition = rememberInfiniteTransition(label = "brandLoading")
-    val pulse = transition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.02f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "brandPulse"
-    )
+fun LoadingOverlay(
+    visible: Boolean,
+    text: String = ""
+) {
+    val reducedMotion = rememberReducedMotion()
+    var retained by remember { mutableStateOf(visible) }
+    LaunchedEffect(visible) {
+        if (visible) {
+            retained = true
+        } else if (retained) {
+            if (!reducedMotion) delay(120L)
+            retained = false
+        }
+    }
+    if (retained) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(if (reducedMotion) 0 else 180)),
+            exit = fadeOut(tween(if (reducedMotion) 0 else 120))
+        ) {
+            Loading(text = text)
+        }
+    }
+}
+
+@Composable
+fun Loading(text: String = "") {
+    val reducedMotion = rememberReducedMotion()
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .aulamaTvBackground()
+            .zIndex(100f)
+            .aulamaTvBackground(),
+        contentAlignment = Alignment.Center
     ) {
         Column(
-            modifier = Modifier.align(Alignment.Center),
+            modifier = Modifier.lightweightEntrance(
+                transitionKey = Unit,
+                reducedMotion = reducedMotion,
+                durationMillis = 200,
+                offsetY = 0.dp
+            ),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.aulama_anime_icon),
-                contentDescription = null,
-                modifier = Modifier
-                    .size(88.dp)
-                    .scale(pulse.value)
-            )
-            Spacer(modifier = Modifier.height(6.dp))
+            AulamaAnimeBrandMark(height = 54.dp)
+            Spacer(Modifier.height(16.dp))
             CircularProgressIndicator(
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(24.dp),
                 color = AulamaTvColors.Cyan,
-                strokeWidth = 2.dp
+                trackColor = AulamaTvColors.Outline.copy(alpha = 0.5f),
+                strokeWidth = 2.5.dp
             )
             if (text.isNotBlank()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = text, color = AulamaTvColors.TextSecondary)
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = localizedText(text),
+                    color = AulamaTvColors.TextSecondary,
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontSize = 15.sp,
+                        lineHeight = 19.sp,
+                        fontWeight = FontWeight.Black
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun ErrorTip(message: String, retry: () -> Unit = { }) {
-    val focusRequester = remember {
-        FocusRequester()
-    }
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+fun ErrorTip(message: String, retry: () -> Unit = {}) {
+    val focusRequester = remember { FocusRequester() }
+    val reducedMotion = rememberReducedMotion()
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .aulamaTvBackground(),
+        contentAlignment = Alignment.Center
     ) {
-        Text(text = message)
-        Spacer(modifier = Modifier.height(10.dp))
-        Button(
-            onClick = retry,
+        Column(
             modifier = Modifier
-                .focusRequester(focusRequester),
-            border = ButtonDefaults.border(
-                focusedBorder = Border(
-                    BorderStroke(2.dp, MaterialTheme.colorScheme.border),
-                    shape = AulamaCardShape
-                )
-            ),
-            shape = ButtonDefaults.shape(shape = AulamaCardShape),
-            scale = ButtonDefaults.scale(focusedScale = AulamaFocusScale),
-            colors = ButtonDefaults.colors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
-                contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
-                focusedContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-            )
+                .widthIn(max = 560.dp)
+                .lightweightEntrance(
+                    transitionKey = message,
+                    reducedMotion = reducedMotion,
+                    durationMillis = 200,
+                    offsetY = 0.dp
+                ),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(text = stringResource(R.string.button_retry))
+            AulamaAnimeBrandMark(height = 48.dp)
+            Spacer(Modifier.height(20.dp))
+            Text(
+                text = localizedText("暫時未能載入"),
+                color = AulamaTvColors.TextPrimary,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontSize = 24.sp,
+                    lineHeight = 29.sp,
+                    fontWeight = FontWeight.Black
+                )
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = localizedText(message),
+                color = AulamaTvColors.TextSecondary,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.Black
+                ),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(18.dp))
+            AulamaActionButton(
+                label = localizedText("重試"),
+                onClick = retry,
+                modifier = Modifier.focusRequester(focusRequester),
+                accent = AulamaTvColors.Cyan
+            )
         }
     }
     LaunchedEffect(Unit) {

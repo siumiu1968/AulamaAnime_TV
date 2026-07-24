@@ -30,4 +30,15 @@ class PlaybackCenterKeyControllerTest {
 
         assertEquals(CenterKeyAction.STOP_BOOST, controller.cancel())
     }
+
+    @Test
+    fun repeatedKeyEventsStartBoostOnlyOnceAndReleaseNeverClicks() {
+        val controller = PlaybackCenterKeyController(longPressThresholdMs = 500L)
+
+        assertEquals(CenterKeyAction.NONE, controller.onKeyDown(1_000L, 0))
+        assertEquals(CenterKeyAction.START_BOOST, controller.onKeyDown(1_500L, 1))
+        assertEquals(CenterKeyAction.NONE, controller.onKeyDown(1_620L, 2))
+        assertEquals(CenterKeyAction.STOP_BOOST, controller.onKeyUp())
+        assertEquals(CenterKeyAction.NONE, controller.onKeyUp())
+    }
 }

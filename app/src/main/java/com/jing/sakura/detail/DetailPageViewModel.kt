@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.FavoritePayload
 import com.jing.sakura.auth.TvHistoryItem
+import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimeDetailPageData
 import com.jing.sakura.data.Resource
 import com.jing.sakura.player.PlaybackCompletionPolicy
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import java.util.Collections
 
 class DetailPageViewModel constructor(
     private val animeId: String,
@@ -50,6 +52,11 @@ class DetailPageViewModel constructor(
 
     private var favoriteJob: Job? = null
 
+    private val _relatedDescriptions = MutableStateFlow<Map<String, String>>(emptyMap())
+    val relatedDescriptions: StateFlow<Map<String, String>> = _relatedDescriptions
+    private val requestedRelatedDescriptions =
+        Collections.synchronizedSet(mutableSetOf<String>())
+
     init {
         loadData()
         loadFavoriteState()
@@ -78,9 +85,11 @@ class DetailPageViewModel constructor(
                 val sourceData = repository.fetchDetailPage(animeId, sourceId)
                 val cloudDetail = cloudDetailJob.await()
                 val data = sourceData.copy(
-                    otherAnimeList = cloudDetail?.related
-                        ?.takeIf(List<*>::isNotEmpty)
-                        ?: sourceData.otherAnimeList
+                    otherAnimeList = mergeRelatedAnime(
+                        cloud = cloudDetail?.related.orEmpty(),
+                        source = sourceData.otherAnimeList,
+                        fallbackSourceId = sourceId
+                    )
                 )
                 val localHistory = localHistoryJob.await()
                 val remoteHistory = cloudHistoryJob.await()?.toLocalHistory(data)
@@ -105,6 +114,30 @@ class DetailPageViewModel constructor(
 
                 val message = "請求資料失敗：" + ex.message
                 _detailPageData.emit(Resource.Error(message))
+            }
+        }
+    }
+
+    fun loadRelatedDescription(anime: AnimeData) {
+        val key = relatedAnimeKey(anime, sourceId)
+        if (
+            anime.description.isNotBlank() ||
+            !_relatedDescriptions.value[key].isNullOrBlank() ||
+            !requestedRelatedDescriptions.add(key)
+        ) {
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val relatedSourceId = anime.sourceId.ifBlank { sourceId }
+            val description = runCatching {
+                repository.fetchDetailPage(anime.id, relatedSourceId).description.trim()
+            }.getOrNull().orEmpty()
+
+            if (description.isNotBlank()) {
+                _relatedDescriptions.value = _relatedDescriptions.value + (key to description)
+            } else {
+                requestedRelatedDescriptions.remove(key)
             }
         }
     }

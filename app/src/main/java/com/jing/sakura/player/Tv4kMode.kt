@@ -9,6 +9,15 @@ internal enum class Tv4kEffectStrategy {
     LANCZOS
 }
 
+internal data class Tv4kEffectPlan(
+    val strategy: Tv4kEffectStrategy,
+    val targetWidth: Int,
+    val targetHeight: Int
+) {
+    val bypass: Boolean
+        get() = strategy == Tv4kEffectStrategy.NONE
+}
+
 internal enum class Tv4kMode(
     @StringRes val labelRes: Int,
     val targetWidth: Int,
@@ -48,9 +57,25 @@ internal enum class Tv4kMode(
     val isEnabled: Boolean
         get() = this != OFF
 
+    val effectPlan: Tv4kEffectPlan
+        get() = Tv4kEffectPlan(strategy, targetWidth, targetHeight)
+
     fun fallback(): Tv4kMode = when (this) {
         BALANCED -> FAST
         FAST -> RESOURCE_SAVER
         RESOURCE_SAVER, OFF -> OFF
+    }
+}
+
+internal object Tv4kRuntimePolicy {
+    fun effectiveMode(
+        requested: Tv4kMode,
+        supports4kOutput: Boolean,
+        isLowRamDevice: Boolean
+    ): Tv4kMode = when {
+        requested == Tv4kMode.OFF -> Tv4kMode.OFF
+        !supports4kOutput -> Tv4kMode.OFF
+        isLowRamDevice && requested == Tv4kMode.BALANCED -> Tv4kMode.FAST
+        else -> requested
     }
 }

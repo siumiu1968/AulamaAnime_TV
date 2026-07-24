@@ -3,8 +3,7 @@ package com.jing.sakura.player
 internal data class PlaybackSkipUiDecision(
     val active: ActivePlaybackSkip?,
     val isVisible: Boolean,
-    val shouldStartCountdown: Boolean,
-    val shouldRequestInitialFocus: Boolean
+    val shouldStartCountdown: Boolean
 )
 
 /** Keeps skip actions predictable while progress seeking and D-pad input are in flight. */
@@ -16,7 +15,7 @@ internal class PlaybackSkipUiStateMachine {
     fun update(next: ActivePlaybackSkip?): PlaybackSkipUiDecision {
         if (next == null) {
             reset()
-            return PlaybackSkipUiDecision(null, false, false, false)
+            return PlaybackSkipUiDecision(null, false, false)
         }
 
         val changed = current != next
@@ -29,8 +28,7 @@ internal class PlaybackSkipUiStateMachine {
         return PlaybackSkipUiDecision(
             active = next,
             isVisible = visible,
-            shouldStartCountdown = changed && visible && next.advancesEpisode && !countdownCancelled,
-            shouldRequestInitialFocus = changed && visible
+            shouldStartCountdown = changed && visible && next.advancesEpisode && !countdownCancelled
         )
     }
 
