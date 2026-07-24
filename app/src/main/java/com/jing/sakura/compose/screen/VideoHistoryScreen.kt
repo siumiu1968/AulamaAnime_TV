@@ -3,6 +3,7 @@
 package com.jing.sakura.compose.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
@@ -15,10 +16,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -44,10 +50,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Border
+import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
+import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import com.jing.sakura.R
 import com.jing.sakura.auth.TvHistoryItem
-import com.jing.sakura.compose.common.AulamaActionButton
 import com.jing.sakura.compose.common.AulamaFocusScale
 import com.jing.sakura.compose.common.AulamaPageHeader
 import com.jing.sakura.compose.common.AulamaSectionHeader
@@ -113,8 +122,7 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
                     title = "我的片庫",
                     subtitle = "雲端觀看紀錄與收藏"
                 ) {
-                    AulamaActionButton(
-                        label = "重新整理",
+                    LibraryRefreshButton(
                         modifier = if (hasContent) {
                             Modifier
                         } else {
@@ -159,6 +167,39 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
     LaunchedEffect(library.continueWatching, library.favorites) {
         val requester = if (hasContent) firstFocusRequester else refreshFocusRequester
         runCatching { requester.requestFocus() }
+    }
+}
+
+@Composable
+private fun LibraryRefreshButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.size(48.dp),
+        contentPadding = PaddingValues(10.dp),
+        shape = ButtonDefaults.shape(shape = CircleShape),
+        scale = ButtonDefaults.scale(focusedScale = 1.12f),
+        colors = ButtonDefaults.colors(
+            containerColor = Color.Transparent,
+            contentColor = AulamaTvColors.TextSecondary,
+            focusedContainerColor = Color.Transparent,
+            focusedContentColor = AulamaTvColors.Cyan,
+            pressedContainerColor = Color.Transparent,
+            pressedContentColor = AulamaTvColors.Cyan
+        ),
+        border = ButtonDefaults.border(
+            border = Border(BorderStroke(1.dp, Color.Transparent)),
+            focusedBorder = Border(BorderStroke(1.dp, Color.Transparent)),
+            pressedBorder = Border(BorderStroke(1.dp, Color.Transparent))
+        )
+    ) {
+        Icon(
+            imageVector = Icons.Default.Refresh,
+            contentDescription = "重新整理",
+            modifier = Modifier.size(25.dp)
+        )
     }
 }
 
