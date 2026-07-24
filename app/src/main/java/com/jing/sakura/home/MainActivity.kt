@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -28,8 +29,10 @@ import com.jing.sakura.compose.screen.HomeScreen
 import com.jing.sakura.compose.theme.SakuraTheme
 import com.jing.sakura.update.TvUpdate
 import com.jing.sakura.update.TvUpdateDialog
+import com.jing.sakura.update.TvUpdateDownloadState
 import com.jing.sakura.update.TvUpdateManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
@@ -39,6 +42,7 @@ class MainActivity : ComponentActivity() {
     private val availableUpdate = mutableStateOf<TvUpdate?>(null)
     private val isCheckingForUpdate = mutableStateOf(false)
     private var receiverRegistered = false
+    private var automaticUpdateCheck: Job? = null
 
     private val downloadReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -57,6 +61,12 @@ class MainActivity : ComponentActivity() {
         val authViewModel: AuthViewModel by viewModel()
         setContent {
             SakuraTheme {
+                val downloadState = updateManager.downloadState.collectAsState().value
+                LaunchedEffect(downloadState) {
+                    if (downloadState is TvUpdateDownloadState.Installing) {
+                        availableUpdate.value = null
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -83,14 +93,9 @@ class MainActivity : ComponentActivity() {
                     availableUpdate.value?.let { update ->
                         TvUpdateDialog(
                             update = update,
+                            downloadState = downloadState,
                             onDownload = {
-                                updateManager.download(update)
-                                availableUpdate.value = null
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    R.string.update_downloading,
-                                    Toast.LENGTH_LONG
-                                ).show()
+                                runCatching { updateManager.download(update) }
                             },
                             onLater = { availableUpdate.value = null }
                         )
@@ -98,15 +103,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        lifecycleScope.launch {
-            availableUpdate.value = runCatching { updateManager.checkForUpdate() }.getOrNull()
-        }
+        refreshAvailableUpdate()
+        updateManager.resumePendingDownload()
     }
 
     override fun onResume() {
         super.onResume()
         if (::updateManager.isInitialized) {
-            updateManager.installPendingUpdate()
+            updateManager.resumePendingDownload()
+            refreshAvailableUpdate()
         }
     }
 
@@ -114,13 +119,14 @@ class MainActivity : ComponentActivity() {
         if (receiverRegistered) {
             runCatching { unregisterReceiver(downloadReceiver) }
         }
+        if (::updateManager.isInitialized) updateManager.close()
         super.onDestroy()
     }
 
     private fun registerDownloadReceiver() {
         val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(downloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(downloadReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             @Suppress("DEPRECATION")
             registerReceiver(downloadReceiver, filter)
@@ -154,6 +160,13 @@ class MainActivity : ComponentActivity() {
             } finally {
                 isCheckingForUpdate.value = false
             }
+        }
+    }
+
+    private fun refreshAvailableUpdate() {
+        if (availableUpdate.value != null || automaticUpdateCheck?.isActive == true) return
+        automaticUpdateCheck = lifecycleScope.launch {
+            availableUpdate.value = runCatching { updateManager.checkForUpdate() }.getOrNull()
         }
     }
 }

@@ -79,9 +79,9 @@ fun AutoMarqueeText(
                         Modifier.basicMarquee(
                             iterations = Int.MAX_VALUE,
                             animationMode = MarqueeAnimationMode.Immediately,
-                            repeatDelayMillis = 700,
-                            initialDelayMillis = 1_000,
-                            spacing = MarqueeSpacing(32.dp),
+                            repeatDelayMillis = 1_000,
+                            initialDelayMillis = 1_500,
+                            spacing = MarqueeSpacing(48.dp),
                             velocity = velocity
                         )
                     } else {

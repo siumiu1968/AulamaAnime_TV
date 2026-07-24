@@ -3,7 +3,10 @@
 package com.jing.sakura.compose.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -21,12 +23,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -42,6 +48,7 @@ import androidx.tv.material3.Text
 import com.jing.sakura.R
 import com.jing.sakura.auth.TvHistoryItem
 import com.jing.sakura.compose.common.AulamaActionButton
+import com.jing.sakura.compose.common.AulamaFocusScale
 import com.jing.sakura.compose.common.AulamaPageHeader
 import com.jing.sakura.compose.common.AulamaSectionHeader
 import com.jing.sakura.compose.common.AulamaTvColors
@@ -183,9 +190,8 @@ private fun LibraryAnimeRow(
     }
 
     val cardWidth = dimensionResource(id = R.dimen.history_poster_width)
-    val cardHeight = dimensionResource(id = R.dimen.history_poster_height)
     LazyRow(
-        // VideoCard 會在 focus 時放大並投射光暈；保留足夠間距避免相鄰卡片重疊。
+        // 整張內容卡會在 focus 時放大；上下留白避免進度資訊或相鄰卡片被裁切。
         contentPadding = PaddingValues(horizontal = 42.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(20.dp),
         modifier = Modifier.fillMaxWidth()
@@ -193,21 +199,37 @@ private fun LibraryAnimeRow(
         items(count = videos.size, key = { "${videos[it].sourceId}:${videos[it].id}" }) { index ->
             val video = videos[index]
             val history = historyByAnime[historyKey(video.id, video.sourceId)]
+            var focused by remember(video.id, video.sourceId) { mutableStateOf(false) }
+            val cardScale by animateFloatAsState(
+                targetValue = if (focused) AulamaFocusScale else 1f,
+                animationSpec = tween(durationMillis = 180),
+                label = "library-card-scale"
+            )
             Column(
-                modifier = Modifier.width(cardWidth),
+                modifier = Modifier
+                    .width(cardWidth)
+                    .graphicsLayer {
+                        scaleX = cardScale
+                        scaleY = cardScale
+                    },
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 VideoCard(
                     modifier = Modifier
-                        .size(width = cardWidth, height = cardHeight)
+                        .fillMaxWidth()
+                        .aspectRatio(140f / 190f)
                         .run {
                             if (index == 0 && firstFocusRequester != null) {
                                 focusRequester(firstFocusRequester)
                             } else this
+                        }
+                        .onFocusChanged { state ->
+                            focused = state.isFocused || state.hasFocus
                         },
                     imageUrl = video.imageUrl,
                     title = video.title,
                     subTitle = history?.lastEpisodeName.orEmpty().ifBlank { video.currentEpisode },
+                    focusScale = 1f,
                     onKeyEvent = { event ->
                         if (event.key == Key.Menu && event.type == KeyEventType.KeyUp) {
                             onRefresh()

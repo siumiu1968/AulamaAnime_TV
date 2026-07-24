@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_episode_picker_title">選擇集數</string>
+    <string name="player_4k_picker_title">畫質增強</string>
+    <string name="player_4k_mode_off">畫質・關閉</string>
+    <string name="player_4k_mode_resource_saver">畫質・省資源</string>
+    <string name="player_4k_mode_fast">4K・快速</string>
+    <string name="player_4k_mode_balanced">4K・平衡</string>
+    <string name="player_4k_mode_applied">已切換至 %1$s</string>
+    <string name="player_4k_mode_downgraded">裝置負載較高，已調整至 %1$s</string>
+    <string name="player_speed_boost_label">快進 2×</string>
+</resources>

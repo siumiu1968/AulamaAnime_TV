@@ -154,10 +154,10 @@ fun VideoCard(
                 }
                 AutoMarqueeText(
                     text = displayTitle,
-                    style = MaterialTheme.typography.titleMedium.copy(
+                    style = MaterialTheme.typography.headlineSmall.copy(
                         fontSize = 16.sp,
                         lineHeight = 19.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.Black
                     ),
                     color = AulamaTvColors.TextPrimary,
                     enabled = focused,

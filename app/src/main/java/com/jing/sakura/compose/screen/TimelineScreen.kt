@@ -2,14 +2,23 @@
 
 package com.jing.sakura.compose.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -31,19 +41,27 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -56,12 +74,16 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.jing.sakura.R
 import com.jing.sakura.compose.common.AulamaCardShape
 import com.jing.sakura.compose.common.AulamaTvColors
+import com.jing.sakura.compose.common.AutoMarqueeText
 import com.jing.sakura.compose.common.ErrorTip
+import com.jing.sakura.compose.common.HeroPreviewPlayer
 import com.jing.sakura.compose.common.Loading
-import com.jing.sakura.compose.common.VideoCard
 import com.jing.sakura.compose.common.aulamaTvBackground
 import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.rememberArtworkAccent
@@ -70,12 +92,23 @@ import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.Resource
 import com.jing.sakura.data.UpdateTimeLine
 import com.jing.sakura.detail.DetailActivity
+import com.jing.sakura.home.HeroPreviewState
 import com.jing.sakura.timeline.TimelineViewModel
+import com.jing.sakura.timeline.resolveTimelineSynopsis
+import com.jing.sakura.timeline.timelineInitialVirtualIndex
+import com.jing.sakura.timeline.timelineLogicalIndex
+import com.jing.sakura.timeline.timelineMoveVirtualIndex
+import com.jing.sakura.timeline.timelinePosterPrefetchUrls
+import com.jing.sakura.timeline.timelineVirtualItemCount
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun TimelineScreen(viewModel: TimelineViewModel) {
     val timeline = viewModel.timelines.collectAsState().value
     val synopses = viewModel.synopses.collectAsState().value
+    val previewState = viewModel.previewState.collectAsState().value
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -86,7 +119,11 @@ fun TimelineScreen(viewModel: TimelineViewModel) {
                 data = timeline.data,
                 sourceId = viewModel.sourceId,
                 synopses = synopses,
-                onAnimeHighlighted = viewModel::loadSynopsis
+                previewState = previewState,
+                onDaySelected = viewModel::prepareDay,
+                onAnimeHighlighted = viewModel::loadSynopsis,
+                onPreparePreview = viewModel::preparePreview,
+                onCancelPreview = viewModel::cancelPreview
             )
 
             is Resource.Error -> ErrorTip(message = timeline.message) {
@@ -103,7 +140,11 @@ fun TimeLine(
     data: UpdateTimeLine,
     sourceId: String,
     synopses: Map<String, String>,
-    onAnimeHighlighted: (AnimeData) -> Unit
+    previewState: HeroPreviewState,
+    onDaySelected: (Int) -> Unit,
+    onAnimeHighlighted: (AnimeData) -> Unit,
+    onPreparePreview: (AnimeData) -> Unit,
+    onCancelPreview: () -> Unit
 ) {
     if (data.timeline.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -125,25 +166,86 @@ fun TimeLine(
     val dayFocusRequesters = remember(data.timeline.size) {
         List(data.timeline.size) { FocusRequester() }
     }
-    val firstPosterFocusRequester = remember(selectedDayIndex) { FocusRequester() }
-    val programmeRowState = rememberLazyListState()
+    val rowFocusRequesters = remember(data.timeline.size) {
+        List(data.timeline.size) { FocusRequester() }
+    }
+    var rowHasFocus by remember { mutableStateOf(false) }
+    var interactionVersion by remember { mutableIntStateOf(0) }
+    var dimUnselected by remember { mutableStateOf(false) }
+    var previewArmed by remember { mutableStateOf(false) }
+    var previewFirstFrameReady by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val extractedAccent = highlightedAnime?.let { rememberArtworkAccent(it.imageUrl) }
-        ?: Color.Transparent
+    val rawAccent = rememberArtworkAccent(
+        imageUrl = highlightedAnime?.imageUrl.orEmpty(),
+        enabled = highlightedAnime != null
+    )
     val accent by animateColorAsState(
-        targetValue = extractedAccent,
-        animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+        targetValue = rawAccent,
+        animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
         label = "timeline-accent"
     )
+    val readyPreview = (previewState as? HeroPreviewState.Ready)?.spec
+    val previewActive = previewArmed && previewFirstFrameReady && readyPreview != null
+    val chromeAlpha by animateFloatAsState(
+        targetValue = if (previewActive) 0.18f else 1f,
+        animationSpec = tween(320, easing = FastOutSlowInEasing),
+        label = "timeline-chrome-alpha"
+    )
+    val summaryAlpha by animateFloatAsState(
+        targetValue = if (previewActive) 0.52f else 1f,
+        animationSpec = tween(320, easing = FastOutSlowInEasing),
+        label = "timeline-summary-alpha"
+    )
+    val posterPrefetchUrls = remember(data, selectedDayIndex) {
+        timelinePosterPrefetchUrls(data, selectedDayIndex)
+    }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        TimelineBackdrop(anime = highlightedAnime, accent = accent)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown) {
+                    interactionVersion += 1
+                    dimUnselected = false
+                    previewArmed = false
+                    previewFirstFrameReady = false
+                    onCancelPreview()
+                }
+                false
+            }
+    ) {
+        readyPreview?.let { spec ->
+            HeroPreviewPlayer(
+                spec = spec,
+                onReady = { previewFirstFrameReady = true },
+                onError = {
+                    previewArmed = false
+                    previewFirstFrameReady = false
+                    onCancelPreview()
+                },
+                onEnded = {
+                    dimUnselected = true
+                    previewArmed = false
+                    previewFirstFrameReady = false
+                    onCancelPreview()
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = if (previewActive) 1f else 0f }
+            )
+        }
+        TimelineBackdrop(
+            anime = highlightedAnime,
+            accent = accent,
+            previewActive = previewActive
+        )
         Column(modifier = Modifier.fillMaxSize()) {
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(54.dp)
+                    .graphicsLayer { alpha = chromeAlpha }
                     .padding(horizontal = 34.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically
@@ -158,10 +260,13 @@ fun TimeLine(
                             .focusRequester(dayFocusRequesters[index])
                             .focusProperties {
                                 if (day.second.isNotEmpty()) {
-                                    down = firstPosterFocusRequester
+                                    down = rowFocusRequesters[index]
                                 }
                             },
-                        onFocused = { selectedDayIndex = index },
+                        onFocused = {
+                            rowHasFocus = false
+                            selectedDayIndex = index
+                        },
                         onClick = { selectedDayIndex = index }
                     )
                 }
@@ -172,73 +277,74 @@ fun TimeLine(
                 dayName = selectedDay.first,
                 synopsis = highlightedAnime?.let { synopses[it.id] }.orEmpty(),
                 accent = accent,
+                marqueeEnabled = rowHasFocus,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(160.dp)
+                    .graphicsLayer { alpha = summaryAlpha }
             )
 
             TimelineStripHeader(
                 count = selectedDay.second.size,
-                isToday = selectedDayIndex == currentDayIndex
+                isToday = selectedDayIndex == currentDayIndex,
+                modifier = Modifier.graphicsLayer { alpha = chromeAlpha }
             )
 
-            if (selectedDay.second.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = stringResource(R.string.grid_no_data_tip),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = AulamaTvColors.TextSecondary
-                    )
-                }
-            } else {
-                LazyRow(
-                    state = programmeRowState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentPadding = PaddingValues(horizontal = 34.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    items(
-                        count = selectedDay.second.size,
-                        key = { index ->
-                            val anime = selectedDay.second[index]
-                            "${anime.sourceId}:${anime.id}:$index"
-                        }
-                    ) { index ->
-                        val anime = selectedDay.second[index]
-                        Box(
-                            modifier = Modifier.size(width = 170.dp, height = 238.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            VideoCard(
-                                modifier = Modifier
-                                    .size(width = 160.dp, height = 226.dp)
-                                    .focusProperties {
-                                        up = dayFocusRequesters[selectedDayIndex]
-                                    }
-                                    .run {
-                                        if (index == 0) {
-                                            focusRequester(firstPosterFocusRequester)
-                                        } else {
-                                            this
-                                        }
-                                    },
-                                imageUrl = anime.imageUrl,
-                                title = anime.title,
-                                subTitle = anime.currentEpisode,
-                                focusScale = 1.04f,
-                                onFocused = { highlightedAnimeIndex = index },
-                                onClick = {
-                                    DetailActivity.startActivity(context, anime.id, sourceId)
-                                }
-                            )
-                        }
+            AnimatedContent(
+                targetState = selectedDayIndex,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                transitionSpec = {
+                    val direction = if (targetState >= initialState) 1 else -1
+                    (fadeIn(tween(240, delayMillis = 55, easing = FastOutSlowInEasing)) +
+                        slideInHorizontally(
+                            animationSpec = tween(260, easing = FastOutSlowInEasing)
+                        ) { width -> direction * width / 18 })
+                        .togetherWith(
+                            fadeOut(tween(150, easing = FastOutSlowInEasing)) +
+                                slideOutHorizontally(
+                                    animationSpec = tween(180, easing = FastOutSlowInEasing)
+                                ) { width -> -direction * width / 22 }
+                        )
+                },
+                label = "timeline-day-content"
+            ) { dayIndex ->
+                val dayItems = data.timeline[dayIndex].second
+                if (dayItems.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = stringResource(R.string.grid_no_data_tip),
+                            style = MaterialTheme.typography.titleLarge,
+                            color = AulamaTvColors.TextSecondary
+                        )
                     }
+                } else {
+                    TimelinePosterCarousel(
+                        items = dayItems,
+                        accent = accent,
+                        dimUnselected = dimUnselected,
+                        previewActive = previewActive,
+                        rowFocusRequester = rowFocusRequesters[dayIndex],
+                        upFocusRequester = dayFocusRequesters[dayIndex],
+                        onFocusChanged = { focused ->
+                            if (dayIndex == selectedDayIndex) rowHasFocus = focused
+                        },
+                        onSelected = { index ->
+                            if (dayIndex == selectedDayIndex) highlightedAnimeIndex = index
+                        },
+                        onOpen = { anime ->
+                            DetailActivity.startActivity(context, anime.id, sourceId)
+                        }
+                    )
                 }
             }
         }
+    }
+
+    BackHandler(enabled = rowHasFocus) {
+        rowHasFocus = false
+        runCatching { dayFocusRequesters[selectedDayIndex].requestFocus() }
     }
 
     LaunchedEffect(data) {
@@ -247,28 +353,319 @@ fun TimeLine(
 
     LaunchedEffect(selectedDayIndex) {
         highlightedAnimeIndex = 0
-        programmeRowState.scrollToItem(0)
+        onDaySelected(selectedDayIndex)
     }
 
-    LaunchedEffect(highlightedAnime?.id) {
+    LaunchedEffect(highlightedAnime?.sourceId, highlightedAnime?.id) {
         highlightedAnime?.let(onAnimeHighlighted)
+    }
+
+    LaunchedEffect(
+        highlightedAnime?.sourceId,
+        highlightedAnime?.id,
+        rowHasFocus,
+        interactionVersion
+    ) {
+        onCancelPreview()
+        dimUnselected = false
+        previewArmed = false
+        previewFirstFrameReady = false
+        val selected = highlightedAnime ?: return@LaunchedEffect
+        if (!rowHasFocus) return@LaunchedEffect
+        delay(3_000)
+        dimUnselected = true
+        delay(12_000)
+        onPreparePreview(selected)
+        previewArmed = true
+    }
+
+    LaunchedEffect(previewActive, readyPreview?.key) {
+        if (!previewActive) return@LaunchedEffect
+        delay(60_000)
+        dimUnselected = true
+        previewArmed = false
+        previewFirstFrameReady = false
+        onCancelPreview()
+    }
+
+    LaunchedEffect(posterPrefetchUrls) {
+        delay(180)
+        posterPrefetchUrls.chunked(3).forEach { batch ->
+            batch.forEach { imageUrl ->
+                context.imageLoader.enqueue(
+                    ImageRequest.Builder(context)
+                        .data(imageUrl)
+                        .size(420, 630)
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .networkCachePolicy(CachePolicy.ENABLED)
+                        .crossfade(false)
+                        .build()
+                )
+            }
+            delay(90)
+        }
     }
 }
 
 @Composable
-private fun TimelineBackdrop(anime: AnimeData?, accent: Color) {
+private fun TimelinePosterCarousel(
+    items: List<AnimeData>,
+    accent: Color,
+    dimUnselected: Boolean,
+    previewActive: Boolean,
+    rowFocusRequester: FocusRequester,
+    upFocusRequester: FocusRequester,
+    onFocusChanged: (Boolean) -> Unit,
+    onSelected: (Int) -> Unit,
+    onOpen: (AnimeData) -> Unit
+) {
+    val identity = remember(items) {
+        items.joinToString(separator = "|") { "${it.sourceId}:${it.id}" }
+    }
+    val initialVirtualIndex = remember(identity) { timelineInitialVirtualIndex(items.size) }
+    val virtualItemCount = remember(identity) { timelineVirtualItemCount(items.size) }
+    val rowState = rememberLazyListState(initialFirstVisibleItemIndex = initialVirtualIndex)
+    val scope = rememberCoroutineScope()
+    var selectedVirtualIndex by remember(identity) { mutableIntStateOf(initialVirtualIndex) }
+    var moveJob by remember(identity) { mutableStateOf<Job?>(null) }
+    var focused by remember(identity) { mutableStateOf(false) }
+    val cardStridePx = with(LocalDensity.current) { 170.dp.toPx() }
+    val selectedLogicalIndex = timelineLogicalIndex(selectedVirtualIndex, items.size)
+    val selectedAnime = items[selectedLogicalIndex]
+
+    fun moveSelection(delta: Int) {
+        val target = timelineMoveVirtualIndex(
+            currentIndex = selectedVirtualIndex,
+            delta = delta,
+            itemCount = items.size
+        )
+        if (target == selectedVirtualIndex) return
+        selectedVirtualIndex = target
+        moveJob?.cancel()
+        moveJob = scope.launch {
+            rowState.animateScrollBy(
+                value = delta * cardStridePx,
+                animationSpec = tween(
+                    durationMillis = 165,
+                    easing = LinearOutSlowInEasing
+                )
+            )
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .focusRequester(rowFocusRequester)
+            .focusProperties { up = upFocusRequester }
+            .onFocusChanged { state ->
+                focused = state.isFocused || state.hasFocus
+                onFocusChanged(focused)
+            }
+            .onPreviewKeyEvent { event ->
+                when {
+                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
+                        moveSelection(1)
+                        true
+                    }
+
+                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft -> {
+                        moveSelection(-1)
+                        true
+                    }
+
+                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp -> {
+                        runCatching { upFocusRequester.requestFocus() }
+                        true
+                    }
+
+                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown -> true
+                    event.type == KeyEventType.KeyUp &&
+                        (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                        onOpen(selectedAnime)
+                        true
+                    }
+
+                    event.key == Key.DirectionCenter || event.key == Key.Enter -> true
+                    else -> false
+                }
+            }
+            .focusable()
+    ) {
+        LazyRow(
+            state = rowState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 42.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            items(
+                count = virtualItemCount,
+                key = { virtualIndex ->
+                    val anime = items[timelineLogicalIndex(virtualIndex, items.size)]
+                    "$virtualIndex:${anime.sourceId}:${anime.id}"
+                }
+            ) { virtualIndex ->
+                val anime = items[timelineLogicalIndex(virtualIndex, items.size)]
+                val selected = focused && virtualIndex == selectedVirtualIndex
+                val cardAlpha by animateFloatAsState(
+                    targetValue = when {
+                        !focused -> 1f
+                        selected && previewActive -> 0.72f
+                        selected -> 1f
+                        previewActive -> 0.06f
+                        !dimUnselected -> 1f
+                        else -> 0.48f
+                    },
+                    animationSpec = tween(
+                        durationMillis = if (previewActive) 320 else 620,
+                        easing = FastOutSlowInEasing
+                    ),
+                    label = "timeline-card-alpha"
+                )
+                TimelinePosterCard(
+                    anime = anime,
+                    selected = selected,
+                    accent = accent,
+                    modifier = Modifier
+                        .size(width = 160.dp, height = 240.dp)
+                        .graphicsLayer { alpha = cardAlpha }
+                )
+            }
+        }
+    }
+
+    LaunchedEffect(identity) {
+        rowState.scrollToItem(initialVirtualIndex)
+        onSelected(0)
+    }
+
+    LaunchedEffect(selectedLogicalIndex) {
+        onSelected(selectedLogicalIndex)
+    }
+}
+
+@Composable
+private fun TimelinePosterCard(
+    anime: AnimeData,
+    selected: Boolean,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    val title = localizedText(anime.title)
+    val subtitle = localizedText(anime.currentEpisode)
+    val posterRequest = rememberPosterImageRequest(
+        imageUrl = anime.imageUrl,
+        widthPx = 420,
+        heightPx = 630
+    )
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = if (selected) 1.035f else 1f
+                scaleY = if (selected) 1.035f else 1f
+                shadowElevation = if (selected) 7.dp.toPx() else 0f
+                shape = TimelinePosterShape
+                clip = false
+                ambientShadowColor = accent.copy(alpha = 0.44f)
+                spotShadowColor = accent.copy(alpha = 0.72f)
+            }
+            .border(
+                BorderStroke(
+                    width = if (selected) 2.5.dp else 1.dp,
+                    color = if (selected) accent else AulamaTvColors.Outline.copy(alpha = 0.72f)
+                ),
+                TimelinePosterShape
+            )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(TimelinePosterShape)
+        ) {
+            AsyncImage(
+                model = posterRequest,
+                contentDescription = title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Transparent,
+                                Color(0x18000000),
+                                Color(0x66000000),
+                                Color(0xF2050810)
+                            )
+                        )
+                    )
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    text = subtitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(9.dp)
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(Color(0xCC080B12))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+            AutoMarqueeText(
+                text = title,
+                color = AulamaTvColors.TextPrimary,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontSize = 16.sp,
+                    lineHeight = 19.sp,
+                    fontWeight = FontWeight.Black
+                ),
+                enabled = selected,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 11.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun TimelineBackdrop(
+    anime: AnimeData?,
+    accent: Color,
+    previewActive: Boolean
+) {
+    val artworkAlpha by animateFloatAsState(
+        targetValue = if (previewActive) 0f else 0.76f,
+        animationSpec = tween(360, easing = FastOutSlowInEasing),
+        label = "timeline-artwork-alpha"
+    )
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedContent(
-            targetState = anime?.imageUrl.orEmpty(),
+            targetState = TimelineBackdropState(
+                key = anime?.let { "${it.sourceId}:${it.id}" }.orEmpty(),
+                imageUrl = anime?.imageUrl.orEmpty()
+            ),
             transitionSpec = {
-                fadeIn(tween(360, easing = FastOutSlowInEasing))
-                    .togetherWith(fadeOut(tween(220, easing = FastOutSlowInEasing)))
+                fadeIn(tween(420, delayMillis = 55, easing = FastOutSlowInEasing))
+                    .togetherWith(fadeOut(tween(250, easing = FastOutSlowInEasing)))
             },
             label = "timeline-backdrop"
-        ) { imageUrl ->
-            if (imageUrl.isNotBlank()) {
+        ) { state ->
+            if (state.imageUrl.isNotBlank()) {
                 val request = rememberPosterImageRequest(
-                    imageUrl = imageUrl,
+                    imageUrl = state.imageUrl,
                     widthPx = 960,
                     heightPx = 1360
                 )
@@ -280,7 +677,7 @@ private fun TimelineBackdrop(anime: AnimeData?, accent: Color) {
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            alpha = 0.76f
+                            alpha = artworkAlpha
                             scaleX = 1.42f
                             scaleY = 1.42f
                             transformOrigin = TransformOrigin(1f, 0f)
@@ -293,30 +690,50 @@ private fun TimelineBackdrop(anime: AnimeData?, accent: Color) {
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(accent.copy(alpha = 0.20f), Color.Transparent),
+                        colors = listOf(
+                            accent.copy(alpha = if (previewActive) 0.05f else 0.20f),
+                            Color.Transparent
+                        ),
                         radius = 820f
                     )
                 )
                 .background(
                     Brush.horizontalGradient(
-                        colorStops = arrayOf(
-                            0f to AulamaTvColors.Background,
-                            0.42f to AulamaTvColors.Background,
-                            0.52f to AulamaTvColors.Background.copy(alpha = 0.96f),
-                            0.60f to AulamaTvColors.Background.copy(alpha = 0.76f),
-                            0.69f to AulamaTvColors.Background.copy(alpha = 0.42f),
-                            0.78f to AulamaTvColors.Background.copy(alpha = 0.14f),
-                            0.88f to AulamaTvColors.Background.copy(alpha = 0.03f),
-                            1f to Color.Transparent
-                        )
+                        colorStops = if (previewActive) {
+                            arrayOf(
+                                0f to AulamaTvColors.Background.copy(alpha = 0.88f),
+                                0.34f to AulamaTvColors.Background.copy(alpha = 0.82f),
+                                0.48f to AulamaTvColors.Background.copy(alpha = 0.56f),
+                                0.62f to AulamaTvColors.Background.copy(alpha = 0.18f),
+                                0.76f to Color.Transparent,
+                                1f to Color.Transparent
+                            )
+                        } else {
+                            arrayOf(
+                                0f to AulamaTvColors.Background,
+                                0.42f to AulamaTvColors.Background,
+                                0.52f to AulamaTvColors.Background.copy(alpha = 0.96f),
+                                0.60f to AulamaTvColors.Background.copy(alpha = 0.76f),
+                                0.69f to AulamaTvColors.Background.copy(alpha = 0.42f),
+                                0.78f to AulamaTvColors.Background.copy(alpha = 0.14f),
+                                0.88f to AulamaTvColors.Background.copy(alpha = 0.03f),
+                                1f to Color.Transparent
+                            )
+                        }
                     )
                 )
                 .background(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
-                            0f to AulamaTvColors.Background.copy(alpha = 0.32f),
+                            0f to AulamaTvColors.Background.copy(
+                                alpha = if (previewActive) 0.12f else 0.32f
+                            ),
                             0.58f to Color.Transparent,
-                            1f to AulamaTvColors.Background
+                            1f to if (previewActive) {
+                                AulamaTvColors.Background.copy(alpha = 0.28f)
+                            } else {
+                                AulamaTvColors.Background
+                            }
                         )
                     )
                 )
@@ -330,14 +747,18 @@ private fun TimelineFocusSummary(
     dayName: String,
     synopsis: String,
     accent: Color,
+    marqueeEnabled: Boolean,
     modifier: Modifier = Modifier
 ) {
     AnimatedContent(
         targetState = anime,
         modifier = modifier,
         transitionSpec = {
-            fadeIn(tween(240, easing = FastOutSlowInEasing))
-                .togetherWith(fadeOut(tween(150, easing = FastOutSlowInEasing)))
+            (fadeIn(tween(270, delayMillis = 45, easing = FastOutSlowInEasing)) +
+                slideInHorizontally(
+                    animationSpec = tween(280, easing = FastOutSlowInEasing)
+                ) { width -> width / 28 })
+                .togetherWith(fadeOut(tween(160, easing = FastOutSlowInEasing)))
         },
         label = "timeline-summary"
     ) { selected ->
@@ -352,9 +773,11 @@ private fun TimelineFocusSummary(
                     .distinct()
                     .joinToString("  ·  ")
             }
-            val description = localizedText(
-                cleanTimelineText(synopsis).ifBlank { "正在載入中文簡介..." }
+            val readySynopsis = resolveTimelineSynopsis(
+                original = cleanTimelineText(selected.description),
+                localized = cleanTimelineText(synopsis)
             )
+            val description = readySynopsis.ifBlank { localizedText("中文簡介準備中") }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -367,16 +790,15 @@ private fun TimelineFocusSummary(
                         .background(accent, AulamaCardShape)
                 )
                 Spacer(Modifier.height(5.dp))
-                Text(
+                AutoMarqueeText(
                     text = title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontSize = 30.sp,
                         lineHeight = 34.sp,
                         fontWeight = FontWeight.ExtraBold
                     ),
                     color = accent,
+                    enabled = marqueeEnabled,
                     modifier = Modifier.fillMaxWidth(0.52f)
                 )
                 Spacer(Modifier.height(2.dp))
@@ -410,9 +832,13 @@ private fun TimelineFocusSummary(
 }
 
 @Composable
-private fun TimelineStripHeader(count: Int, isToday: Boolean) {
+private fun TimelineStripHeader(
+    count: Int,
+    isToday: Boolean,
+    modifier: Modifier = Modifier
+) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(40.dp)
             .padding(horizontal = 42.dp),
@@ -423,7 +849,7 @@ private fun TimelineStripHeader(count: Int, isToday: Boolean) {
             style = MaterialTheme.typography.titleLarge.copy(
                 fontSize = 21.sp,
                 lineHeight = 26.sp,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.Black
             ),
             color = AulamaTvColors.TextPrimary
         )
@@ -449,6 +875,11 @@ private fun TimelineDayTab(
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
+    val contentColor by animateColorAsState(
+        targetValue = if (selected || focused) accent else AulamaTvColors.TextSecondary,
+        animationSpec = tween(240, easing = FastOutSlowInEasing),
+        label = "timeline-day-color"
+    )
     Surface(
         modifier = modifier
             .height(46.dp)
@@ -475,16 +906,12 @@ private fun TimelineDayTab(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.titleMedium.copy(
+                style = MaterialTheme.typography.headlineSmall.copy(
                     fontSize = 17.sp,
                     lineHeight = 22.sp,
-                    fontWeight = if (selected || focused) FontWeight.SemiBold else FontWeight.Medium
+                    fontWeight = FontWeight.Black
                 ),
-                color = if (selected || focused) {
-                    accent
-                } else {
-                    AulamaTvColors.TextSecondary
-                }
+                color = contentColor
             )
             Spacer(Modifier.height(4.dp))
             Box(
@@ -499,6 +926,9 @@ private fun TimelineDayTab(
     }
 }
 
+private data class TimelineBackdropState(val key: String, val imageUrl: String)
+
+private val TimelinePosterShape = RoundedCornerShape(12.dp)
 private val TimelineHtmlTag = Regex("<[^>]+>")
 private val TimelineWhitespace = Regex("\\s+")
 

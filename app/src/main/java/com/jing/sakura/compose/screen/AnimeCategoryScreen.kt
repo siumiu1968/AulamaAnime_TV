@@ -1,5 +1,6 @@
 package com.jing.sakura.compose.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
@@ -33,6 +34,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -41,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -51,10 +54,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +62,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.paging.LoadState
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
@@ -73,9 +74,13 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import coil.imageLoader
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.jing.sakura.R
 import com.jing.sakura.compose.common.AulamaCardShape
+import com.jing.sakura.compose.common.AulamaActionButton
 import com.jing.sakura.compose.common.AulamaFocusScale
 import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.VideoCard
@@ -89,7 +94,11 @@ import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.home.CategoryGroupWrapper
 import com.jing.sakura.home.CategoryViewModel
 import com.jing.sakura.repo.VideoCategoryGroup
+import com.jing.sakura.repo.WebPageRepository
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import org.koin.core.context.GlobalContext
 
 @Composable
 fun AnimeCategoryScreen(viewModel: CategoryViewModel) {
@@ -110,47 +119,71 @@ fun AnimeCategoryScreen(viewModel: CategoryViewModel) {
             .filter { it.group.categories.isNotEmpty() }
     val selectedValues by viewModel.userSelectedCategories.collectAsState()
     val appliedValues by viewModel.selectedCategories.collectAsState()
-    val pagingItems = viewModel.pager.collectAsLazyPagingItems()
     val context = LocalContext.current
-
-    LaunchedEffect(appliedValues) {
-        if (appliedValues.isNotEmpty()) pagingItems.refresh()
+    val repository = remember {
+        GlobalContext.get().get<WebPageRepository>()
     }
-
-    when (val refreshState = pagingItems.loadState.refresh) {
-        is LoadState.Loading -> {
-            com.jing.sakura.compose.common.Loading()
-        }
-
-        is LoadState.Error -> {
-            com.jing.sakura.compose.common.ErrorTip(
-                message = androidx.compose.ui.res.stringResource(
-                    R.string.error_category_load_template,
-                    refreshState.error.message ?: refreshState.error.toString()
-                )
-            ) {
-                pagingItems.refresh()
-            }
-        }
-
-        is LoadState.NotLoading -> {
-            DiscoverGrid(
-                pagingItems = pagingItems,
-                categoryGroups = categoryGroups,
-                selectedValues = selectedValues,
-                hasPendingChanges = selectedValues != appliedValues,
-                onSelect = viewModel::onUserSelect,
-                onApply = { viewModel.applyUserSelectedCategories() },
-                onOpen = { anime ->
-                    DetailActivity.startActivity(
-                        context = context,
-                        animeId = anime.id,
+    val pageSize = remember(repository, viewModel.sourceId) {
+        repository.requireAnimationSource(viewModel.sourceId).pageSize.coerceAtLeast(10)
+    }
+    val appliedFilterSnapshot = remember(appliedValues, categoryGroups) {
+        orderedDiscoverFilters(
+            categoryKeys = categoryGroups.map { it.group.key },
+            selectedValues = appliedValues
+        )
+    }
+    val defaultFilterSnapshot = remember(categoryGroups) {
+        orderedDiscoverFilters(
+            categoryKeys = categoryGroups.map { it.group.key },
+            selectedValues = categoryGroups.associate { it.group.key to it.group.defaultValue }
+        )
+    }
+    val pagerFlow = remember(
+        repository,
+        viewModel.sourceId,
+        appliedFilterSnapshot,
+        defaultFilterSnapshot,
+        pageSize
+    ) {
+        Pager(
+            config = PagingConfig(
+                pageSize = pageSize,
+                initialLoadSize = pageSize,
+                prefetchDistance = 10,
+                enablePlaceholders = false
+            )
+        ) {
+            DiscoverCatalogPagingSource(
+                selectedFilters = appliedFilterSnapshot,
+                defaultFilters = defaultFilterSnapshot,
+                loader = DiscoverPageLoader { filters, page ->
+                    repository.queryByCategory(
+                        categories = filters,
+                        page = page,
                         sourceId = viewModel.sourceId
                     )
                 }
             )
-        }
+        }.flow
     }
+    val pagingItems = pagerFlow.collectAsLazyPagingItems()
+
+    DiscoverGrid(
+        pagingItems = pagingItems,
+        categoryGroups = categoryGroups,
+        selectedValues = selectedValues,
+        filterIdentity = appliedFilterSnapshot.entries.joinToString("|") { "${it.key}=${it.value}" },
+        hasPendingChanges = selectedValues != appliedValues,
+        onSelect = viewModel::onUserSelect,
+        onApply = { viewModel.applyUserSelectedCategories() },
+        onOpen = { anime ->
+            DetailActivity.startActivity(
+                context = context,
+                animeId = anime.id,
+                sourceId = viewModel.sourceId
+            )
+        }
+    )
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -159,6 +192,7 @@ private fun DiscoverGrid(
     pagingItems: LazyPagingItems<AnimeData>,
     categoryGroups: List<CategoryGroupWrapper>,
     selectedValues: Map<String, String>,
+    filterIdentity: String,
     hasPendingChanges: Boolean,
     onSelect: (key: String, value: String) -> Unit,
     onApply: () -> Unit,
@@ -172,6 +206,9 @@ private fun DiscoverGrid(
         List(groupKeys.size) { FocusRequester() }
     }
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var focusZone by remember { mutableStateOf(DiscoverFocusZone.TOP_NAVIGATION) }
+    var initialFocusRequested by remember { mutableStateOf(false) }
     var focusedArtworkUrl by remember { mutableStateOf("") }
     var focusedArtworkTitle by remember { mutableStateOf("") }
     val initialArtworkUrl = pagingItems.itemSnapshotList.items.firstOrNull()?.imageUrl.orEmpty()
@@ -229,20 +266,47 @@ private fun DiscoverGrid(
 
             if (pagingItems.itemCount == 0) {
                 item(
-                    key = "discover-empty",
+                    key = "discover-status",
                     span = { GridItemSpan(maxLineSpan) }
                 ) {
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(220.dp),
-                        contentAlignment = Alignment.Center
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(
-                            text = androidx.compose.ui.res.stringResource(R.string.grid_no_data_tip),
-                            color = AulamaTvColors.TextSecondary,
-                            style = MaterialTheme.typography.titleLarge
-                        )
+                        when (val refreshState = pagingItems.loadState.refresh) {
+                            is LoadState.Loading -> CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp),
+                                color = accent,
+                                strokeWidth = 3.dp
+                            )
+
+                            is LoadState.Error -> {
+                                Text(
+                                    text = androidx.compose.ui.res.stringResource(
+                                        R.string.error_category_load_template,
+                                        refreshState.error.message ?: refreshState.error.toString()
+                                    ),
+                                    color = AulamaTvColors.TextSecondary,
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Spacer(Modifier.height(14.dp))
+                                AulamaActionButton(
+                                    label = "重新載入",
+                                    onClick = { pagingItems.retry() },
+                                    accent = accent
+                                )
+                            }
+
+                            is LoadState.NotLoading -> Text(
+                                text = androidx.compose.ui.res.stringResource(R.string.grid_no_data_tip),
+                                color = AulamaTvColors.TextSecondary,
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                        }
                     }
                 }
             }
@@ -281,6 +345,7 @@ private fun DiscoverGrid(
                             .onFocusChanged { state ->
                                 focused = state.isFocused || state.hasFocus
                                 if (focused) {
+                                    focusZone = DiscoverFocusZone.RESULTS
                                     focusedArtworkUrl = anime.imageUrl
                                     focusedArtworkTitle = anime.title
                                 }
@@ -289,22 +354,7 @@ private fun DiscoverGrid(
                         title = anime.title,
                         subTitle = anime.currentEpisode,
                         focusScale = 1f,
-                        onClick = { onOpen(anime) },
-                        onKeyEvent = { event ->
-                            if (event.key == Key.Back && gridState.firstVisibleItemIndex > 0) {
-                                if (event.type == KeyEventType.KeyUp) {
-                                    coroutineScope.launch {
-                                        gridState.animateScrollToItem(0)
-                                        kotlin.runCatching {
-                                            firstCardFocusRequester.requestFocus()
-                                        }
-                                    }
-                                }
-                                true
-                            } else {
-                                false
-                            }
-                        }
+                        onClick = { onOpen(anime) }
                     )
                 }
             }
@@ -312,8 +362,60 @@ private fun DiscoverGrid(
     }
 
     LaunchedEffect(pagingItems.itemCount) {
-        val requester = groupFocusRequesters.firstOrNull() ?: applyFocusRequester
-        kotlin.runCatching { requester.requestFocus() }
+        if (!initialFocusRequested) {
+            initialFocusRequested = true
+            val requester = groupFocusRequesters.firstOrNull() ?: applyFocusRequester
+            kotlin.runCatching { requester.requestFocus() }
+        }
+    }
+    LaunchedEffect(filterIdentity) {
+        focusedArtworkUrl = ""
+        focusedArtworkTitle = ""
+        focusZone = DiscoverFocusZone.TOP_NAVIGATION
+        gridState.scrollToItem(0)
+        kotlin.runCatching {
+            (groupFocusRequesters.firstOrNull() ?: applyFocusRequester).requestFocus()
+        }
+    }
+    LaunchedEffect(gridState, pagingItems.itemCount, filterIdentity) {
+        snapshotFlow {
+            val visible = gridState.layoutInfo.visibleItemsInfo
+                .map { it.index - 1 }
+                .filter { it >= 0 }
+            visible.firstOrNull() to visible.lastOrNull()
+        }
+            .distinctUntilChanged()
+            .collectLatest { (first, last) ->
+                val firstIndex = first ?: return@collectLatest
+                val lastIndex = last ?: return@collectLatest
+                discoverPosterPrefetchIndices(
+                    firstVisibleIndex = firstIndex,
+                    lastVisibleIndex = lastIndex,
+                    itemCount = pagingItems.itemSnapshotList.items.size
+                ).forEach { index ->
+                    val anime = pagingItems.itemSnapshotList.items.getOrNull(index)
+                        ?: return@forEach
+                    if (anime.imageUrl.isBlank()) return@forEach
+                    context.imageLoader.enqueue(
+                        ImageRequest.Builder(context)
+                            .data(anime.imageUrl)
+                            .size(360, 520)
+                            .memoryCachePolicy(CachePolicy.ENABLED)
+                            .diskCachePolicy(CachePolicy.ENABLED)
+                            .networkCachePolicy(CachePolicy.ENABLED)
+                            .build()
+                    )
+                }
+            }
+    }
+    BackHandler(enabled = focusZone == DiscoverFocusZone.RESULTS) {
+        focusZone = DiscoverFocusZone.TOP_NAVIGATION
+        coroutineScope.launch {
+            gridState.animateScrollToItem(0)
+            kotlin.runCatching {
+                (groupFocusRequesters.firstOrNull() ?: applyFocusRequester).requestFocus()
+            }
+        }
     }
 }
 
@@ -513,12 +615,12 @@ private fun FilterOptionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(42.dp),
+            .height(40.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = localizedText(group.name),
-            modifier = Modifier.width(100.dp),
+            modifier = Modifier.width(88.dp),
             color = AulamaTvColors.TextSecondary,
             textAlign = TextAlign.Start,
             maxLines = 1,
@@ -533,8 +635,8 @@ private fun FilterOptionRow(
         LazyRow(
             state = rowState,
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             itemsIndexed(
@@ -575,30 +677,43 @@ private fun FilterOption(
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
-        targetValue = if (focused) 1.045f else 1f,
+        targetValue = if (focused) 1.025f else 1f,
         animationSpec = tween(durationMillis = 170),
         label = "discover-filter-scale"
     )
-    val indicatorFraction by animateFloatAsState(
+    val containerColor by animateColorAsState(
         targetValue = when {
-            focused -> 1f
-            selected -> 0.55f
-            else -> 0f
+            focused -> accent.copy(alpha = if (selected) 0.24f else 0.17f)
+            selected -> accent.copy(alpha = 0.13f)
+            else -> AulamaTvColors.Surface.copy(alpha = 0.26f)
         },
-        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
-        label = "discover-filter-indicator"
+        animationSpec = tween(durationMillis = 170),
+        label = "discover-filter-container"
     )
-    val textColor = when {
-        focused -> AulamaTvColors.TextPrimary
-        selected -> accent
-        else -> AulamaTvColors.TextSecondary
-    }
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            focused -> accent.copy(alpha = 0.95f)
+            selected -> accent.copy(alpha = 0.58f)
+            else -> AulamaTvColors.Outline.copy(alpha = 0.34f)
+        },
+        animationSpec = tween(durationMillis = 170),
+        label = "discover-filter-border"
+    )
+    val textColor by animateColorAsState(
+        targetValue = when {
+            focused -> AulamaTvColors.TextPrimary
+            selected -> accent
+            else -> AulamaTvColors.TextSecondary
+        },
+        animationSpec = tween(durationMillis = 170),
+        label = "discover-filter-text"
+    )
 
     Surface(
         onClick = onClick,
         modifier = modifier
-            .widthIn(min = 72.dp, max = 190.dp)
-            .height(38.dp)
+            .widthIn(min = 54.dp, max = 164.dp)
+            .height(34.dp)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .graphicsLayer {
                 scaleX = scale
@@ -606,20 +721,31 @@ private fun FilterOption(
             },
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         shape = ClickableSurfaceDefaults.shape(shape = AulamaCardShape),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(
+                BorderStroke(1.dp, borderColor),
+                shape = AulamaCardShape
+            ),
+            focusedBorder = Border(
+                BorderStroke(1.5.dp, borderColor),
+                shape = AulamaCardShape
+            )
+        ),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color.Transparent,
+            containerColor = containerColor,
+            focusedContainerColor = containerColor,
             contentColor = textColor,
             focusedContentColor = AulamaTvColors.TextPrimary
         )
     ) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .height(34.dp)
+                .padding(horizontal = 11.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = text,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
                 color = textColor,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
@@ -629,13 +755,6 @@ private fun FilterOption(
                     lineHeight = 18.sp,
                     fontWeight = FontWeight.SemiBold
                 )
-            )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(indicatorFraction)
-                    .height(if (focused) 3.dp else 2.dp)
-                    .background(accent)
             )
         }
     }

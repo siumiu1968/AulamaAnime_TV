@@ -10,6 +10,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Typography as TvTypography
 import com.jing.sakura.R
+import com.jing.sakura.compose.common.TvLanguage
 
 private val ClaudeSans = FontFamily(
     Font(
@@ -24,42 +25,64 @@ private fun TextStyle.withClaudeStyle(weight: FontWeight): TextStyle = copy(
     letterSpacing = 0.sp
 )
 
-private fun TextStyle.withClaudeEditorialStyle(weight: FontWeight): TextStyle = copy(
-    fontFamily = FontFamily.Serif,
-    fontWeight = weight,
+private fun TextStyle.withAnimeDisplayStyle(fontFamily: FontFamily): TextStyle = copy(
+    fontFamily = fontFamily,
+    fontWeight = FontWeight.Black,
     letterSpacing = 0.sp
+)
+
+private fun animeDisplayFontFamily(language: TvLanguage): FontFamily = FontFamily(
+    Font(
+        resId = when (language) {
+            TvLanguage.Traditional -> R.font.resource_han_rounded_hk_heavy
+            TvLanguage.Simplified -> R.font.resource_han_rounded_cn_heavy
+        },
+        weight = FontWeight.Black
+    )
 )
 
 private val defaultTvTypography = TvTypography()
 
-internal val AulamaTvTypography = defaultTvTypography.copy(
-    displayLarge = defaultTvTypography.displayLarge.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    displayMedium = defaultTvTypography.displayMedium.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    displaySmall = defaultTvTypography.displaySmall.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    headlineLarge = defaultTvTypography.headlineLarge.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    headlineMedium = defaultTvTypography.headlineMedium.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    headlineSmall = defaultTvTypography.headlineSmall.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    titleLarge = defaultTvTypography.titleLarge.withClaudeEditorialStyle(FontWeight.Bold),
-    titleMedium = defaultTvTypography.titleMedium.withClaudeStyle(FontWeight.SemiBold),
-    titleSmall = defaultTvTypography.titleSmall.withClaudeStyle(FontWeight.SemiBold),
-    labelLarge = defaultTvTypography.labelLarge.withClaudeStyle(FontWeight.SemiBold),
-    labelMedium = defaultTvTypography.labelMedium.withClaudeStyle(FontWeight.SemiBold),
-    labelSmall = defaultTvTypography.labelSmall.withClaudeStyle(FontWeight.Medium)
-)
+internal fun createAulamaTvTypography(language: TvLanguage): TvTypography {
+    val displayFont = animeDisplayFontFamily(language)
+    return defaultTvTypography.copy(
+        displayLarge = defaultTvTypography.displayLarge.withAnimeDisplayStyle(displayFont),
+        displayMedium = defaultTvTypography.displayMedium.withAnimeDisplayStyle(displayFont),
+        displaySmall = defaultTvTypography.displaySmall.withAnimeDisplayStyle(displayFont),
+        headlineLarge = defaultTvTypography.headlineLarge.withAnimeDisplayStyle(displayFont),
+        headlineMedium = defaultTvTypography.headlineMedium.withAnimeDisplayStyle(displayFont),
+        headlineSmall = defaultTvTypography.headlineSmall.withAnimeDisplayStyle(displayFont),
+        titleLarge = defaultTvTypography.titleLarge.withAnimeDisplayStyle(displayFont),
+        titleMedium = defaultTvTypography.titleMedium.withAnimeDisplayStyle(displayFont),
+        titleSmall = defaultTvTypography.titleSmall.withAnimeDisplayStyle(displayFont),
+        bodyLarge = defaultTvTypography.bodyLarge.withClaudeStyle(FontWeight.Normal),
+        bodyMedium = defaultTvTypography.bodyMedium.withClaudeStyle(FontWeight.Normal),
+        bodySmall = defaultTvTypography.bodySmall.withClaudeStyle(FontWeight.Normal),
+        labelLarge = defaultTvTypography.labelLarge.withAnimeDisplayStyle(displayFont),
+        labelMedium = defaultTvTypography.labelMedium.withClaudeStyle(FontWeight.SemiBold),
+        labelSmall = defaultTvTypography.labelSmall.withClaudeStyle(FontWeight.Medium)
+    )
+}
 
 private val defaultMaterialTypography = MaterialTypography()
 
-internal val AulamaMaterialTypography = defaultMaterialTypography.copy(
-    displayLarge = defaultMaterialTypography.displayLarge.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    displayMedium = defaultMaterialTypography.displayMedium.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    displaySmall = defaultMaterialTypography.displaySmall.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    headlineLarge = defaultMaterialTypography.headlineLarge.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    headlineMedium = defaultMaterialTypography.headlineMedium.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    headlineSmall = defaultMaterialTypography.headlineSmall.withClaudeEditorialStyle(FontWeight.ExtraBold),
-    titleLarge = defaultMaterialTypography.titleLarge.withClaudeEditorialStyle(FontWeight.Bold),
-    titleMedium = defaultMaterialTypography.titleMedium.withClaudeStyle(FontWeight.SemiBold),
-    titleSmall = defaultMaterialTypography.titleSmall.withClaudeStyle(FontWeight.SemiBold),
-    labelLarge = defaultMaterialTypography.labelLarge.withClaudeStyle(FontWeight.SemiBold),
-    labelMedium = defaultMaterialTypography.labelMedium.withClaudeStyle(FontWeight.SemiBold),
-    labelSmall = defaultMaterialTypography.labelSmall.withClaudeStyle(FontWeight.Medium)
-)
+internal fun createAulamaMaterialTypography(language: TvLanguage): MaterialTypography {
+    val displayFont = animeDisplayFontFamily(language)
+    return defaultMaterialTypography.copy(
+        displayLarge = defaultMaterialTypography.displayLarge.withAnimeDisplayStyle(displayFont),
+        displayMedium = defaultMaterialTypography.displayMedium.withAnimeDisplayStyle(displayFont),
+        displaySmall = defaultMaterialTypography.displaySmall.withAnimeDisplayStyle(displayFont),
+        headlineLarge = defaultMaterialTypography.headlineLarge.withAnimeDisplayStyle(displayFont),
+        headlineMedium = defaultMaterialTypography.headlineMedium.withAnimeDisplayStyle(displayFont),
+        headlineSmall = defaultMaterialTypography.headlineSmall.withAnimeDisplayStyle(displayFont),
+        titleLarge = defaultMaterialTypography.titleLarge.withAnimeDisplayStyle(displayFont),
+        titleMedium = defaultMaterialTypography.titleMedium.withAnimeDisplayStyle(displayFont),
+        titleSmall = defaultMaterialTypography.titleSmall.withAnimeDisplayStyle(displayFont),
+        bodyLarge = defaultMaterialTypography.bodyLarge.withClaudeStyle(FontWeight.Normal),
+        bodyMedium = defaultMaterialTypography.bodyMedium.withClaudeStyle(FontWeight.Normal),
+        bodySmall = defaultMaterialTypography.bodySmall.withClaudeStyle(FontWeight.Normal),
+        labelLarge = defaultMaterialTypography.labelLarge.withAnimeDisplayStyle(displayFont),
+        labelMedium = defaultMaterialTypography.labelMedium.withClaudeStyle(FontWeight.SemiBold),
+        labelSmall = defaultMaterialTypography.labelSmall.withClaudeStyle(FontWeight.Medium)
+    )
+}

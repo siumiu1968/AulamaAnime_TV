@@ -17,7 +17,7 @@ import androidx.leanback.widget.PlaybackControlsRow.SkipPreviousAction
 import com.jing.sakura.R
 
 /** Official Leanback transport controls with only episode-specific extensions. */
-class ProgressTransportControlGlue<T : PlayerAdapter>(
+internal class ProgressTransportControlGlue<T : PlayerAdapter>(
     context: Context,
     private val activity: Activity,
     impl: T,
@@ -26,7 +26,7 @@ class ProgressTransportControlGlue<T : PlayerAdapter>(
     private val chooseEpisode: () -> Unit,
     private val playPreviousEpisode: () -> Unit,
     private val playNextEpisode: () -> Unit,
-    private val toggleFast4k: () -> Boolean
+    private val open4kModePicker: () -> Unit
 ) : PlaybackTransportControlGlue<T>(context, impl) {
 
     private val appContext = context
@@ -44,7 +44,7 @@ class ProgressTransportControlGlue<T : PlayerAdapter>(
     )
     private val fast4kAction = Action(
         ACTION_FAST_4K,
-        context.getString(R.string.player_fast_4k),
+        context.getString(Tv4kMode.OFF.labelRes),
         null,
         ContextCompat.getDrawable(context, R.drawable.ic_player_4k_off)
     )
@@ -76,7 +76,7 @@ class ProgressTransportControlGlue<T : PlayerAdapter>(
             fastForwardAction -> seekBy(SEEK_INCREMENT_MS)
             nextAction -> playNextEpisode()
             episodeListAction -> chooseEpisode()
-            fast4kAction -> updateFast4kAction(toggleFast4k())
+            fast4kAction -> open4kModePicker()
             is PlayPauseAction -> if (!onPlayPauseAction(action)) {
                 super.onActionClicked(action)
             }
@@ -135,13 +135,11 @@ class ProgressTransportControlGlue<T : PlayerAdapter>(
         playerAdapter.seekTo(if (duration > 0L) target.coerceAtMost(duration) else target)
     }
 
-    fun updateFast4kAction(enabled: Boolean) {
-        fast4kAction.label1 = appContext.getString(
-            if (enabled) R.string.player_fast_4k_on else R.string.player_fast_4k
-        )
+    fun update4kAction(mode: Tv4kMode) {
+        fast4kAction.label1 = appContext.getString(mode.labelRes)
         fast4kAction.icon = ContextCompat.getDrawable(
             appContext,
-            if (enabled) R.drawable.ic_player_4k_on else R.drawable.ic_player_4k_off
+            if (mode.isEnabled) R.drawable.ic_player_4k_on else R.drawable.ic_player_4k_off
         )
         secondaryActionsAdapter?.let { adapter ->
             val index = adapter.indexOf(fast4kAction)

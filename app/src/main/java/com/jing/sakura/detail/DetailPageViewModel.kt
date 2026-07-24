@@ -8,6 +8,7 @@ import com.jing.sakura.auth.FavoritePayload
 import com.jing.sakura.auth.TvHistoryItem
 import com.jing.sakura.data.AnimeDetailPageData
 import com.jing.sakura.data.Resource
+import com.jing.sakura.player.PlaybackCompletionPolicy
 import com.jing.sakura.repo.WebPageRepository
 import com.jing.sakura.room.VideoHistoryDao
 import com.jing.sakura.room.VideoHistoryEntity
@@ -222,7 +223,11 @@ class DetailPageViewModel constructor(
             episodeId = mappedEpisode.episodeId,
             lastEpisodeName = episodeLabel.ifBlank { mappedEpisode.episode },
             updateTime = updatedAtEpochMs.coerceAtLeast(1L),
-            lastPlayTime = currentTimeSeconds.toPositionMs(),
+            lastPlayTime = PlaybackCompletionPolicy.mappedCloudPosition(
+                currentTimeMs = currentTimeSeconds.toPositionMs(),
+                durationMs = durationSeconds.toPositionMs(),
+                completed = completed
+            ),
             coverUrl = anime.imageUrl.ifBlank { detail.imageUrl },
             videoDuration = durationSeconds.toPositionMs(),
             sourceId = sourceId

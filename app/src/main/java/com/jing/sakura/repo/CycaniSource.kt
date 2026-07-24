@@ -21,6 +21,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -100,6 +103,9 @@ class CycaniSource(
         val title = localizeText(detail.string("vod_name")).ifBlank {
             throw RuntimeException(trad("未找到番剧标题"))
         }
+        if (isSuppressedAnimeTitle(title)) {
+            throw RuntimeException(trad("此作品已下架"))
+        }
         val originalDescription = detail.string("vod_content")
             .ifBlank { detail.string("vod_blurb") }
             .let { Jsoup.parse(it).text() }
@@ -158,7 +164,7 @@ class CycaniSource(
         val related = apiGetDataArray(
             "$API_BASE_URL/video/prefer",
             linkedMapOf("vod_id" to animeId)
-        ).asJsonObjects().map { parseAnimeItem(it) }
+        ).asJsonObjects().map { parseAnimeItem(it) }.filterNot(::isSuppressedAnime)
 
         val infoList = buildList {
             addInfo("地區", trad(detail.string("vod_area")))
@@ -193,7 +199,9 @@ class CycaniSource(
         )
         ensureSuccess(root)
         val total = root.int("total")
-        val items = root.array("data").asJsonObjects().map { parseAnimeItem(it) }
+        val items = root.array("data").asJsonObjects()
+            .map { parseAnimeItem(it) }
+            .filterNot(::isSuppressedAnime)
         return AnimePageData(
             page = page,
             hasNextPage = total > page * pageSize,
@@ -211,12 +219,12 @@ class CycaniSource(
             "週六",
             "週日"
         )
+        val requestLimiter = Semaphore(TIMELINE_REQUEST_CONCURRENCY)
         val timeline = (1..7).map { day ->
             async {
-                labels[day - 1] to apiGetDataArray(
-                    "$API_BASE_URL/video/weekday_list",
-                    linkedMapOf("day" to day.toString())
-                ).asJsonObjects().map { parseAnimeItem(it) }
+                labels[day - 1] to requestLimiter.withPermit {
+                    fetchTimelineDay(day)
+                }
             }
         }.awaitAll()
         UpdateTimeLine(
@@ -347,6 +355,7 @@ class CycaniSource(
             val animeList = contentRow
                 ?.select("div.public-list-box.public-pic-b")
                 ?.mapNotNull { parseOfficialHomeItem(it, displayTitle) }
+                ?.filterNot(::isSuppressedAnime)
                 .orEmpty()
             animeList.takeIf { it.isNotEmpty() }?.let {
                 NamedValue(displayTitle, it)
@@ -361,7 +370,11 @@ class CycaniSource(
         val syncedPage = runCatching {
             authRepository?.fetchCatalogPage(params, page, pageSize)
         }.getOrNull()
-        if (syncedPage != null) return syncedPage
+        if (syncedPage != null) {
+            return syncedPage.copy(
+                animeList = syncedPage.animeList.filterNot(::isSuppressedAnime)
+            )
+        }
 
         val upstreamParams = LinkedHashMap(params)
         upstreamParams.remove("type_id")?.takeIf(String::isNotBlank)?.let {
@@ -377,7 +390,9 @@ class CycaniSource(
         )
         ensureSuccess(root)
         val total = root.int("total")
-        val items = root.array("data").asJsonObjects().map { parseAnimeItem(it) }
+        val items = root.array("data").asJsonObjects()
+            .map { parseAnimeItem(it) }
+            .filterNot(::isSuppressedAnime)
         return AnimePageData(
             page = page,
             hasNextPage = total > page * pageSize,
@@ -407,6 +422,28 @@ class CycaniSource(
 
         navCache = items
         return items
+    }
+
+    private suspend fun fetchTimelineDay(day: Int): List<AnimeData> {
+        var lastError: Exception? = null
+        repeat(TIMELINE_REQUEST_ATTEMPTS) { attempt ->
+            try {
+                return apiGetDataArray(
+                    "$API_BASE_URL/video/weekday_list",
+                    linkedMapOf("day" to day.toString())
+                ).asJsonObjects()
+                    .map { parseAnimeItem(it) }
+                    .filterNot(::isSuppressedAnime)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                lastError = error
+                if (attempt < TIMELINE_REQUEST_ATTEMPTS - 1) {
+                    delay(TIMELINE_RETRY_DELAY_MS * (attempt + 1))
+                }
+            }
+        }
+        throw lastError ?: RuntimeException(trad("時間表載入失敗"))
     }
 
     private fun parseAnimeItem(item: JsonObject): AnimeData {
@@ -631,6 +668,9 @@ class CycaniSource(
         const val SOURCE_ID = "cycani"
         private const val API_BASE_URL = "https://pc.cycback.org"
         private const val AULAMA_API_BASE_URL = "https://aulama.org/anime/api"
+        private const val TIMELINE_REQUEST_CONCURRENCY = 2
+        private const val TIMELINE_REQUEST_ATTEMPTS = 2
+        private const val TIMELINE_RETRY_DELAY_MS = 320L
         private const val WEB_BASE_URL = "https://www.cycani.org/"
         private const val CACHED_SYNOPSIS_TIMEOUT_MS = 800L
         private const val TIMELINE_SYNOPSIS_TIMEOUT_MS = 4_000L

@@ -8,6 +8,7 @@ import com.jing.sakura.BuildConfig
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimePageData
 import com.jing.sakura.extend.executeWithCoroutine
+import com.jing.sakura.repo.isSuppressedAnime
 import com.jing.sakura.remote.RemoteCommandAckStatus
 import com.jing.sakura.remote.RemotePlaybackCommand
 import com.jing.sakura.remote.RemotePlaybackCommandParser
@@ -94,13 +95,20 @@ class AulamaAuthRepository(
             val day = get(Calendar.DAY_OF_WEEK)
             if (day == Calendar.SUNDAY) 7 else day - 1
         }
-        return TvLibraryParser.parseHome(body, weekday)
+        return TvLibraryParser.parseHome(body, weekday).let { payload ->
+            payload.copy(
+                recommendations = payload.recommendations.filterNot(::isSuppressedAnime),
+                todayUpdates = payload.todayUpdates.filterNot(::isSuppressedAnime),
+                theaterItems = payload.theaterItems.filterNot(::isSuppressedAnime)
+            )
+        }
     }
 
     suspend fun fetchTvLibrary(): TvLibraryPayload {
         val favorites = fetchFavorites()
         val historyItems = authenticatedBody("/history")
             ?.let(TvLibraryParser::parseHistoryItems)
+            ?.filterNot { isSuppressedAnime(it.anime) }
             .orEmpty()
         return TvLibraryPayload(
             continueWatching = historyItems.map(TvHistoryItem::anime),
@@ -116,7 +124,12 @@ class AulamaAuthRepository(
             .addPathSegment(animeId)
             .build()
         val body = authenticatedBody(url) ?: return TvAnimeDetailPayload()
-        return TvLibraryParser.parseAnimeDetail(body)
+        return TvLibraryParser.parseAnimeDetail(body).let { payload ->
+            payload.copy(
+                related = payload.related.filterNot(::isSuppressedAnime),
+                recommendations = payload.recommendations.filterNot(::isSuppressedAnime)
+            )
+        }
     }
 
     suspend fun fetchCatalogPage(
@@ -139,7 +152,7 @@ class AulamaAuthRepository(
         val total = root.get("total")?.asInt ?: 0
         val items = RecommendationParser.parseItems(
             root.getAsJsonArray("items") ?: JsonArray()
-        )
+        ).filterNot(::isSuppressedAnime)
         return AnimePageData(
             page = page,
             hasNextPage = total > page * limit,
@@ -166,6 +179,7 @@ class AulamaAuthRepository(
     suspend fun fetchFavorites(): List<AnimeData> =
         authenticatedBody("/favorites")
             ?.let(TvLibraryParser::parseFavorites)
+            ?.filterNot(::isSuppressedAnime)
             .orEmpty()
 
     suspend fun saveFavorite(payload: FavoritePayload): Boolean {

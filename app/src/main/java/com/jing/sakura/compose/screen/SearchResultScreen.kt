@@ -2,13 +2,15 @@
 
 package com.jing.sakura.compose.screen
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -23,16 +25,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChangeCircle
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
-import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -42,6 +44,7 @@ import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.Loading
 import com.jing.sakura.compose.common.VideoCard
 import com.jing.sakura.compose.common.AulamaActionButton
+import com.jing.sakura.compose.common.AulamaFocusScale
 import com.jing.sakura.compose.common.AulamaPageHeader
 import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.aulamaTvBackground
@@ -56,11 +59,6 @@ fun SearchResultScreen(viewModel: SearchResultViewModel) {
     val pagingItems = viewModel.pager.collectAsLazyPagingItems()
     val refreshState = pagingItems.loadState.refresh
     val gridState = rememberLazyGridState()
-    val cardWidth = dimensionResource(id = R.dimen.poster_width)
-    val cardHeight = dimensionResource(id = R.dimen.poster_height)
-    val scale = 1.08f
-    val containerWidth = cardWidth * scale
-    val containerHeight = cardHeight * scale
     val itemCount = pagingItems.itemCount
     var showChooseSourceDialog by remember {
         mutableStateOf(false)
@@ -75,12 +73,12 @@ fun SearchResultScreen(viewModel: SearchResultViewModel) {
             FocusRequester()
         }
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(containerWidth),
+            columns = GridCells.Fixed(5),
             state = gridState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(horizontal = 36.dp, vertical = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(22.dp),
             content = {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     AulamaPageHeader(
@@ -102,23 +100,41 @@ fun SearchResultScreen(viewModel: SearchResultViewModel) {
                 if (refreshState is LoadState.NotLoading && pagingItems.itemCount > 0) {
                     items(count = itemCount, key = pagingItems.itemKey { it.id }) { index ->
                         val video = pagingItems[index] ?: return@items
+                        var focused by remember(video.id, video.sourceId) {
+                            mutableStateOf(false)
+                        }
+                        val scale by animateFloatAsState(
+                            targetValue = if (focused) AulamaFocusScale else 1f,
+                            animationSpec = tween(durationMillis = 180),
+                            label = "search-result-card-scale"
+                        )
                         Box(
-                            modifier = Modifier.size(containerWidth, containerHeight),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(140f / 190f),
                             contentAlignment = Alignment.Center
                         ) {
                             VideoCard(
                                 modifier = Modifier
-                                    .size(cardWidth, cardHeight)
+                                    .fillMaxSize(1f / AulamaFocusScale)
+                                    .graphicsLayer {
+                                        scaleX = scale
+                                        scaleY = scale
+                                    }
                                     .run {
                                         if (index == 0) {
                                             focusRequester(firstItemFocusRequester)
                                         } else {
                                             this
                                         }
+                                    }
+                                    .onFocusChanged { state ->
+                                        focused = state.isFocused || state.hasFocus
                                     },
                                 imageUrl = video.imageUrl,
                                 title = video.title,
                                 subTitle = video.currentEpisode,
+                                focusScale = 1f,
                                 onLongClick = { showChooseSourceDialog = true }
                             ) {
                                 DetailActivity.startActivity(context, video.id, viewModel.sourceId)

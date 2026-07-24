@@ -6,7 +6,10 @@ import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.view.*
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.graphics.drawable.toDrawable
 import androidx.fragment.app.DialogFragment
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -21,6 +24,7 @@ class ChooseEpisodeDialog<T>(
     private val dataList: List<T>,
     private val defaultSelectIndex: Int,
     private val viewWidthDp: Int,
+    private val title: String? = null,
     private val getText: (position: Int, item: T) -> String,
     private val onChoose: (position: Int, item: T) -> Unit
 ) : DialogFragment() {
@@ -138,7 +142,33 @@ class ChooseEpisodeDialog<T>(
                 outRect.bottom = 10
             }
         })
-        return recyclerView
+        val panelTitle = title?.takeIf(String::isNotBlank) ?: return recyclerView
+        val density = resources.displayMetrics.density
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((24 * density).toInt(), (26 * density).toInt(), (12 * density).toInt(), 0)
+            addView(
+                TextView(context).apply {
+                    text = panelTitle
+                    setTextColor(Color.WHITE)
+                    textSize = 22f
+                    typeface = ResourcesCompat.getFont(context, R.font.anthropic_sans_variable)
+                    includeFontPadding = false
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = (18 * density).toInt() }
+            )
+            addView(
+                recyclerView,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                )
+            )
+        }
     }
 
 

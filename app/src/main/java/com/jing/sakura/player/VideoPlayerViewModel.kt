@@ -3,7 +3,6 @@ package com.jing.sakura.player
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.jing.sakura.BuildConfig
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.CloudTimestamp
 import com.jing.sakura.auth.PlaybackHistoryPayload
@@ -23,6 +22,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import java.util.regex.Pattern
 
@@ -74,6 +75,9 @@ class VideoPlayerViewModel(
     @Volatile
     private var playingEpisode: AnimePlayListEpisode? = null
 
+    @Volatile
+    private var forcedCompletedEpisodeId: String? = null
+
     private var loadVideoJob: Pair<AnimePlayListEpisode, Job>? = null
 
     private var pendingRemoteResumeMs = anime.resumePositionMs
@@ -98,6 +102,7 @@ class VideoPlayerViewModel(
         if (playingEpisode?.episodeId != episode.episodeId) {
             playSessionId = UUID.randomUUID().toString()
             lastRemoteSyncAt = 0L
+            forcedCompletedEpisodeId = null
         }
         this.playingEpisode = episode
     }
@@ -118,20 +123,6 @@ class VideoPlayerViewModel(
         loadVideoJob = episode to viewModelScope.launch(Dispatchers.IO) {
             try {
                 _videoUrl.emit(Resource.Loading)
-                if (BuildConfig.DEBUG && anime.animeId == DEBUG_SEEK_PREVIEW_ANIME_ID) {
-                    _videoUrl.emit(
-                        Resource.Success(
-                            EpisodeUrlAndHistory(
-                                videoUrl = episode.episodeId,
-                                videoDuration = 0L,
-                                lastPlayPosition = 0L,
-                                headers = emptyMap(),
-                                episode = episode
-                            )
-                        )
-                    )
-                    return@launch
-                }
                 val resp = repository.fetchVideoUrl(
                     episode.episodeId,
                     animeId = anime.animeId,
@@ -183,16 +174,6 @@ class VideoPlayerViewModel(
 
     private fun fetchPlaybackSegments(episode: AnimePlayListEpisode, index: Int) {
         viewModelScope.launch(Dispatchers.IO) {
-            if (BuildConfig.DEBUG && anime.animeId == DEBUG_SEEK_PREVIEW_ANIME_ID) {
-                _playbackSegments.emit(
-                    PlaybackSegments(
-                        outroStartMs = 5_000L,
-                        outroEndMs = 59_000L,
-                        outroAction = "next"
-                    )
-                )
-                return@launch
-            }
             val segments = runCatching {
                 authRepository.fetchPlaybackSegments(
                     animeId = anime.animeId,
@@ -247,11 +228,16 @@ class VideoPlayerViewModel(
         persistHistorySnapshot(snapshot, forceRemoteSync)
     }
 
-    private fun buildHistorySnapshot(): HistorySnapshot? {
+    private fun buildHistorySnapshot(forceCompleted: Boolean = false): HistorySnapshot? {
         val episode = playingEpisode ?: return null
         val now = System.currentTimeMillis()
-        val position = currentPlayPosition.coerceAtLeast(0L)
         val duration = videoDuration.coerceAtLeast(0L)
+        val completed = forceCompleted || forcedCompletedEpisodeId == episode.episodeId
+        val position = if (completed) {
+            PlaybackCompletionPolicy.completedPosition(duration)
+        } else {
+            currentPlayPosition.coerceAtLeast(0L)
+        }
         val entity = VideoHistoryEntity(
                 animeId = anime.animeId,
                 animeName = anime.animeName,
@@ -273,7 +259,8 @@ class VideoPlayerViewModel(
             episodeCount = _playList.size.coerceAtLeast(1),
             currentTimeSeconds = position / 1000.0,
             durationSeconds = duration / 1000.0,
-            completed = duration > 0L && position >= (duration - 15_000L).coerceAtLeast(0L),
+            completed = completed ||
+                duration > 0L && position >= (duration - 15_000L).coerceAtLeast(0L),
             sourceTypeId = anime.sourceId,
             playSessionId = playSessionId,
             updatedAt = CloudTimestamp.formatEpochMs(now)
@@ -336,6 +323,31 @@ class VideoPlayerViewModel(
     fun hasNextEpisode(): Boolean =
         _playIndex.value >= 0 && _playIndex.value + 1 < _playList.size
 
+    /** Persists a durable completed snapshot before the player leaves the current episode. */
+    fun completeCurrentEpisode(onCompleted: () -> Unit) {
+        forcedCompletedEpisodeId = playingEpisode?.episodeId
+        val snapshot = buildHistorySnapshot(forceCompleted = true)
+        if (snapshot == null) {
+            onCompleted()
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                withTimeoutOrNull(COMPLETION_SYNC_TIMEOUT_MS) {
+                    withContext(Dispatchers.IO) {
+                        if (snapshot.accountKey.isNotBlank()) {
+                            historySyncQueue.enqueue(snapshot.accountKey, snapshot.payload)
+                        }
+                        persistHistorySnapshot(snapshot, forceRemoteSync = true)
+                    }
+                }
+            }.onFailure { error ->
+                Log.w(TAG, "Unable to flush completed playback snapshot", error)
+            }
+            onCompleted()
+        }
+    }
+
     private fun findNextEpisodeIndex(): Int? {
         if (_playList.size < 2) {
             return null
@@ -381,8 +393,8 @@ class VideoPlayerViewModel(
     }
 
     companion object {
-        private const val DEBUG_SEEK_PREVIEW_ANIME_ID = "debug-seek-preview-4x3"
         private const val REMOTE_SYNC_INTERVAL_MS = 15_000L
+        private const val COMPLETION_SYNC_TIMEOUT_MS = 2_000L
     }
 
     private data class HistorySnapshot(

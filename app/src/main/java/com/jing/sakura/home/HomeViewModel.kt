@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -41,6 +43,17 @@ class HomeViewModel(
     private val _theaterItems = MutableStateFlow<List<AnimeData>>(emptyList())
     private val _heroDescriptions = MutableStateFlow<Map<String, String>>(emptyMap())
     private val requestedHeroDetails = ConcurrentHashMap.newKeySet<String>()
+    private val heroDescriptionSemaphore = Semaphore(2)
+    private val heroSynopsisCache = HomeSynopsisCache(
+        SakuraApplication.context.getSharedPreferences(
+            "home_synopsis_cache",
+            Context.MODE_PRIVATE
+        ),
+        SakuraApplication.context.getSharedPreferences(
+            "timeline_synopsis_cache",
+            Context.MODE_PRIVATE
+        )
+    )
     private val _heroPreviewState = MutableStateFlow<HeroPreviewState>(HeroPreviewState.Idle)
     private val remoteHeroPreviewHistory = ConcurrentHashMap<String, HeroPreviewHistory>()
 
@@ -176,19 +189,69 @@ class HomeViewModel(
         viewModelScope.launch(Dispatchers.IO) { loadSyncedContent() }
     }
 
+    fun prefetchHeroDescriptions(items: List<AnimeData>) {
+        val candidates = items
+            .asSequence()
+            .filter { it.id.isNotBlank() && it.sourceId.isNotBlank() }
+            .distinctBy(::homeDescriptionKey)
+            .take(HERO_DESCRIPTION_PREFETCH_LIMIT)
+            .toList()
+        hydrateCachedHeroDescriptions(candidates)
+        candidates.forEach(::requestHeroDescription)
+    }
+
     fun loadHeroDescription(anime: AnimeData) {
-        if (anime.id.isBlank() || !anime.description.needsHeroDescriptionRefresh()) return
-        if (_heroDescriptions.value[anime.id].isNullOrBlank().not()) return
-        if (!requestedHeroDetails.add(anime.id)) return
+        hydrateCachedHeroDescriptions(listOf(anime))
+        requestHeroDescription(anime)
+    }
+
+    private fun hydrateCachedHeroDescriptions(items: List<AnimeData>) {
+        val cached = items.mapNotNull { anime ->
+            val value = heroSynopsisCache.get(anime.sourceId, anime.id)
+            resolveHeroDescription(original = "", cachedLocalized = value)
+                .takeIf(String::isNotBlank)
+                ?.let { homeDescriptionKey(anime) to it }
+        }.toMap()
+        if (cached.isNotEmpty()) {
+            _heroDescriptions.update { current -> current + cached }
+        }
+    }
+
+    private fun requestHeroDescription(anime: AnimeData) {
+        if (
+            anime.id.isBlank() ||
+            anime.sourceId.isBlank() ||
+            !anime.description.requiresLocalizedHeroSynopsis()
+        ) {
+            return
+        }
+        val requestKey = homeDescriptionKey(anime)
+        if (!_heroDescriptions.value[requestKey].isNullOrBlank()) return
+        if (!requestedHeroDetails.add(requestKey)) return
 
         viewModelScope.launch(Dispatchers.IO) {
-            val description = runCatching {
-                repository.fetchDetailPage(anime.id, anime.sourceId).description.trim()
-            }.getOrDefault("")
-            if (description.isNotBlank()) {
-                _heroDescriptions.update { it + (anime.id to description) }
-            } else {
-                requestedHeroDetails.remove(anime.id)
+            try {
+                val source = repository.requireAnimationSource(anime.sourceId)
+                val synopsis = heroDescriptionSemaphore.withPermit {
+                    if (source is CycaniSource) {
+                        source.fetchTimelineSynopsis(anime.id)
+                    } else {
+                        repository.fetchDetailPage(anime.id, anime.sourceId).description
+                    }
+                }.trim()
+                val localized = resolveHeroDescription(original = "", cachedLocalized = synopsis)
+                if (localized.isNotBlank()) {
+                    heroSynopsisCache.put(anime.sourceId, anime.id, localized)
+                    _heroDescriptions.update { current -> current + (requestKey to localized) }
+                } else if (synopsis.isBlank()) {
+                    requestedHeroDetails.remove(requestKey)
+                }
+            } catch (error: CancellationException) {
+                requestedHeroDetails.remove(requestKey)
+                throw error
+            } catch (error: Exception) {
+                requestedHeroDetails.remove(requestKey)
+                Log.d("home-synopsis", "預取中文簡介失敗：$requestKey", error)
             }
         }
     }
@@ -414,13 +477,6 @@ class HomeViewModel(
 
     private class PreviewPreparationException(message: String) : Exception(message)
 
-    private fun String.needsHeroDescriptionRefresh(): Boolean =
-        isBlank() || any { char ->
-            char in '\u3040'..'\u30ff' ||
-                char in '\u31f0'..'\u31ff' ||
-                char in '\uff66'..'\uff9f'
-        }
-
     private fun previewRequestKey(animeId: String, sourceId: String): String =
         "$sourceId:$animeId"
 
@@ -430,5 +486,9 @@ class HomeViewModel(
             ?.coerceAtMost(Long.MAX_VALUE.toDouble())
             ?.toLong()
             ?: 0L
+
+    private companion object {
+        const val HERO_DESCRIPTION_PREFETCH_LIMIT = 12
+    }
 
 }

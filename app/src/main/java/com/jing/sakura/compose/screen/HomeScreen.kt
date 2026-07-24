@@ -1,5 +1,7 @@
 package com.jing.sakura.compose.screen
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -39,6 +41,7 @@ import androidx.compose.material.icons.filled.ChangeCircle
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.Composable
@@ -84,6 +87,9 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.jing.sakura.R
 import com.jing.sakura.auth.AulamaAccount
 import com.jing.sakura.category.AnimeCategoryActivity
@@ -110,11 +116,21 @@ import com.jing.sakura.data.Resource
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.history.HistoryActivity
 import com.jing.sakura.home.HomeViewModel
+import com.jing.sakura.home.HERO_MANUAL_RESUME_DELAY_MS
+import com.jing.sakura.home.HERO_ROTATION_INTERVAL_MS
 import com.jing.sakura.home.HeroPreviewState
+import com.jing.sakura.home.homeDescriptionKey
+import com.jing.sakura.home.homePosterPrefetchUrls
+import com.jing.sakura.home.nextHeroIndex
+import com.jing.sakura.home.nextHomeRowIndex
+import com.jing.sakura.home.resolveHeroDescription
+import com.jing.sakura.home.restoredHomeRowSelection
+import com.jing.sakura.home.shouldResumeHeroRotation
 import com.jing.sakura.search.SearchActivity
 import com.jing.sakura.timeline.UpdateTimelineActivity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collect
@@ -227,15 +243,41 @@ fun HomeScreen(
                 .forEach { add(it.copy(value = it.value.distinctAnime())) }
         }.distinctBy { it.name }
     }
+    val posterPrefetchUrls = remember(featured, rows) {
+        homePosterPrefetchUrls(featured, rows.map { it.value })
+    }
+    LaunchedEffect(posterPrefetchUrls) {
+        delay(600)
+        posterPrefetchUrls.chunked(4).forEach { batch ->
+            batch.forEach { imageUrl ->
+                context.imageLoader.enqueue(
+                    ImageRequest.Builder(context)
+                        .data(imageUrl)
+                        .size(320, 460)
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .networkCachePolicy(CachePolicy.ENABLED)
+                        .build()
+                )
+            }
+            delay(100)
+        }
+    }
     val hasRenderableContent = featured.isNotEmpty() || rows.any { it.value.isNotEmpty() }
     var heroIndex by remember { mutableStateOf(0) }
     var focusedHero by remember { mutableStateOf<AnimeData?>(null) }
     var autoRotateHero by remember { mutableStateOf(true) }
+    var heroManualInteractionCount by remember { mutableStateOf(0) }
     var showSourceDialog by remember { mutableStateOf(false) }
     var showAccountDialog by remember { mutableStateOf(false) }
     var requestedInitialFocus by remember { mutableStateOf(false) }
     var focusedRowIndex by remember { mutableStateOf<Int?>(null) }
+    var displayedRowIndex by remember { mutableStateOf(0) }
+    var heroFocusRequestCount by remember { mutableStateOf(0) }
+    var topFocusRequestCount by remember { mutableStateOf(0) }
     val rowSelections = remember { mutableStateMapOf<String, Int>() }
+    val rowTransitionAlpha = remember { Animatable(1f) }
+    val rowTransitionOffset = remember { Animatable(0f) }
     var previewIdle by remember { mutableStateOf(false) }
     var previewArmed by remember { mutableStateOf(false) }
     var previewFirstFrameReady by remember { mutableStateOf(false) }
@@ -252,15 +294,22 @@ fun HomeScreen(
             onBufferOverflow = BufferOverflow.DROP_OLDEST
         )
     }
+    val rowMoveEvents = remember {
+        MutableSharedFlow<Int>(
+            extraBufferCapacity = 2,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST
+        )
+    }
     val baseHero = focusedHero ?: featured.getOrNull(heroIndex)
-    val heroDescription = baseHero?.let { heroDescriptions[it.id] }
+    val heroDescription = baseHero?.let { heroDescriptions[homeDescriptionKey(it)] }
     val hero = remember(baseHero, heroDescription) {
         baseHero?.let { anime ->
-            if (!heroDescription.isNullOrBlank()) {
-                anime.copy(description = heroDescription)
-            } else {
-                anime
-            }
+            anime.copy(
+                description = resolveHeroDescription(
+                    original = anime.description,
+                    cachedLocalized = heroDescription
+                )
+            )
         }
     }
     val extractedHeroAccent = rememberArtworkAccent(hero?.imageUrl.orEmpty())
@@ -279,22 +328,39 @@ fun HomeScreen(
     )
     val readyPreview = (heroPreviewState as? HeroPreviewState.Ready)?.spec
     val previewActive = previewArmed && previewFirstFrameReady && readyPreview != null
+    val topBarAlpha by animateFloatAsState(
+        targetValue = if (previewActive) 0.20f else 1f,
+        animationSpec = tween(360, easing = FastOutSlowInEasing),
+        label = "home-top-bar-alpha"
+    )
 
     LaunchedEffect(featured) {
         if (heroIndex !in featured.indices) heroIndex = 0
         if (focusedHero != null && featured.none { it.id == focusedHero?.id }) {
             focusedHero = null
         }
+        viewModel.prefetchHeroDescriptions(featured)
     }
     LaunchedEffect(featured.size, autoRotateHero) {
         while (autoRotateHero && featured.size > 1) {
-            delay(8_000)
-            heroIndex = (heroIndex + 1) % featured.size
+            delay(HERO_ROTATION_INTERVAL_MS)
+            focusedHero = null
+            heroIndex = nextHeroIndex(heroIndex, 1, featured.size)
         }
+    }
+    LaunchedEffect(heroManualInteractionCount, focusedRowIndex) {
+        if (!shouldResumeHeroRotation(heroManualInteractionCount, focusedRowIndex)) {
+            return@LaunchedEffect
+        }
+        delay(HERO_MANUAL_RESUME_DELAY_MS)
+        focusedHero = null
+        autoRotateHero = true
     }
     LaunchedEffect(cardFocusEvents) {
         cardFocusEvents.collectLatest { event ->
             autoRotateHero = false
+            heroManualInteractionCount += 1
+            displayedRowIndex = event.rowIndex
             if (focusedRowIndex != event.rowIndex) {
                 focusedRowIndex = event.rowIndex
             }
@@ -308,8 +374,46 @@ fun HomeScreen(
     }
     LaunchedEffect(hero?.id) {
         val selected = hero ?: return@LaunchedEffect
-        delay(260)
         viewModel.loadHeroDescription(selected)
+    }
+    LaunchedEffect(rows.size, rowMoveEvents) {
+        rowMoveEvents.collect { delta ->
+            if (rows.isEmpty()) return@collect
+            val current = displayedRowIndex.coerceIn(rows.indices)
+            val target = nextHomeRowIndex(current, delta, rows.size) ?: return@collect
+            interactionEvents.tryEmit(Unit)
+            coroutineScope {
+                launch {
+                    rowTransitionAlpha.animateTo(
+                        0.38f,
+                        tween(85, easing = FastOutSlowInEasing)
+                    )
+                }
+                launch {
+                    rowTransitionOffset.animateTo(
+                        if (delta > 0) -14f else 14f,
+                        tween(85, easing = FastOutSlowInEasing)
+                    )
+                }
+            }
+            displayedRowIndex = target
+            focusedRowIndex = target
+            rowTransitionOffset.snapTo(if (delta > 0) 14f else -14f)
+            coroutineScope {
+                launch {
+                    rowTransitionAlpha.animateTo(
+                        1f,
+                        tween(175, easing = FastOutSlowInEasing)
+                    )
+                }
+                launch {
+                    rowTransitionOffset.animateTo(
+                        0f,
+                        tween(175, easing = FastOutSlowInEasing)
+                    )
+                }
+            }
+        }
     }
     LaunchedEffect(hero?.id, focusedRowIndex, interactionEvents) {
         if (focusedRowIndex == null) {
@@ -349,6 +453,28 @@ fun HomeScreen(
             delay(180)
             heroActionFocus.safelyRequestFocus("home-hero-initial")
         }
+    }
+    LaunchedEffect(heroFocusRequestCount) {
+        if (heroFocusRequestCount > 0) {
+            delay(24)
+            heroActionFocus.safelyRequestFocus("home-row-to-hero")
+        }
+    }
+    LaunchedEffect(topFocusRequestCount) {
+        if (topFocusRequestCount > 0) {
+            delay(24)
+            topHomeFocus.safelyRequestFocus("home-back-to-nav")
+        }
+    }
+
+    BackHandler(enabled = focusedRowIndex != null) {
+        focusedRowIndex = null
+        displayedRowIndex = 0
+        previewIdle = false
+        previewArmed = false
+        previewFirstFrameReady = false
+        viewModel.cancelHeroPreview()
+        topFocusRequestCount += 1
     }
 
     Box(
@@ -411,8 +537,9 @@ fun HomeScreen(
             onMove = { delta ->
                 if (featured.isNotEmpty()) {
                     autoRotateHero = false
+                    heroManualInteractionCount += 1
                     focusedHero = null
-                    heroIndex = (heroIndex + delta + featured.size) % featured.size
+                    heroIndex = nextHeroIndex(heroIndex, delta, featured.size)
                 }
             },
             onFocused = {
@@ -425,12 +552,17 @@ fun HomeScreen(
         )
 
         if (rows.isNotEmpty()) {
-            val activeRowIndex = (focusedRowIndex ?: 0).coerceIn(rows.indices)
+            val activeRowIndex = if (focusedRowIndex == null) {
+                0
+            } else {
+                displayedRowIndex.coerceIn(rows.indices)
+            }
             val activeRow = rows[activeRowIndex]
             val nextRow = rows.getOrNull(activeRowIndex + 1)
-            val savedSelectedIndex = rowSelections[activeRow.name]
-                ?.takeIf { it in activeRow.value.indices }
-                ?: 0
+            val savedSelectedIndex = restoredHomeRowSelection(
+                savedIndex = rowSelections[activeRow.name],
+                itemCount = activeRow.value.size
+            )
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -440,6 +572,10 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .offset(y = rowShelfTop)
+                        .graphicsLayer {
+                            alpha = rowTransitionAlpha.value
+                            translationY = rowTransitionOffset.value.dp.toPx()
+                        }
                 ) {
                     MediaRow(
                         title = activeRow.name,
@@ -453,14 +589,17 @@ fun HomeScreen(
                             cardFocusEvents.tryEmit(FocusedCardEvent(activeRowIndex, video))
                         },
                         onMoveRow = { delta ->
-                            val target = activeRowIndex + delta
                             when {
-                                target in rows.indices -> {
-                                    focusedRowIndex = target
-                                    interactionEvents.tryEmit(Unit)
+                                delta < 0 && activeRowIndex == 0 -> {
+                                    focusedRowIndex = null
+                                    displayedRowIndex = 0
+                                    heroFocusRequestCount += 1
                                     true
                                 }
-
+                                nextHomeRowIndex(activeRowIndex, delta, rows.size) != null -> {
+                                    rowMoveEvents.tryEmit(delta)
+                                    true
+                                }
                                 delta > 0 -> true
                                 else -> false
                             }
@@ -474,18 +613,23 @@ fun HomeScreen(
                         }
                     )
                     if (focusedRowIndex != null) {
-                        nextRow?.let { NextRowHeading(title = it.name) }
+                        nextRow?.let {
+                            NextRowHeading(title = it.name, previewActive = previewActive)
+                        }
                     }
                 }
             }
         }
 
         HomeTopBar(
-            modifier = Modifier.align(Alignment.TopCenter),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .graphicsLayer { alpha = topBarAlpha },
             account = account,
             homeFocusRequester = topHomeFocus,
             onAnyItemFocused = {
                 focusedRowIndex = null
+                displayedRowIndex = 0
                 if (previewIdle) previewIdle = false
             },
             showSource = viewModel.getAllSources().size > 1,
@@ -501,6 +645,10 @@ fun HomeScreen(
             onHistory = { HistoryActivity.startActivity(context) },
             onSource = { showSourceDialog = true },
             onSearch = { SearchActivity.startActivity(context, viewModel.currentSourceId) },
+            onRefresh = {
+                viewModel.loadData(false)
+                viewModel.refreshSyncedContent()
+            },
             onAccount = { showAccountDialog = true }
         )
 
@@ -950,6 +1098,11 @@ private fun MediaRow(
         imageUrl = selectedVideo.imageUrl,
         enabled = rowFocused
     )
+    val rowHeaderAlpha by animateFloatAsState(
+        targetValue = if (previewActive) 0.18f else 1f,
+        animationSpec = tween(360, easing = FastOutSlowInEasing),
+        label = "home-row-header-alpha"
+    )
 
     LaunchedEffect(rowFocused, selectedVirtualIndex, videoIdentity) {
         if (!rowFocused) {
@@ -986,7 +1139,8 @@ private fun MediaRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 42.dp),
+                .padding(horizontal = 42.dp)
+                .graphicsLayer { alpha = rowHeaderAlpha },
             verticalAlignment = Alignment.CenterVertically
         ) {
             androidx.tv.material3.Text(
@@ -1065,7 +1219,7 @@ private fun MediaRow(
                     val cardAlpha by animateFloatAsState(
                         targetValue = when {
                             !rowFocused || itemIndex == selectedVirtualIndex -> 1f
-                            previewActive -> 0.14f
+                            previewActive -> 0.08f
                             !dimUnselected -> 1f
                             else -> 0.52f
                         },
@@ -1104,7 +1258,12 @@ private fun MediaRow(
 }
 
 @Composable
-private fun NextRowHeading(title: String) {
+private fun NextRowHeading(title: String, previewActive: Boolean) {
+    val headingAlpha by animateFloatAsState(
+        targetValue = if (previewActive) 0.10f else 1f,
+        animationSpec = tween(360, easing = FastOutSlowInEasing),
+        label = "home-next-row-heading-alpha"
+    )
     androidx.tv.material3.Text(
         text = localizedText(title),
         color = AulamaTvColors.TextPrimary,
@@ -1118,6 +1277,7 @@ private fun NextRowHeading(title: String) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 42.dp, top = 8.dp, end = 42.dp)
+            .graphicsLayer { alpha = headingAlpha }
     )
 }
 
@@ -1234,6 +1394,7 @@ private fun HomeTopBar(
     onHistory: () -> Unit,
     onSource: () -> Unit,
     onSearch: () -> Unit,
+    onRefresh: () -> Unit,
     onAccount: () -> Unit
 ) {
     val navItems = remember(showSource) {
@@ -1290,7 +1451,7 @@ private fun HomeTopBar(
             }
 
             Row(
-                modifier = Modifier.width(170.dp),
+                modifier = Modifier.width(220.dp),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1298,6 +1459,13 @@ private fun HomeTopBar(
                     icon = Icons.Default.Search,
                     contentDescription = "搜尋",
                     onClick = onSearch,
+                    onFocused = onAnyItemFocused
+                )
+                Spacer(Modifier.width(6.dp))
+                TopIconButton(
+                    icon = Icons.Default.Refresh,
+                    contentDescription = "重新載入",
+                    onClick = onRefresh,
                     onFocused = onAnyItemFocused
                 )
                 Spacer(Modifier.width(8.dp))
@@ -1360,23 +1528,23 @@ private fun TopAccountButton(
     Button(
         onClick = onClick,
         modifier = Modifier
-            .size(46.dp)
+            .size(44.dp)
             .onFocusChanged { if (it.isFocused) onFocused() },
-        contentPadding = PaddingValues(6.dp),
+        contentPadding = PaddingValues(3.dp),
         shape = ButtonDefaults.shape(shape = CircleShape),
-        scale = ButtonDefaults.scale(focusedScale = 1.07f),
+        scale = ButtonDefaults.scale(focusedScale = 1.05f),
         colors = ButtonDefaults.colors(
-            containerColor = AulamaTvColors.SurfaceRaised,
+            containerColor = Color.White.copy(alpha = 0.06f),
             contentColor = AulamaTvColors.TextPrimary,
-            focusedContainerColor = Color.White,
-            focusedContentColor = Color(0xFF07090E)
+            focusedContainerColor = Color.White.copy(alpha = 0.10f),
+            focusedContentColor = AulamaTvColors.TextPrimary
         ),
         border = ButtonDefaults.border(
-            border = Border(BorderStroke(1.dp, AulamaTvColors.Outline)),
-            focusedBorder = Border(BorderStroke(2.dp, Color.White))
+            border = Border(BorderStroke(1.dp, AulamaTvColors.Outline.copy(alpha = 0.72f))),
+            focusedBorder = Border(BorderStroke(2.dp, AulamaTvColors.FocusBorder))
         )
     ) {
-        AulamaAccountAvatar(account = account, modifier = Modifier.size(32.dp))
+        AulamaAccountAvatar(account = account, modifier = Modifier.size(38.dp))
     }
 }
 

@@ -121,7 +121,7 @@ fun AulamaPageHeader(
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontSize = 26.sp,
                     lineHeight = 31.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.Black
                 ),
                 color = AulamaTvColors.TextPrimary,
                 maxLines = 1
@@ -164,7 +164,7 @@ fun AulamaSectionHeader(
             style = MaterialTheme.typography.headlineSmall.copy(
                 fontSize = 22.sp,
                 lineHeight = 27.sp,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.Black
             ),
             color = AulamaTvColors.TextPrimary,
             modifier = Modifier.weight(1f),

@@ -21,6 +21,8 @@ fun SakuraTheme(content: @Composable () -> Unit) {
     val context = LocalContext.current
     val languagePreferences = remember(context) { TvLanguagePreferences.get(context) }
     val language by languagePreferences.language.collectAsState()
+    val tvTypography = remember(language) { createAulamaTvTypography(language) }
+    val materialTypography = remember(language) { createAulamaMaterialTypography(language) }
     val tvDarkColors = darkColorScheme(
         primary = AulamaTvColors.Cyan,
         onPrimary = Color(0xFF041013),
@@ -86,11 +88,11 @@ fun SakuraTheme(content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalTvLanguage provides language) {
         MaterialTheme(
             colorScheme = tvDarkColors,
-            typography = AulamaTvTypography
+            typography = tvTypography
         ) {
             androidx.compose.material3.MaterialTheme(
                 colorScheme = material3ThemeColors,
-                typography = AulamaMaterialTypography,
+                typography = materialTypography,
                 content = content
             )
         }

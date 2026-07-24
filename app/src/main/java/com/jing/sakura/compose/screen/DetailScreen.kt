@@ -115,7 +115,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val DetailHeroHeight = 346.dp
-private val RelatedBrowseHeroHeight = 226.dp
+private val RelatedSectionHeight = 318.dp
+private val RelatedRowHeight = 248.dp
 
 @Composable
 fun DetailScreen(viewModel: DetailPageViewModel) {
@@ -150,12 +151,11 @@ fun DetailScreen(viewModel: DetailPageViewModel) {
     var restoreEpisodePosition by remember { mutableStateOf(-1 to -1) }
     var focusedRelatedAnime by remember(detail.animeId) { mutableStateOf<AnimeData?>(null) }
     val activeBackdropAnime = focusedRelatedAnime
-    val activeBackdropAccent = rememberArtworkAccent(activeBackdropAnime?.imageUrl ?: detail.imageUrl)
-    val heroHeight by animateDpAsState(
-        targetValue = if (activeBackdropAnime == null) DetailHeroHeight else RelatedBrowseHeroHeight,
-        animationSpec = tween(durationMillis = 260),
-        label = "detail-hero-height"
+    val activeBackdropImageUrl = detailBackdropImageUrl(
+        detailImageUrl = detail.imageUrl,
+        relatedImageUrl = activeBackdropAnime?.imageUrl
     )
+    val activeBackdropAccent = rememberArtworkAccent(activeBackdropImageUrl)
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -178,6 +178,17 @@ fun DetailScreen(viewModel: DetailPageViewModel) {
             )
         }
     }
+    val relatedBrowsePolicy = remember(playlists.size, activeBackdropAnime?.id) {
+        detailRelatedBrowsePolicy(
+            playlistCount = playlists.size,
+            focusedRelatedAnimeId = activeBackdropAnime?.id
+        )
+    }
+    val heroHeight by animateDpAsState(
+        targetValue = relatedBrowsePolicy.heroHeightDp.dp,
+        animationSpec = tween(durationMillis = 260),
+        label = "detail-hero-height"
+    )
     var focusedEpisodeIndexes by remember(playlists, history?.episodeId) {
         val focused = MutableList(playlists.size) { 0 }
         history?.episodeId?.let { episodeId ->
@@ -247,7 +258,7 @@ fun DetailScreen(viewModel: DetailPageViewModel) {
             .background(AulamaTvColors.Background)
     ) {
         DetailBackdrop(
-            imageUrl = activeBackdropAnime?.imageUrl ?: detail.imageUrl,
+            imageUrl = activeBackdropImageUrl,
             accent = activeBackdropAccent
         )
         Crossfade(
@@ -280,8 +291,10 @@ fun DetailScreen(viewModel: DetailPageViewModel) {
             } else {
                 RelatedPreviewHero(
                     anime = relatedAnime,
+                    imageUrl = activeBackdropImageUrl,
                     accent = activeBackdropAccent,
-                    height = heroHeight
+                    height = heroHeight,
+                    descriptionMaxLines = relatedBrowsePolicy.descriptionMaxLines
                 )
             }
         }
@@ -431,6 +444,11 @@ fun DetailScreen(viewModel: DetailPageViewModel) {
             restoreEpisodePosition = -1 to -1
         }
     }
+    LaunchedEffect(activeBackdropAnime?.id, relatedBrowsePolicy.relatedRowIndex) {
+        val relatedRowIndex = relatedBrowsePolicy.relatedRowIndex ?: return@LaunchedEffect
+        // Keep the parent viewport anchored while horizontal focus changes within the related row.
+        detailListState.scrollToItem(relatedRowIndex)
+    }
 }
 
 @Composable
@@ -451,20 +469,25 @@ private fun DetailBackdrop(imageUrl: String, accent: Color) {
         )
         Crossfade(
             targetState = imageUrl,
+            modifier = Modifier.fillMaxSize(),
             animationSpec = tween(durationMillis = 280),
             label = "detail-backdrop"
         ) { activeImageUrl ->
-            AsyncImage(
-                model = rememberPosterImageRequest(imageUrl = activeImageUrl, widthPx = 1040, heightPx = 1040),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                alignment = Alignment.TopEnd,
-                alpha = 0.38f,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxWidth(0.58f)
-                    .fillMaxHeight()
-            )
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                AsyncImage(
+                    model = rememberPosterImageRequest(imageUrl = activeImageUrl, widthPx = 1040, heightPx = 1040),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    alignment = Alignment.TopEnd,
+                    alpha = 0.38f,
+                    modifier = Modifier
+                        .fillMaxWidth(0.58f)
+                        .fillMaxHeight()
+                )
+            }
         }
         Box(
             modifier = Modifier
@@ -629,8 +652,10 @@ private fun DetailHero(
 @Composable
 private fun RelatedPreviewHero(
     anime: AnimeData,
+    imageUrl: String,
     accent: Color,
-    height: Dp
+    height: Dp,
+    descriptionMaxLines: Int
 ) {
     val title = localizedText(anime.title)
     val description = localizedText(anime.description).trim()
@@ -649,7 +674,7 @@ private fun RelatedPreviewHero(
     ) {
         val shape = RoundedCornerShape(8.dp)
         AsyncImage(
-            model = rememberPosterImageRequest(anime.imageUrl, widthPx = 360, heightPx = 520),
+            model = rememberPosterImageRequest(imageUrl, widthPx = 360, heightPx = 520),
             contentDescription = title,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -699,7 +724,7 @@ private fun RelatedPreviewHero(
             if (description.isNotBlank()) {
                 Text(
                     text = description,
-                    maxLines = 2,
+                    maxLines = descriptionMaxLines,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontSize = 16.sp,
@@ -1261,6 +1286,7 @@ private fun RelatedAnimeSection(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(RelatedSectionHeight)
                 .padding(top = 20.dp, bottom = 12.dp)
         ) {
             Row(
@@ -1287,15 +1313,18 @@ private fun RelatedAnimeSection(
             }
             Spacer(modifier = Modifier.height(10.dp))
             LazyRow(
-                modifier = Modifier.onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                        onNavigateUp()
-                        true
-                    } else {
-                        false
-                    }
-                },
-                contentPadding = PaddingValues(horizontal = 38.dp, vertical = 2.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(RelatedRowHeight)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                            onNavigateUp()
+                            true
+                        } else {
+                            false
+                        }
+                    },
+                contentPadding = PaddingValues(horizontal = 38.dp, vertical = 5.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(count = videos.size, key = { videos[it].id }) { videoIndex ->

@@ -4,7 +4,6 @@ import android.Manifest
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.speech.SpeechRecognizer
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -19,18 +18,20 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -46,19 +47,15 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.tv.material3.Border
-import androidx.tv.material3.ButtonScale
 import androidx.tv.material3.ClickableSurfaceDefaults
-import androidx.tv.material3.ClickableSurfaceScale
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
-import androidx.tv.material3.IconButton
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import coil.compose.AsyncImage
@@ -92,6 +89,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private val PopularSearchTopics = listOf(
+    "異世界",
+    "日常",
+    "戀愛",
+    "戰鬥",
+    "奇幻",
+    "校園",
+    "推理",
+    "治癒"
+)
+
 @Composable
 fun SearchScreen(viewModel: SearchViewModel) {
 
@@ -109,27 +117,59 @@ fun SearchScreen(viewModel: SearchViewModel) {
             .fillMaxSize()
             .aulamaTvBackground()
     ) {
-        AulamaPageHeader(title = stringResource(R.string.button_search))
+        AulamaPageHeader(
+            title = stringResource(R.string.button_search),
+            subtitle = "用語音、遙控器或手機快速找到作品"
+        )
         InputKeywordRow(onSearch)
+
+        AulamaSectionHeader(
+            title = "熱門題材",
+            accent = AulamaTvColors.Pink
+        )
+        LazyRow(
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                horizontal = 36.dp,
+                vertical = 8.dp
+            ),
+            horizontalArrangement = spacedBy(14.dp)
+        ) {
+            items(PopularSearchTopics) { topic ->
+                Keyword(
+                    text = topic,
+                    modifier = Modifier
+                        .widthIn(min = 112.dp, max = 180.dp)
+                        .heightIn(min = 50.dp),
+                    onClick = { onSearch(topic) }
+                )
+            }
+        }
 
         Row(
             Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(horizontal = 18.dp, vertical = 10.dp)
+                .padding(horizontal = 36.dp, vertical = 12.dp),
+            horizontalArrangement = spacedBy(28.dp)
         ) {
             val serverUrl = WebServerContext.serverUrl.collectAsState().value
             if (serverUrl.isNotEmpty()) {
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .weight(0.42f),
-                    verticalArrangement = spacedBy(10.dp)
+                        .width(300.dp),
+                    verticalArrangement = spacedBy(8.dp)
                 ) {
                     AulamaSectionHeader(
                         title = stringResource(R.string.search_mobile_input),
                         modifier = Modifier.padding(horizontal = 0.dp),
                         accent = AulamaTvColors.Pink
+                    )
+                    Text(
+                        text = "掃描後可用手機輸入搜尋內容",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = AulamaTvColors.TextSecondary,
+                        modifier = Modifier.padding(horizontal = 4.dp)
                     )
                     val img = remember(serverUrl) {
                         val bitMatrix =
@@ -156,20 +196,19 @@ fun SearchScreen(viewModel: SearchViewModel) {
                         model = img,
                         contentDescription = stringResource(R.string.search_mobile_input),
                         modifier = Modifier
-                            .size(230.dp)
+                            .padding(top = 6.dp)
+                            .size(218.dp)
                             .background(androidx.compose.ui.graphics.Color.White, AulamaCardShape)
                             .border(1.dp, AulamaTvColors.Outline, AulamaCardShape)
                             .padding(10.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(24.dp))
                 Box(
                     modifier = Modifier
                         .width(1.dp)
                         .fillMaxHeight()
                         .background(AulamaTvColors.Outline)
                 )
-                Spacer(modifier = Modifier.width(24.dp))
             }
 
             val searchHistory = viewModel.searchHistoryPager.collectAsLazyPagingItems()
@@ -185,7 +224,7 @@ fun SearchScreen(viewModel: SearchViewModel) {
                         modifier = Modifier.padding(horizontal = 0.dp),
                         accent = AulamaTvColors.Amber
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     SearchHistoryColumn(viewModel = viewModel, onKeywordClick = onSearch)
 
                 }
@@ -347,6 +386,8 @@ fun SearchHistoryColumn(
                                     restorableFocus()
                                 }
                             }
+                            .fillMaxWidth()
+                            .heightIn(min = 50.dp)
                             .padding(vertical = 1.dp),
                         onLongClick = {
                             confirmDeleteHistory = history
