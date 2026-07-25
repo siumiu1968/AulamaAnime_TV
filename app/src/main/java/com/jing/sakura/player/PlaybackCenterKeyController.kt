@@ -7,6 +7,20 @@ internal enum class CenterKeyAction {
     STOP_BOOST
 }
 
+internal enum class CenterKeyRoute {
+    GLOBAL_PLAYBACK,
+    FOCUSED_CONTROL
+}
+
+internal object PlaybackCenterKeyRoutingPolicy {
+    fun route(controlsOverlayVisible: Boolean): CenterKeyRoute =
+        if (controlsOverlayVisible) {
+            CenterKeyRoute.FOCUSED_CONTROL
+        } else {
+            CenterKeyRoute.GLOBAL_PLAYBACK
+        }
+}
+
 /** Separates a normal OK click from a deliberate temporary 2x hold. */
 internal class PlaybackCenterKeyController(
     private val longPressThresholdMs: Long = DEFAULT_LONG_PRESS_THRESHOLD_MS

@@ -544,10 +544,22 @@ class AnimePlayerFragment : VideoSupportFragment() {
         }
 
         if (isCenterKey(event.keyCode)) {
-            return handleCenterKey(event)
+            return when (
+                PlaybackCenterKeyRoutingPolicy.route(
+                    controlsOverlayVisible = areTransportControlsVisible()
+                )
+            ) {
+                CenterKeyRoute.GLOBAL_PLAYBACK -> handleCenterKey(event)
+                CenterKeyRoute.FOCUSED_CONTROL -> {
+                    // Let Android dispatch OK to the focused action or progress bar.
+                    view?.removeCallbacks(centerLongPressRunnable)
+                    applyCenterKeyAction(centerKeyController.cancel())
+                    false
+                }
+            }
         }
 
-        if (event.action == KeyEvent.ACTION_DOWN && !isCenterKey(event.keyCode)) {
+        if (event.action == KeyEvent.ACTION_DOWN) {
             view?.removeCallbacks(centerLongPressRunnable)
             applyCenterKeyAction(centerKeyController.cancel())
         }
@@ -734,6 +746,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
         keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
             keyCode == KeyEvent.KEYCODE_ENTER ||
             keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+
+    private fun areTransportControlsVisible(): Boolean =
+        glue?.host?.isControlsOverlayVisible == true
 
     private fun restoreTransportFocus() {
         skipSegmentButton?.clearFocus()

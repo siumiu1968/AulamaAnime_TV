@@ -5,6 +5,26 @@ import org.junit.Test
 
 class PlaybackCenterKeyControllerTest {
     @Test
+    fun visibleTransportControlsReceiveCenterKeyInsteadOfGlobalPlayback() {
+        assertEquals(
+            CenterKeyRoute.FOCUSED_CONTROL,
+            PlaybackCenterKeyRoutingPolicy.route(
+                controlsOverlayVisible = true
+            )
+        )
+    }
+
+    @Test
+    fun hiddenControlsUseGlobalPlaybackShortcut() {
+        assertEquals(
+            CenterKeyRoute.GLOBAL_PLAYBACK,
+            PlaybackCenterKeyRoutingPolicy.route(
+                controlsOverlayVisible = false
+            )
+        )
+    }
+
+    @Test
     fun shortPressTogglesPlaybackWithoutStartingBoost() {
         val controller = PlaybackCenterKeyController(longPressThresholdMs = 500L)
 
