@@ -6,6 +6,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackSkipUiStateMachineTest {
+    private val intro = ActivePlaybackSkip(
+        type = ActivePlaybackSkip.Type.INTRO,
+        targetMs = 90_000L,
+        advancesEpisode = false
+    )
     private val outro = ActivePlaybackSkip(
         type = ActivePlaybackSkip.Type.OUTRO,
         targetMs = 90_000L,
@@ -13,12 +18,60 @@ class PlaybackSkipUiStateMachineTest {
     )
 
     @Test
-    fun enteringOutroOnlyShowsChoiceAndStartsEightSecondCountdown() {
+    fun naturalIntroEntryRequestsInitialFocusWithoutCountdown() {
+        val decision = PlaybackSkipUiStateMachine().update(intro)
+
+        assertTrue(decision.isVisible)
+        assertTrue(decision.shouldRequestInitialFocus)
+        assertFalse(decision.shouldStartCountdown)
+    }
+
+    @Test
+    fun naturalOutroEntryFocusesNextAndStartsEightSecondCountdown() {
         val decision = PlaybackSkipUiStateMachine().update(outro)
 
         assertTrue(decision.isVisible)
+        assertTrue(decision.shouldRequestInitialFocus)
         assertTrue(decision.shouldStartCountdown)
         assertEquals(8_000L, PlaybackSkipUiStateMachine.AUTO_NEXT_COUNTDOWN_MS)
+    }
+
+    @Test
+    fun seekIntoOutroShowsActionsWithoutFocusOrCountdown() {
+        val state = PlaybackSkipUiStateMachine()
+        state.onSeek()
+
+        val decision = state.update(outro)
+
+        assertTrue(decision.isVisible)
+        assertFalse(decision.shouldRequestInitialFocus)
+        assertFalse(decision.shouldStartCountdown)
+        assertFalse(state.update(outro).shouldStartCountdown)
+    }
+
+    @Test
+    fun seekIntoIntroShowsActionWithoutTakingTransportFocus() {
+        val state = PlaybackSkipUiStateMachine()
+        state.onSeek()
+
+        val decision = state.update(intro)
+
+        assertTrue(decision.isVisible)
+        assertFalse(decision.shouldRequestInitialFocus)
+        assertFalse(decision.shouldStartCountdown)
+    }
+
+    @Test
+    fun leavingSeekedOutroAllowsNaturalReentryToFocusAndCountdown() {
+        val state = PlaybackSkipUiStateMachine()
+        state.onSeek()
+        state.update(outro)
+        state.update(null)
+
+        val decision = state.update(outro)
+
+        assertTrue(decision.shouldRequestInitialFocus)
+        assertTrue(decision.shouldStartCountdown)
     }
 
     @Test
@@ -28,9 +81,6 @@ class PlaybackSkipUiStateMachineTest {
 
         assertTrue(state.onRemoteInteraction())
         assertFalse(state.update(outro).shouldStartCountdown)
-
-        state.onSeek()
-        assertTrue(state.update(outro).shouldStartCountdown)
     }
 
     @Test
@@ -42,6 +92,9 @@ class PlaybackSkipUiStateMachineTest {
         assertFalse(state.update(outro).isVisible)
 
         state.onSeek()
-        assertTrue(state.update(outro).isVisible)
+        val decision = state.update(outro)
+        assertTrue(decision.isVisible)
+        assertFalse(decision.shouldRequestInitialFocus)
+        assertFalse(decision.shouldStartCountdown)
     }
 }

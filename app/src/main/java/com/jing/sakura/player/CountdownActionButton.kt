@@ -69,6 +69,14 @@ class CountdownActionButton @JvmOverloads constructor(
         invalidate()
     }
 
+    fun pauseCountdown() {
+        animator?.takeIf { it.isStarted && !it.isPaused }?.pause()
+    }
+
+    fun resumeCountdown() {
+        animator?.takeIf { it.isPaused }?.resume()
+    }
+
     override fun onDraw(canvas: Canvas) {
         val focusedStrokeWidth = dp(if (isFocused) 2f else 1f)
         val inset = focusedStrokeWidth / 2f

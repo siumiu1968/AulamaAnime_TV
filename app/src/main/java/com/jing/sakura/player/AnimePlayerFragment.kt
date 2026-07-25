@@ -78,6 +78,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var playbackProgress: View? = null
     private var lastPrimaryControl: View? = null
     private var lastTransportFocus: View? = null
+    private var skipFocusWasAutomatic = false
     private var focusBindAttempts = 0
     private var playerHeader: View? = null
     private var playerHeaderTitle: TextView? = null
@@ -88,6 +89,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var wasPlayingBeforeBoost = true
     private var last4kDowngradeAtMs = 0L
     private var handledEndedEpisodeIndex = -1
+    private var nearEndAutoAdvanceSuppressed = false
 
     private val hideHeaderRunnable = Runnable {
         playerHeader?.animate()
@@ -95,6 +97,18 @@ class AnimePlayerFragment : VideoSupportFragment() {
             ?.setDuration(180L)
             ?.withEndAction { playerHeader?.visibility = View.GONE }
             ?.start()
+    }
+
+    private val hideControlsRunnable = Runnable {
+        val localGlue = glue ?: return@Runnable
+        if (
+            PlaybackControlsAutoHidePolicy.shouldHide(
+                controlsVisible = localGlue.host.isControlsOverlayVisible,
+                isPlaying = player?.isPlaying == true
+            )
+        ) {
+            localGlue.host.hideControlsOverlay(true)
+        }
     }
 
     private val centerLongPressRunnable = Runnable {
@@ -136,7 +150,15 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             snapshotPlaybackPosition()
-            if (isPlaying) viewModel.startSaveHistory() else viewModel.stopSaveHistory()
+            if (isPlaying) {
+                viewModel.startSaveHistory()
+                skipSegmentButton?.resumeCountdown()
+                scheduleControlsAutoHide()
+            } else {
+                viewModel.stopSaveHistory()
+                skipSegmentButton?.pauseCountdown()
+                cancelControlsAutoHide()
+            }
         }
 
         override fun onRenderedFirstFrame() {
@@ -175,6 +197,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
             reason: Int
         ) {
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                nearEndAutoAdvanceSuppressed = true
                 skipUiState.onSeek()
                 activePlaybackSkip = null
                 hideSkipUi()
@@ -205,6 +228,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
                 skipSegmentButton?.cancelCountdown()
                 hideSkipUi()
                 glue?.host?.showControlsOverlay(true)
+                scheduleControlsAutoHide()
             }
             setOnFocusChangeListener(::animateSkipActionFocus)
         }
@@ -258,6 +282,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
     override fun onStop() {
         clearSkipState()
+        cancelControlsAutoHide()
         applyCenterKeyAction(centerKeyController.cancel())
         playerHeader?.removeCallbacks(hideHeaderRunnable)
         snapshotPlaybackPosition()
@@ -289,6 +314,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         val localPlayer = player ?: return
         progressBarManager.show()
         handledEndedEpisodeIndex = -1
+        nearEndAutoAdvanceSuppressed = false
         clearSkipState()
 
         val dataSourceFactory = OkHttpDataSource.Factory { request ->
@@ -531,6 +557,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     fun handlePlaybackKeyEvent(event: KeyEvent): Boolean {
+        updateControlsAutoHideFor(event)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             cancelAutoNextForRemoteInteraction()
             if (!isCenterKey(event.keyCode)) showPlayerHeader()
@@ -540,7 +567,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         val continueFocused = continueOutroButton?.hasFocus() == true
         if (handleSkipFocusDirection(event, primaryFocused, continueFocused)) return true
         if (primaryFocused || continueFocused) {
-            return handleSkipActionKey(event, primaryFocused, continueFocused)
+            return handleSkipActionKey(event, continueFocused)
         }
 
         if (isCenterKey(event.keyCode)) {
@@ -568,7 +595,6 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
     private fun handleSkipActionKey(
         event: KeyEvent,
-        primaryFocused: Boolean,
         continueFocused: Boolean
     ): Boolean = when (event.keyCode) {
         KeyEvent.KEYCODE_DPAD_CENTER,
@@ -615,6 +641,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
             CenterKeyAction.SHORT_PRESS -> {
                 if (localPlayer.isPlaying) localPlayer.pause() else localPlayer.play()
                 glue?.host?.showControlsOverlay(true)
+                scheduleControlsAutoHide()
                 showPlayerHeader()
             }
             CenterKeyAction.START_BOOST -> {
@@ -723,6 +750,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
                 PlaybackSkipFocusAction.KEEP_CURRENT -> Unit
                 PlaybackSkipFocusAction.ENTER_PRIMARY -> {
                     lastTransportFocus = requireActivity().currentFocus
+                    skipFocusWasAutomatic = false
                     setSkipActionsFocusable(true)
                     skipSegmentButton?.requestFocus()
                 }
@@ -750,15 +778,20 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private fun areTransportControlsVisible(): Boolean =
         glue?.host?.isControlsOverlayVisible == true
 
-    private fun restoreTransportFocus() {
+    private fun restoreTransportFocus(showControls: Boolean = true) {
         skipSegmentButton?.clearFocus()
         continueOutroButton?.clearFocus()
+        skipFocusWasAutomatic = false
         setSkipActionsFocusable(false)
-        glue?.host?.showControlsOverlay(true)
+        if (showControls) {
+            glue?.host?.showControlsOverlay(true)
+            scheduleControlsAutoHide()
+        }
         view?.post {
+            val root = view ?: return@post
             val target = lastTransportFocus?.takeIf { it.isAttachedToWindow && it.isFocusable }
                 ?: lastPrimaryControl?.takeIf { it.isAttachedToWindow && it.isFocusable }
-            target?.requestFocus()
+            if (target?.requestFocus() != true) root.requestFocus()
         }
     }
 
@@ -766,6 +799,28 @@ class AnimePlayerFragment : VideoSupportFragment() {
         skipSegmentButton?.isFocusable = enabled
         continueOutroButton?.isFocusable =
             enabled && continueOutroButton?.visibility == View.VISIBLE
+    }
+
+    private fun updateControlsAutoHideFor(event: KeyEvent) {
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> cancelControlsAutoHide()
+            KeyEvent.ACTION_UP -> scheduleControlsAutoHide()
+        }
+    }
+
+    private fun scheduleControlsAutoHide() {
+        val root = view ?: return
+        root.removeCallbacks(hideControlsRunnable)
+        if (player?.isPlaying == true) {
+            root.postDelayed(
+                hideControlsRunnable,
+                PlaybackControlsAutoHidePolicy.IDLE_TIMEOUT_MS
+            )
+        }
+    }
+
+    private fun cancelControlsAutoHide() {
+        view?.removeCallbacks(hideControlsRunnable)
     }
 
     private fun cancelAutoNextForRemoteInteraction() {
@@ -788,6 +843,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
     override fun onDestroyView() {
         view?.removeCallbacks(centerLongPressRunnable)
+        cancelControlsAutoHide()
         applyCenterKeyAction(centerKeyController.cancel())
         playerHeader?.removeCallbacks(hideHeaderRunnable)
         speedBoostIndicator?.hideBoost()
@@ -804,6 +860,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         playbackProgress = null
         lastPrimaryControl = null
         lastTransportFocus = null
+        skipFocusWasAutomatic = false
         focusBindAttempts = 0
         playerHeader = null
         playerHeaderTitle = null
@@ -815,7 +872,14 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private fun renderSkipSegment(positionMs: Long) {
         val button = skipSegmentButton ?: return
         val durationMs = player?.contentDuration?.coerceAtLeast(0L) ?: 0L
-        if (PlaybackSkipPolicy.shouldAutoAdvanceAtEnd(positionMs, durationMs, viewModel.hasNextEpisode())) {
+        if (
+            !nearEndAutoAdvanceSuppressed &&
+            PlaybackSkipPolicy.shouldAutoAdvanceAtEnd(
+                positionMs,
+                durationMs,
+                viewModel.hasNextEpisode()
+            )
+        ) {
             advanceToNextEpisode()
             return
         }
@@ -847,17 +911,28 @@ class AnimePlayerFragment : VideoSupportFragment() {
             actions.visibility = View.VISIBLE
             actions.animate().alpha(1f).setDuration(180L).start()
         }
+        if (decision.shouldRequestInitialFocus) {
+            lastTransportFocus = requireActivity().currentFocus
+            skipFocusWasAutomatic = true
+            setSkipActionsFocusable(true)
+            if (!button.requestFocus()) {
+                skipFocusWasAutomatic = false
+                setSkipActionsFocusable(false)
+            }
+        }
         if (decision.shouldStartCountdown) {
             button.cancelCountdown()
             button.startCountdown(PlaybackSkipUiStateMachine.AUTO_NEXT_COUNTDOWN_MS) {
                 if (activePlaybackSkip == active) advanceToNextEpisode()
             }
+            if (player?.isPlaying != true) button.pauseCountdown()
         }
     }
 
     private fun hideSkipUi() {
         val shouldRestoreTransport = skipSegmentButton?.hasFocus() == true ||
             continueOutroButton?.hasFocus() == true
+        val restoreWithoutShowingControls = skipFocusWasAutomatic
         skipSegmentButton?.cancelCountdown()
         skipSegmentActions?.apply {
             animate().cancel()
@@ -871,7 +946,11 @@ class AnimePlayerFragment : VideoSupportFragment() {
             clearFocus()
         }
         setSkipActionsFocusable(false)
-        if (shouldRestoreTransport) restoreTransportFocus()
+        if (shouldRestoreTransport) {
+            restoreTransportFocus(showControls = !restoreWithoutShowingControls)
+        } else {
+            skipFocusWasAutomatic = false
+        }
     }
 
     private fun clearSkipState() {
