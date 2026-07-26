@@ -756,6 +756,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
                 }
                 PlaybackSkipFocusAction.ENTER_SECONDARY -> continueOutroButton?.requestFocus()
                 PlaybackSkipFocusAction.RETURN_TO_TRANSPORT -> restoreTransportFocus()
+                PlaybackSkipFocusAction.RETURN_TO_PRIMARY_CONTROLS -> {
+                    restoreTransportFocus(preferPrimaryControls = true)
+                }
             }
         }
         return true
@@ -778,7 +781,10 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private fun areTransportControlsVisible(): Boolean =
         glue?.host?.isControlsOverlayVisible == true
 
-    private fun restoreTransportFocus(showControls: Boolean = true) {
+    private fun restoreTransportFocus(
+        showControls: Boolean = true,
+        preferPrimaryControls: Boolean = false
+    ) {
         skipSegmentButton?.clearFocus()
         continueOutroButton?.clearFocus()
         skipFocusWasAutomatic = false
@@ -789,8 +795,15 @@ class AnimePlayerFragment : VideoSupportFragment() {
         }
         view?.post {
             val root = view ?: return@post
-            val target = lastTransportFocus?.takeIf { it.isAttachedToWindow && it.isFocusable }
-                ?: lastPrimaryControl?.takeIf { it.isAttachedToWindow && it.isFocusable }
+            val primaryControl = lastPrimaryControl?.takeIf {
+                it.isAttachedToWindow && it.isFocusable
+            }
+            val target = if (preferPrimaryControls) {
+                primaryControl
+            } else {
+                lastTransportFocus?.takeIf { it.isAttachedToWindow && it.isFocusable }
+                    ?: primaryControl
+            }
             if (target?.requestFocus() != true) root.requestFocus()
         }
     }

@@ -5,7 +5,6 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
@@ -14,6 +13,35 @@ import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.animation.LinearInterpolator
 import android.widget.TextView
+
+internal data class CountdownActionVisualStyle(
+    val surfaceColor: Int,
+    val labelColor: Int,
+    val labelShadowColor: Int?
+)
+
+internal object CountdownActionVisualPolicy {
+    fun resolve(
+        isFocused: Boolean,
+        isPressed: Boolean,
+        countdownActive: Boolean
+    ): CountdownActionVisualStyle {
+        val usesLightSurface = !countdownActive && (isFocused || isPressed)
+        return CountdownActionVisualStyle(
+            surfaceColor = when {
+                usesLightSurface -> 0xFFFFFFFF.toInt()
+                countdownActive -> 0xD9171C25.toInt()
+                else -> 0x99171C25.toInt()
+            },
+            labelColor = when {
+                usesLightSurface -> 0xFF08090B.toInt()
+                countdownActive -> 0xFFFFFFFF.toInt()
+                else -> 0xE8FFFFFF.toInt()
+            },
+            labelShadowColor = if (countdownActive) 0xB8000000.toInt() else null
+        )
+    }
+}
 
 /** TV action button with a visible left-to-right auto-advance countdown. */
 class CountdownActionButton @JvmOverloads constructor(
@@ -80,16 +108,18 @@ class CountdownActionButton @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         val focusedStrokeWidth = dp(if (isFocused) 2f else 1f)
         val inset = focusedStrokeWidth / 2f
+        val countdownActive = animator != null || progress > 0f
+        val visualStyle = CountdownActionVisualPolicy.resolve(
+            isFocused = isFocused,
+            isPressed = isPressed,
+            countdownActive = countdownActive
+        )
         bounds.set(inset, inset, width - inset, height - inset)
         val radius = bounds.height() / 2f
         capsulePath.reset()
         capsulePath.addRoundRect(bounds, radius, radius, Path.Direction.CW)
         surfacePaint.shader = null
-        surfacePaint.color = when {
-            isPressed -> 0xFFFFFFFF.toInt()
-            isFocused -> 0xF2FFFFFF.toInt()
-            else -> 0x99171C25.toInt()
-        }
+        surfacePaint.color = visualStyle.surfaceColor
         canvas.drawPath(capsulePath, surfacePaint)
 
         if (progress > 0f) {
@@ -128,12 +158,12 @@ class CountdownActionButton @JvmOverloads constructor(
         val x = (width - labelPaint.measureText(label)) / 2f
         val metrics = labelPaint.fontMetrics
         val y = (height - metrics.ascent - metrics.descent) / 2f
-        labelPaint.color = when {
-            isFocused && progress <= 0f -> 0xFF08090B.toInt()
-            isFocused -> Color.WHITE
-            else -> 0xE8FFFFFF.toInt()
+        labelPaint.color = visualStyle.labelColor
+        visualStyle.labelShadowColor?.let { shadowColor ->
+            labelPaint.setShadowLayer(dp(2f), 0f, dp(1f), shadowColor)
         }
         canvas.drawText(label, x, y, labelPaint)
+        labelPaint.clearShadowLayer()
     }
 
     override fun drawableStateChanged() {

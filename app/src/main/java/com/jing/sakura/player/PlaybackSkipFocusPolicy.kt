@@ -17,7 +17,8 @@ internal enum class PlaybackSkipFocusAction {
     KEEP_CURRENT,
     ENTER_PRIMARY,
     ENTER_SECONDARY,
-    RETURN_TO_TRANSPORT
+    RETURN_TO_TRANSPORT,
+    RETURN_TO_PRIMARY_CONTROLS
 }
 
 /** Keeps skip visibility independent from explicit D-pad focus navigation. */
@@ -36,6 +37,9 @@ internal object PlaybackSkipFocusPolicy {
             }
         }
         PlaybackSkipFocusZone.PRIMARY_ACTION -> when {
+            direction == PlaybackSkipDirection.LEFT -> {
+                PlaybackSkipFocusAction.RETURN_TO_PRIMARY_CONTROLS
+            }
             direction == PlaybackSkipDirection.DOWN -> {
                 PlaybackSkipFocusAction.RETURN_TO_TRANSPORT
             }

@@ -77,6 +77,19 @@ class PlaybackSkipFocusPolicyTest {
     }
 
     @Test
+    fun directionLeftReturnsFromPrimaryActionToPrimaryControls() {
+        assertEquals(
+            PlaybackSkipFocusAction.RETURN_TO_PRIMARY_CONTROLS,
+            PlaybackSkipFocusPolicy.action(
+                zone = PlaybackSkipFocusZone.PRIMARY_ACTION,
+                direction = PlaybackSkipDirection.LEFT,
+                actionsVisible = true,
+                secondaryVisible = false
+            )
+        )
+    }
+
+    @Test
     fun overflowPaddingCoversFocusedCapsuleScale() {
         val widestHalfOverflow = PlaybackSkipLayoutPolicy.requiredOverflowDp(144f)
         val verticalHalfOverflow = PlaybackSkipLayoutPolicy.requiredOverflowDp(50f)
