@@ -66,9 +66,15 @@ class DetailPageViewModel constructor(
         loadDataJob?.cancel()
         loadDataJob = viewModelScope.launch(Dispatchers.IO) {
             _detailPageData.emit(Resource.Loading)
+            _latestProgress.emit(Resource.Loading)
             try {
                 val localHistoryJob = async {
                     videoHistoryDao.queryLastHistoryOfAnimeId(animeId, sourceId)
+                }
+                launch {
+                    localHistoryJob.await()?.let {
+                        _latestProgress.emit(Resource.Success(it))
+                    }
                 }
                 val cloudHistoryJob = async {
                     runCatching { authRepository.fetchTvLibrary() }

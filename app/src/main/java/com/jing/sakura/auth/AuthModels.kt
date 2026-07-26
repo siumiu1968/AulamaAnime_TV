@@ -153,6 +153,7 @@ sealed interface AccountValidationResult {
 
 sealed interface AuthUiState {
     data object Checking : AuthUiState
+    data object Welcome : AuthUiState
     data object RequestingCode : AuthUiState
     data class Waiting(
         val code: DeviceCode,

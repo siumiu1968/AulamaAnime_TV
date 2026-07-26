@@ -42,7 +42,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,9 +105,9 @@ import com.jing.sakura.timeline.timelineLogicalIndex
 import com.jing.sakura.timeline.timelineMoveVirtualIndex
 import com.jing.sakura.timeline.timelinePosterPrefetchUrls
 import com.jing.sakura.timeline.timelineVirtualItemCount
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableSharedFlow
 
 @Composable
 fun TimelineScreen(viewModel: TimelineViewModel) {
@@ -239,7 +238,7 @@ fun TimeLine(
         previewArmed = false
         previewFirstFrameReady = false
         onCancelPreview()
-        DetailActivity.startActivity(context, anime.id, sourceId)
+        DetailActivity.startActivity(context, anime, sourceId)
     }
 
     Box(
@@ -486,24 +485,27 @@ private fun TimelinePosterCarousel(
     val initialVirtualIndex = remember(identity) { timelineInitialVirtualIndex(items.size) }
     val virtualItemCount = remember(identity) { timelineVirtualItemCount(items.size) }
     val rowState = rememberLazyListState(initialFirstVisibleItemIndex = initialVirtualIndex)
-    val scope = rememberCoroutineScope()
     var selectedVirtualIndex by remember(identity) { mutableIntStateOf(initialVirtualIndex) }
-    var moveJob by remember(identity) { mutableStateOf<Job?>(null) }
     var focused by remember(identity) { mutableStateOf(false) }
     val cardStridePx = with(LocalDensity.current) { 170.dp.toPx() }
+    val moveEvents = remember(identity) {
+        MutableSharedFlow<Int>(
+            extraBufferCapacity = 2,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST
+        )
+    }
     val selectedLogicalIndex = timelineLogicalIndex(selectedVirtualIndex, items.size)
     val selectedAnime = items[selectedLogicalIndex]
 
-    fun moveSelection(delta: Int) {
-        val target = timelineMoveVirtualIndex(
-            currentIndex = selectedVirtualIndex,
-            delta = delta,
-            itemCount = items.size
-        )
-        if (target == selectedVirtualIndex) return
-        selectedVirtualIndex = target
-        moveJob?.cancel()
-        moveJob = scope.launch {
+    LaunchedEffect(identity, rowState, cardStridePx) {
+        moveEvents.collect { delta ->
+            val target = timelineMoveVirtualIndex(
+                currentIndex = selectedVirtualIndex,
+                delta = delta,
+                itemCount = items.size
+            )
+            if (target == selectedVirtualIndex) return@collect
+            selectedVirtualIndex = target
             rowState.animateScrollBy(
                 value = delta * cardStridePx,
                 animationSpec = tween(
@@ -526,12 +528,12 @@ private fun TimelinePosterCarousel(
             .onPreviewKeyEvent { event ->
                 when {
                     event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
-                        moveSelection(1)
+                        moveEvents.tryEmit(1)
                         true
                     }
 
                     event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft -> {
-                        moveSelection(-1)
+                        moveEvents.tryEmit(-1)
                         true
                     }
 
@@ -586,12 +588,20 @@ private fun TimelinePosterCarousel(
                 TimelinePosterCard(
                     anime = anime,
                     selected = selected,
-                    accent = accent,
                     modifier = Modifier
                         .size(width = 160.dp, height = 240.dp)
                         .graphicsLayer { alpha = cardAlpha }
                 )
             }
+        }
+        if (focused) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 42.dp, top = 12.dp)
+                    .size(width = 160.dp, height = 240.dp)
+                    .border(BorderStroke(2.5.dp, accent), TimelinePosterShape)
+            )
         }
     }
 
@@ -609,7 +619,6 @@ private fun TimelinePosterCarousel(
 private fun TimelinePosterCard(
     anime: AnimeData,
     selected: Boolean,
-    accent: Color,
     modifier: Modifier = Modifier
 ) {
     val title = localizedText(anime.title)
@@ -621,20 +630,8 @@ private fun TimelinePosterCard(
     )
     Box(
         modifier = modifier
-            .graphicsLayer {
-                scaleX = if (selected) 1.035f else 1f
-                scaleY = if (selected) 1.035f else 1f
-                shadowElevation = if (selected) 7.dp.toPx() else 0f
-                shape = TimelinePosterShape
-                clip = false
-                ambientShadowColor = accent.copy(alpha = 0.44f)
-                spotShadowColor = accent.copy(alpha = 0.72f)
-            }
             .border(
-                BorderStroke(
-                    if (selected) 2.5.dp else 1.dp,
-                    if (selected) accent else AulamaTvColors.Outline.copy(alpha = 0.72f)
-                ),
+                BorderStroke(1.dp, AulamaTvColors.Outline.copy(alpha = 0.72f)),
                 TimelinePosterShape
             )
     ) {
@@ -930,7 +927,25 @@ private fun TimelineDayTab(
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val contentColor = if (selected || focused) accent else AulamaTvColors.TextSecondary
+    val shape = RoundedCornerShape(8.dp)
+    val containerColor by animateColorAsState(
+        targetValue = when {
+            focused -> accent
+            selected -> accent.copy(alpha = 0.18f)
+            else -> Color.Transparent
+        },
+        animationSpec = tween(durationMillis = 150),
+        label = "timeline-day-container"
+    )
+    val contentColor by animateColorAsState(
+        targetValue = when {
+            focused -> AulamaTvColors.Background
+            selected -> accent
+            else -> AulamaTvColors.TextSecondary
+        },
+        animationSpec = tween(durationMillis = 150),
+        label = "timeline-day-content"
+    )
     Surface(
         modifier = modifier
             .height(46.dp)
@@ -940,10 +955,11 @@ private fun TimelineDayTab(
             },
         onClick = onClick,
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.035f),
+        shape = ClickableSurfaceDefaults.shape(shape = shape),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color.Transparent,
-            pressedContainerColor = accent.copy(alpha = 0.08f)
+            containerColor = containerColor,
+            focusedContainerColor = containerColor,
+            pressedContainerColor = accent.copy(alpha = 0.82f)
         )
     ) {
         Column(
@@ -969,7 +985,11 @@ private fun TimelineDayTab(
                 modifier = Modifier
                     .size(width = 28.dp, height = 3.dp)
                     .background(
-                        color = if (selected) accent else Color.Transparent,
+                        color = when {
+                            focused -> AulamaTvColors.Background.copy(alpha = 0.64f)
+                            selected -> accent
+                            else -> Color.Transparent
+                        },
                         shape = AulamaCardShape
                     )
             )

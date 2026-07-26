@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,7 +16,7 @@ import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
 import com.jing.sakura.R
 import com.jing.sakura.compose.screen.TimelineScreen
-import com.jing.sakura.compose.theme.SakuraTheme
+import com.jing.sakura.compose.theme.setAulamaTvContent
 import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.core.parameter.parametersOf
 
@@ -27,24 +26,21 @@ class UpdateTimelineActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val viewModel by viewModel<TimelineViewModel> { parametersOf(intent.getStringExtra("source")) }
-        setContent {
-            SakuraTheme {
-                Box(
-                    modifier = Modifier
-                        .background(MaterialTheme.colorScheme.background)
-                        .padding(
-                            dimensionResource(id = R.dimen.screen_h_padding),
-                            dimensionResource(id = R.dimen.screen_v_padding)
-                        )
-                        .fillMaxSize()
+        setAulamaTvContent {
+            Box(
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(
+                        dimensionResource(id = R.dimen.screen_h_padding),
+                        dimensionResource(id = R.dimen.screen_v_padding)
+                    )
+                    .fillMaxSize()
+            ) {
+                CompositionLocalProvider(
+                    LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+                    androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface
                 ) {
-                    CompositionLocalProvider(
-                        LocalContentColor provides MaterialTheme.colorScheme.onSurface,
-                        androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface
-                    ) {
-                        TimelineScreen(viewModel)
-                    }
-
+                    TimelineScreen(viewModel)
                 }
             }
         }

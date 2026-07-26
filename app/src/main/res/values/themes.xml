@@ -4,6 +4,12 @@
         <item name="detailsDescriptionTitleStyle">@style/CustomLbDetailsDescriptionTitleStyle</item>
         <item name="android:windowBackground">@drawable/tv_launch_window</item>
         <item name="android:windowDisablePreview">false</item>
+        <item name="android:windowAnimationStyle">@style/AulamaActivityAnimation</item>
+    </style>
+
+    <style name="Theme.SakuraContent" parent="@style/Theme.Sakuraanimation">
+        <item name="android:windowBackground">@color/aulama_tv_background</item>
+        <item name="android:windowDisablePreview">true</item>
     </style>
 
     <style name="Theme.SakuraPlayback" parent="@style/Theme.Leanback">
@@ -14,6 +20,14 @@
         <item name="playbackControlsAutoHideTickleTimeout">4000</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowAnimationStyle">@style/AulamaActivityAnimation</item>
+    </style>
+
+    <style name="AulamaActivityAnimation" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/aulama_activity_open_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/aulama_activity_open_exit</item>
+        <item name="android:activityCloseEnterAnimation">@anim/aulama_activity_close_enter</item>
+        <item name="android:activityCloseExitAnimation">@anim/aulama_activity_close_exit</item>
     </style>
 
     <style name="CustomLbDetailsDescriptionTitleStyle" parent="Widget.Leanback.DetailsDescriptionTitleStyle">

@@ -7,6 +7,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -31,6 +32,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Border
@@ -188,7 +191,12 @@ fun AulamaActionButton(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     enabled: Boolean = true,
-    accent: Color = AulamaTvColors.Cyan
+    accent: Color = AulamaTvColors.Cyan,
+    centerLabel: Boolean = false,
+    labelFontSize: TextUnit = 16.sp,
+    labelLineHeight: TextUnit = 20.sp,
+    iconSize: Dp = 20.dp,
+    contentHeight: Dp = 52.dp
 ) {
     val displayLabel = localizedText(label)
     Button(
@@ -215,24 +223,52 @@ fun AulamaActionButton(
             focusedContentColor = Color(0xFF061014)
         )
     ) {
-        Row(
-            modifier = Modifier.height(52.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            if (icon != null) {
-                Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-            }
-            Text(
-                text = displayLabel,
-                maxLines = 1,
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = 16.sp,
-                    lineHeight = 20.sp,
-                    fontWeight = FontWeight.SemiBold
+        if (centerLabel) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(contentHeight)
+            ) {
+                if (icon != null) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .size(iconSize)
+                    )
+                }
+                Text(
+                    text = displayLabel,
+                    maxLines = 1,
+                    modifier = Modifier.align(Alignment.Center),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = labelFontSize,
+                        lineHeight = labelLineHeight,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 )
-            )
+            }
+        } else {
+            Row(
+                modifier = Modifier.height(contentHeight),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                if (icon != null) {
+                    Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(iconSize))
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(
+                    text = displayLabel,
+                    maxLines = 1,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = labelFontSize,
+                        lineHeight = labelLineHeight,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                )
+            }
         }
     }
 }

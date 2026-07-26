@@ -21,15 +21,25 @@ class AuthViewModel(
         viewModelScope.launch {
             repository.session.drop(1).collect { session ->
                 if (session == null && _state.value is AuthUiState.Authenticated) {
-                    beginLogin()
+                    _state.value = AuthUiState.Welcome
                 }
             }
         }
         bootstrap()
     }
 
+    fun startLogin() {
+        beginLogin()
+    }
+
     fun retryLogin() {
         beginLogin()
+    }
+
+    fun cancelLogin() {
+        loginJob?.cancel()
+        loginJob = null
+        _state.value = AuthUiState.Welcome
     }
 
     fun logout() {
@@ -37,16 +47,17 @@ class AuthViewModel(
         loginJob = viewModelScope.launch {
             _state.value = AuthUiState.Checking
             repository.logout()
-            requestAndPoll()
+            _state.value = AuthUiState.Welcome
         }
     }
 
     private fun bootstrap() {
         loginJob = viewModelScope.launch {
+            val startedAtMs = System.currentTimeMillis()
             val session = repository.session.value
             if (session == null || session.isExpired()) {
                 repository.clearSession()
-                requestAndPoll()
+                showWelcomeAfterBrandMoment(startedAtMs)
                 return@launch
             }
             when (val validation = repository.validateAccount(session)) {
@@ -55,13 +66,22 @@ class AuthViewModel(
                 }
                 AccountValidationResult.Unauthorized -> {
                     repository.clearSession()
-                    requestAndPoll()
+                    showWelcomeAfterBrandMoment(startedAtMs)
                 }
                 AccountValidationResult.Unavailable -> {
                     _state.value = AuthUiState.Authenticated(session.account)
                 }
             }
         }
+    }
+
+    private suspend fun showWelcomeAfterBrandMoment(startedAtMs: Long) {
+        val remainingMs = AuthEntryPolicy.remainingBrandDisplayMs(
+            startedAtMs = startedAtMs,
+            nowMs = System.currentTimeMillis()
+        )
+        if (remainingMs > 0L) delay(remainingMs)
+        _state.value = AuthUiState.Welcome
     }
 
     private fun beginLogin() {

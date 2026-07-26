@@ -258,9 +258,13 @@ class HomeViewModel(
 
     fun replaceRemoteHeroPreviewHistory(items: List<HeroPreviewHistory>) {
         remoteHeroPreviewHistory.clear()
-        items.groupBy { previewRequestKey(it.animeId, it.sourceId) }
-            .mapValues { (_, values) -> values.maxBy(HeroPreviewHistory::updatedAtMs) }
-            .forEach(remoteHeroPreviewHistory::put)
+        for (item in items) {
+            val key = previewRequestKey(item.animeId, item.sourceId)
+            val current = remoteHeroPreviewHistory[key]
+            if (current == null || item.updatedAtMs > current.updatedAtMs) {
+                remoteHeroPreviewHistory[key] = item
+            }
+        }
     }
 
     fun prepareHeroPreview(anime: AnimeData, force: Boolean = false) {

@@ -40,15 +40,18 @@
         </activity>
         <activity
             android:name=".search.SearchActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@style/Theme.SakuraContent" />
 
         <activity
             android:name=".search.SearchResultActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@style/Theme.SakuraContent" />
 
         <activity
             android:name=".detail.DetailActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@style/Theme.SakuraContent" />
 
         <activity
             android:name=".player.PlaybackActivity"
@@ -57,14 +60,17 @@
 
         <activity
             android:name=".history.HistoryActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@style/Theme.SakuraContent" />
         <activity
             android:name=".timeline.UpdateTimelineActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@style/Theme.SakuraContent" />
 
         <activity
             android:name=".category.AnimeCategoryActivity"
-            android:exported="false"/>
+            android:exported="false"
+            android:theme="@style/Theme.SakuraContent" />
     </application>
 
 </manifest>

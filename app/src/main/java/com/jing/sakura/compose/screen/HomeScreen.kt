@@ -1,6 +1,8 @@
 package com.jing.sakura.compose.screen
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -12,6 +14,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -57,6 +62,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -132,6 +138,8 @@ import com.jing.sakura.home.HERO_ROTATION_INTERVAL_MS
 import com.jing.sakura.home.HeroPreviewState
 import com.jing.sakura.home.homeDescriptionKey
 import com.jing.sakura.home.homePosterPrefetchUrls
+import com.jing.sakura.home.homeRowShouldLoop
+import com.jing.sakura.home.moveFiniteHomeRowSelection
 import com.jing.sakura.home.nextHeroIndex
 import com.jing.sakura.home.nextHomeRowIndex
 import com.jing.sakura.home.resolveHeroDescription
@@ -557,7 +565,16 @@ fun HomeScreen(
         previewArmed = false
         previewFirstFrameReady = false
         viewModel.cancelHeroPreview()
-        DetailActivity.startActivity(context, anime.id, anime.sourceId)
+        val resumeEpisode = rows
+            .getOrNull(focusedRowIndex ?: -1)
+            ?.takeIf { it.name == "繼續觀看" }
+            ?.let { anime.currentEpisode }
+            .orEmpty()
+        DetailActivity.startActivity(
+            context = context,
+            anime = anime,
+            resumeEpisode = resumeEpisode
+        )
     }
     val requestRefresh: () -> Unit = {
         if (!refreshInProgress) {
@@ -807,10 +824,26 @@ private fun CinematicBackdrop(
     revealArtwork: Boolean,
     previewActive: Boolean
 ) {
-    val backdropRequest = rememberPosterImageRequest(
-        imageUrl = hero?.imageUrl.orEmpty(),
-        widthPx = 960,
-        heightPx = 1360
+    val reducedMotion = rememberReducedMotion()
+    val targetBackdrop = remember(hero?.sourceId, hero?.id, hero?.imageUrl) {
+        hero
+            ?.takeIf { it.imageUrl.isNotBlank() }
+            ?.let {
+                HomeBackdropState(
+                    key = "${it.sourceId}:${it.id}:${it.imageUrl}",
+                    imageUrl = it.imageUrl
+                )
+            }
+    }
+    var readyBackdrop by remember { mutableStateOf<HomeBackdropState?>(null) }
+    val currentTargetKey by rememberUpdatedState(targetBackdrop?.key)
+    val animatedAccent by animateColorAsState(
+        targetValue = accent,
+        animationSpec = tween(
+            durationMillis = if (reducedMotion) 0 else 360,
+            easing = FastOutSlowInEasing
+        ),
+        label = "home-backdrop-accent"
     )
     val artworkAlpha = when {
         previewActive -> 0f
@@ -818,7 +851,50 @@ private fun CinematicBackdrop(
         else -> 0.76f
     }
     Box(modifier = Modifier.fillMaxSize()) {
-        if (!hero?.imageUrl.isNullOrBlank()) {
+        targetBackdrop
+            ?.takeIf { it.key != readyBackdrop?.key }
+            ?.let { pending ->
+                val pendingRequest = rememberPosterImageRequest(
+                    imageUrl = pending.imageUrl,
+                    widthPx = 960,
+                    heightPx = 1360
+                )
+                AsyncImage(
+                    model = pendingRequest,
+                    contentDescription = null,
+                    onSuccess = {
+                        if (currentTargetKey == pending.key) readyBackdrop = pending
+                    },
+                    modifier = Modifier
+                        .size(1.dp)
+                        .graphicsLayer { alpha = 0f }
+                )
+            }
+        AnimatedContent(
+            targetState = readyBackdrop,
+            transitionSpec = {
+                fadeIn(
+                    tween(
+                        durationMillis = if (reducedMotion) 0 else 420,
+                        easing = FastOutSlowInEasing
+                    )
+                ).togetherWith(
+                    fadeOut(
+                        tween(
+                            durationMillis = if (reducedMotion) 0 else 300,
+                            easing = FastOutSlowInEasing
+                        )
+                    )
+                )
+            },
+            label = "home-backdrop-crossfade"
+        ) { state ->
+            if (state == null) return@AnimatedContent
+            val backdropRequest = rememberPosterImageRequest(
+                imageUrl = state.imageUrl,
+                widthPx = 960,
+                heightPx = 1360
+            )
             AsyncImage(
                 model = backdropRequest,
                 contentDescription = null,
@@ -840,7 +916,7 @@ private fun CinematicBackdrop(
             .fillMaxSize()
             .background(
                 Brush.radialGradient(
-                    colors = listOf(accent.copy(alpha = 0.20f), Color.Transparent),
+                    colors = listOf(animatedAccent.copy(alpha = 0.20f), Color.Transparent),
                     radius = 820f
                 )
             )
@@ -884,6 +960,11 @@ private fun CinematicBackdrop(
             )
     )
 }
+
+private data class HomeBackdropState(
+    val key: String,
+    val imageUrl: String
+)
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -1175,7 +1256,8 @@ private fun MediaRow(
     val videoIdentity = remember(videos) {
         videos.joinToString(separator = "|") { "${it.sourceId}:${it.id}" }
     }
-    val loopEnabled = videos.size > 1
+    val loopEnabled = homeRowShouldLoop(itemCount = videos.size)
+    val canMove = videos.size > 1
     val loopCopies = 101
     val loopStart = remember(videoIdentity) {
         if (loopEnabled) {
@@ -1200,6 +1282,11 @@ private fun MediaRow(
         )
     }
     val selectedVideo = videos[selectedVirtualIndex % videos.size]
+    val focusFrameOffset by animateDpAsState(
+        targetValue = if (loopEnabled) 0.dp else (selectedVirtualIndex * 166).dp,
+        animationSpec = tween(durationMillis = 165, easing = LinearOutSlowInEasing),
+        label = "home-row-focus-frame-offset"
+    )
     val selectedAccent = rememberArtworkAccent(
         imageUrl = selectedVideo.imageUrl,
         enabled = rowFocused
@@ -1223,17 +1310,30 @@ private fun MediaRow(
 
     LaunchedEffect(videoIdentity, rowState, cardStridePx) {
         moveEvents.collect { delta ->
-            if (!loopEnabled) return@collect
+            if (!canMove) return@collect
             dimUnselected = false
-            selectedVirtualIndex += delta
-            onSelectionChanged(selectedVirtualIndex % videos.size)
-            rowState.animateScrollBy(
-                value = delta * cardStridePx,
-                animationSpec = tween(
-                    durationMillis = 165,
-                    easing = LinearOutSlowInEasing
+            val previousIndex = selectedVirtualIndex
+            val targetIndex = if (loopEnabled) {
+                previousIndex + delta
+            } else {
+                moveFiniteHomeRowSelection(
+                    currentIndex = previousIndex,
+                    delta = delta,
+                    itemCount = videos.size
                 )
-            )
+            }
+            if (targetIndex == previousIndex) return@collect
+            selectedVirtualIndex = targetIndex
+            onSelectionChanged(selectedVirtualIndex % videos.size)
+            if (loopEnabled) {
+                rowState.animateScrollBy(
+                    value = (targetIndex - previousIndex) * cardStridePx,
+                    animationSpec = tween(
+                        durationMillis = 165,
+                        easing = LinearOutSlowInEasing
+                    )
+                )
+            }
         }
     }
 
@@ -1279,12 +1379,12 @@ private fun MediaRow(
                     when {
                         event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
                             dimUnselected = false
-                            if (loopEnabled) moveEvents.tryEmit(1)
+                            if (canMove) moveEvents.tryEmit(1)
                             true
                         }
                         event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft -> {
                             dimUnselected = false
-                            if (loopEnabled) moveEvents.tryEmit(-1)
+                            if (canMove) moveEvents.tryEmit(-1)
                             true
                         }
                         event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp -> {
@@ -1351,7 +1451,7 @@ private fun MediaRow(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(start = 42.dp, top = 6.dp)
+                        .padding(start = 42.dp + focusFrameOffset, top = 6.dp)
                         .requiredSize(width = 148.dp, height = 208.dp)
                         .border(
                             BorderStroke(2.dp, selectedAccent),

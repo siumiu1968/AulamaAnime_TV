@@ -9,7 +9,6 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +16,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -26,7 +26,8 @@ import com.jing.sakura.auth.AuthUiState
 import com.jing.sakura.auth.AuthViewModel
 import com.jing.sakura.compose.screen.DeviceLoginScreen
 import com.jing.sakura.compose.screen.HomeScreen
-import com.jing.sakura.compose.theme.SakuraTheme
+import com.jing.sakura.compose.theme.setAulamaTvContent
+import com.jing.sakura.data.Resource
 import com.jing.sakura.update.TvUpdate
 import com.jing.sakura.update.TvUpdateDialog
 import com.jing.sakura.update.TvUpdateDownloadState
@@ -59,47 +60,58 @@ class MainActivity : ComponentActivity() {
         registerDownloadReceiver()
         val viewModel: HomeViewModel by viewModel()
         val authViewModel: AuthViewModel by viewModel()
-        setContent {
-            SakuraTheme {
-                val downloadState = updateManager.downloadState.collectAsState().value
-                LaunchedEffect(downloadState) {
-                    if (downloadState is TvUpdateDownloadState.Installing) {
-                        availableUpdate.value = null
-                    }
+        setAulamaTvContent {
+            val downloadState = updateManager.downloadState.collectAsState().value
+            val homePageData = viewModel.homePageData.collectAsState().value
+            val welcomeRandomSeed = remember { System.nanoTime().toInt() }
+            val welcomeAnime = remember(homePageData, welcomeRandomSeed) {
+                val rows = (homePageData as? Resource.Success)
+                    ?.data
+                    ?.seriesList
+                    .orEmpty()
+                    .map { it.value }
+                welcomeBackdropAnime(rows = rows, randomSeed = welcomeRandomSeed)
+            }
+            LaunchedEffect(downloadState) {
+                if (downloadState is TvUpdateDownloadState.Installing) {
+                    availableUpdate.value = null
                 }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background)
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+            ) {
+                CompositionLocalProvider(
+                    androidx.tv.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+                    androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface
                 ) {
-                    CompositionLocalProvider(
-                        androidx.tv.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
-                        androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface
-                    ) {
-                        when (val authState = authViewModel.state.collectAsState().value) {
-                            is AuthUiState.Authenticated -> HomeScreen(
-                                viewModel = viewModel,
-                                account = authState.account,
-                                onLogout = authViewModel::logout,
-                                isCheckingForUpdate = isCheckingForUpdate.value,
-                                onCheckForUpdate = ::checkForUpdateManually
-                            )
-                            else -> DeviceLoginScreen(
-                                state = authState,
-                                onRetry = authViewModel::retryLogin
-                            )
-                        }
-                    }
-                    availableUpdate.value?.let { update ->
-                        TvUpdateDialog(
-                            update = update,
-                            downloadState = downloadState,
-                            onDownload = {
-                                runCatching { updateManager.download(update) }
-                            },
-                            onLater = { availableUpdate.value = null }
+                    when (val authState = authViewModel.state.collectAsState().value) {
+                        is AuthUiState.Authenticated -> HomeScreen(
+                            viewModel = viewModel,
+                            account = authState.account,
+                            onLogout = authViewModel::logout,
+                            isCheckingForUpdate = isCheckingForUpdate.value,
+                            onCheckForUpdate = ::checkForUpdateManually
+                        )
+                        else -> DeviceLoginScreen(
+                            state = authState,
+                            onLogin = authViewModel::startLogin,
+                            onCancel = authViewModel::cancelLogin,
+                            onRetry = authViewModel::retryLogin,
+                            welcomeAnime = welcomeAnime
                         )
                     }
+                }
+                availableUpdate.value?.let { update ->
+                    TvUpdateDialog(
+                        update = update,
+                        downloadState = downloadState,
+                        onDownload = {
+                            runCatching { updateManager.download(update) }
+                        },
+                        onLater = { availableUpdate.value = null }
+                    )
                 }
             }
         }

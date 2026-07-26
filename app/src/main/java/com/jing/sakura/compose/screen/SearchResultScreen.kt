@@ -137,7 +137,7 @@ fun SearchResultScreen(viewModel: SearchResultViewModel) {
                                 focusScale = 1f,
                                 onLongClick = { showChooseSourceDialog = true }
                             ) {
-                                DetailActivity.startActivity(context, video.id, viewModel.sourceId)
+                                DetailActivity.startActivity(context, video, viewModel.sourceId)
                             }
                         }
                     }

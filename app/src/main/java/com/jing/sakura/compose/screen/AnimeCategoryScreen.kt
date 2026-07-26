@@ -185,7 +185,7 @@ fun AnimeCategoryScreen(viewModel: CategoryViewModel) {
         onOpen = { anime ->
             DetailActivity.startActivity(
                 context = context,
-                animeId = anime.id,
+                anime = anime,
                 sourceId = viewModel.sourceId
             )
         }

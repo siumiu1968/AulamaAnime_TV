@@ -1,9 +1,11 @@
 package com.jing.sakura.home
 
 import com.jing.sakura.data.AnimeData
+import kotlin.random.Random
 
 internal const val HERO_ROTATION_INTERVAL_MS = 8_000L
 internal const val HERO_MANUAL_RESUME_DELAY_MS = 12_000L
+internal const val HOME_ROW_LOOP_MIN_ITEMS = 6
 
 internal fun nextHeroIndex(currentIndex: Int, delta: Int, itemCount: Int): Int {
     if (itemCount <= 0) return 0
@@ -18,6 +20,18 @@ internal fun nextHomeRowIndex(currentIndex: Int, delta: Int, rowCount: Int): Int
 internal fun restoredHomeRowSelection(savedIndex: Int?, itemCount: Int): Int {
     if (itemCount <= 0) return 0
     return savedIndex?.takeIf { it in 0 until itemCount } ?: 0
+}
+
+internal fun homeRowShouldLoop(itemCount: Int): Boolean =
+    itemCount >= HOME_ROW_LOOP_MIN_ITEMS
+
+internal fun moveFiniteHomeRowSelection(
+    currentIndex: Int,
+    delta: Int,
+    itemCount: Int
+): Int {
+    if (itemCount <= 0) return 0
+    return (currentIndex + delta).coerceIn(0, itemCount - 1)
 }
 
 internal fun shouldResumeHeroRotation(
@@ -67,6 +81,27 @@ internal fun homePosterPrefetchUrls(
         .distinct()
         .take(maxItems)
         .toList()
+}
+
+internal fun welcomeBackdropAnime(
+    rows: List<List<AnimeData>>,
+    randomSeed: Int,
+    maxItems: Int = 5,
+    candidateLimit: Int = 24
+): List<AnimeData> {
+    if (maxItems <= 0 || candidateLimit <= 0) return emptyList()
+    val candidates = ArrayList<AnimeData>(candidateLimit)
+    val seenImageUrls = HashSet<String>(candidateLimit)
+    rowLoop@ for (row in rows) {
+        for (anime in row) {
+            val imageUrl = anime.imageUrl.trim()
+            if (imageUrl.isBlank() || !seenImageUrls.add(imageUrl)) continue
+            candidates += anime.copy(imageUrl = imageUrl)
+            if (candidates.size >= candidateLimit) break@rowLoop
+        }
+    }
+    candidates.shuffle(Random(randomSeed))
+    return candidates.take(maxItems)
 }
 
 private fun Int.floorMod(divisor: Int): Int = ((this % divisor) + divisor) % divisor

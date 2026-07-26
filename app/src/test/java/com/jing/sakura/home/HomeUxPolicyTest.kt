@@ -46,6 +46,17 @@ class HomeUxPolicyTest {
     }
 
     @Test
+    fun favoritesRowStopsAtItsRealEdgesWithoutRepeatingItems() {
+        assertFalse(homeRowShouldLoop(itemCount = 2))
+        assertFalse(homeRowShouldLoop(itemCount = 5))
+        assertTrue(homeRowShouldLoop(itemCount = 6))
+
+        assertEquals(0, moveFiniteHomeRowSelection(currentIndex = 0, delta = -1, itemCount = 2))
+        assertEquals(1, moveFiniteHomeRowSelection(currentIndex = 0, delta = 1, itemCount = 2))
+        assertEquals(1, moveFiniteHomeRowSelection(currentIndex = 1, delta = 1, itemCount = 2))
+    }
+
+    @Test
     fun resumesRotationOnlyAfterManualHeroInteractionAndOutsideRows() {
         assertTrue(shouldResumeHeroRotation(manualInteractionCount = 1, focusedRowIndex = null))
         assertFalse(shouldResumeHeroRotation(manualInteractionCount = 0, focusedRowIndex = null))
@@ -73,5 +84,53 @@ class HomeUxPolicyTest {
                 maxItems = 3
             )
         )
+    }
+
+    @Test
+    fun welcomeBackdropSelectsRecentAnimeWithMatchingPostersWithinItsLimit() {
+        fun anime(id: String, imageUrl: String) = AnimeData(
+            id = id,
+            url = "https://example.test/$id",
+            title = id,
+            imageUrl = imageUrl,
+            sourceId = "test"
+        )
+        val selected = welcomeBackdropAnime(
+            rows = listOf(
+                listOf(
+                    anime("a", "a.jpg"),
+                    anime("duplicate", "a.jpg"),
+                    anime("blank", "")
+                ),
+                (1..10).map { anime("item-$it", "item-$it.jpg") }
+            ),
+            randomSeed = 42,
+            maxItems = 5,
+            candidateLimit = 8
+        )
+
+        assertEquals(
+            selected,
+            welcomeBackdropAnime(
+                rows = listOf(
+                    listOf(
+                        anime("a", "a.jpg"),
+                        anime("duplicate", "a.jpg"),
+                        anime("blank", "")
+                    ),
+                    (1..10).map { anime("item-$it", "item-$it.jpg") }
+                ),
+                randomSeed = 42,
+                maxItems = 5,
+                candidateLimit = 8
+            )
+        )
+        assertEquals(5, selected.size)
+        assertEquals(selected.map(AnimeData::imageUrl).distinct(), selected.map(AnimeData::imageUrl))
+        assertTrue(selected.all { it.id == it.title })
+        assertTrue(selected.all {
+            it.imageUrl == "a.jpg" ||
+                it.imageUrl.removePrefix("item-").removeSuffix(".jpg").toInt() <= 7
+        })
     }
 }

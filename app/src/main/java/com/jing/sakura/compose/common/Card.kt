@@ -46,6 +46,9 @@ fun VideoCard(
     subTitle: String = "",
     sourceName: String = "",
     focusScale: Float = AulamaFocusScale,
+    isFocusable: Boolean = true,
+    externallyFocused: Boolean = false,
+    showFocusFrame: Boolean = true,
     onKeyEvent: ((KeyEvent) -> Boolean)? = null,
     onLongClick: (() -> Unit)? = null,
     onFocused: (() -> Unit)? = null,
@@ -54,13 +57,15 @@ fun VideoCard(
     val displayTitle = localizedText(title)
     val displaySubtitle = localizedText(subTitle)
     val displaySourceName = localizedText(sourceName.toDisplayLineName())
-    var focused by remember {
+    var internallyFocused by remember {
         mutableStateOf(false)
     }
+    val focused = internallyFocused || externallyFocused
+    val focusFrameActive = focused && showFocusFrame
     var focusSettled by remember { mutableStateOf(false) }
     val posterRequest = rememberPosterImageRequest(imageUrl = imageUrl)
     val artworkAccent = rememberArtworkAccent(imageUrl, enabled = focusSettled)
-    val cardScale = if (focused) focusScale else 1f
+    val cardScale = if (focusFrameActive) focusScale else 1f
     LaunchedEffect(focused) {
         focusSettled = false
         if (focused) {
@@ -74,21 +79,22 @@ fun VideoCard(
             .graphicsLayer {
                 scaleX = cardScale
                 scaleY = cardScale
-                shadowElevation = if (focused && focusSettled) 8.dp.toPx() else 0f
+                shadowElevation = if (focusFrameActive && focusSettled) 8.dp.toPx() else 0f
                 shape = AulamaCardShape
                 clip = false
                 ambientShadowColor = artworkAccent.copy(alpha = 0.54f)
                 spotShadowColor = artworkAccent.copy(alpha = 0.82f)
             }
             .onFocusChanged {
-                focused = it.isFocused || it.hasFocus
+                internallyFocused = it.isFocused || it.hasFocus
             }
-            .focusable()
+            .focusable(enabled = isFocusable)
             .customClick(onClick = onClick, onLongClick = onLongClick, onKeyEvent = onKeyEvent)
             .border(
                 border = BorderStroke(
-                    width = if (focused) 2.5.dp else 1.dp,
-                    color = if (focused) artworkAccent else AulamaTvColors.Outline.copy(alpha = 0.72f)
+                    width = if (focusFrameActive) 2.5.dp else 1.dp,
+                    color = if (focusFrameActive) artworkAccent
+                    else AulamaTvColors.Outline.copy(alpha = 0.72f)
                 ),
                 shape = AulamaCardShape
             )

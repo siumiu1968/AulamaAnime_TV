@@ -32,6 +32,7 @@ import com.jing.sakura.room.SakuraDatabase
 import com.jing.sakura.search.SearchResultViewModel
 import com.jing.sakura.search.SearchViewModel
 import com.jing.sakura.timeline.TimelineViewModel
+import okhttp3.CookieJar
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -87,7 +88,11 @@ class SakuraApplication : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
-        CookieManager.getInstance().removeAllCookies { }
+        try {
+            CookieManager.getInstance().removeAllCookies { }
+        } catch (error: RuntimeException) {
+            Log.w(TAG, "System WebView is unavailable; skipping cookie cleanup", error)
+        }
         context = this
         applicationKoin = startKoin {
             androidContext(this@SakuraApplication)
@@ -115,11 +120,23 @@ class SakuraApplication : Application(), ImageLoaderFactory {
     }
 
     companion object {
+        private const val TAG = "SakuraApplication"
+        private const val FALLBACK_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 6.0; TV) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/99.0.0.0 Safari/537.36"
+
         @SuppressLint("StaticFieldLeak")
         lateinit var context: Context
             private set
 
-        val USER_AGENT by lazy { WebSettings.getDefaultUserAgent(context) }
+        val USER_AGENT by lazy {
+            try {
+                WebSettings.getDefaultUserAgent(context)
+            } catch (error: RuntimeException) {
+                Log.w(TAG, "System WebView is unavailable; using a fallback user agent", error)
+                System.getProperty("http.agent").orEmpty().ifBlank { FALLBACK_USER_AGENT }
+            }
+        }
     }
 
     private fun httpModule() = module {
@@ -187,8 +204,14 @@ class SakuraApplication : Application(), ImageLoaderFactory {
     }
 
     private fun provideOkHttpClient(): OkHttpClient {
+        val cookieJar = try {
+            AndroidCookieJar()
+        } catch (error: RuntimeException) {
+            Log.w(TAG, "System WebView cookie store is unavailable; continuing without it", error)
+            CookieJar.NO_COOKIES
+        }
         return basicOkhttpClient()
-            .cookieJar(AndroidCookieJar())
+            .cookieJar(cookieJar)
             .apply {
                 if (BuildConfig.DEBUG) {
                     addInterceptor(HttpLoggingInterceptor().apply {

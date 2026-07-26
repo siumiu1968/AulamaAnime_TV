@@ -3,6 +3,7 @@
 package com.jing.sakura.compose.screen
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -67,6 +68,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -91,9 +93,9 @@ import com.jing.sakura.R
 import com.jing.sakura.compose.common.AulamaCardShape
 import com.jing.sakura.compose.common.AulamaFocusScale
 import com.jing.sakura.compose.common.AulamaTvColors
+import com.jing.sakura.compose.common.ArtworkLoading
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.FocusGroup
-import com.jing.sakura.compose.common.Loading
 import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.rememberArtworkAccent
 import com.jing.sakura.compose.common.rememberDpadRepeatGate
@@ -112,8 +114,9 @@ import com.jing.sakura.extend.showShortToast
 import com.jing.sakura.player.NavigateToPlayerArg
 import com.jing.sakura.player.PlaybackActivity
 import com.jing.sakura.room.VideoHistoryEntity
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 
 private val DetailHeroHeight = 346.dp
@@ -121,27 +124,47 @@ private val RelatedSectionHeight = 318.dp
 private val RelatedRowHeight = 248.dp
 
 @Composable
-fun DetailScreen(viewModel: DetailPageViewModel) {
+fun DetailScreen(
+    viewModel: DetailPageViewModel,
+    initialTitle: String = "",
+    initialImageUrl: String = "",
+    initialTags: String = "",
+    initialEpisodeInfo: String = "",
+    initialResumeEpisode: String = ""
+) {
     val context = LocalContext.current
     LaunchedEffect(viewModel) {
         viewModel.favoriteErrors.collect(context::showShortToast)
     }
     val detailResource = viewModel.detailPageData.collectAsState().value
-    when (detailResource) {
-        Resource.Loading -> {
-            Loading()
-            return
-        }
+    val loadingHistory = viewModel.latestProgress.collectAsState().value.getOrNull()
+    Crossfade(
+        targetState = detailResource,
+        animationSpec = tween(durationMillis = 320, easing = LinearOutSlowInEasing),
+        label = "detail-load-transition"
+    ) { state ->
+        when (state) {
+            is Resource.Loading -> ArtworkLoading(
+                title = initialTitle,
+                imageUrl = initialImageUrl,
+                tags = initialTags,
+                episodeInfo = initialEpisodeInfo,
+                resumeEpisode = loadingHistory?.lastEpisodeName.orEmpty()
+                    .ifBlank { initialResumeEpisode }
+            )
 
-        is Resource.Error -> {
-            ErrorTip(message = detailResource.message) { viewModel.loadData() }
-            return
+            is Resource.Error -> ErrorTip(message = state.message) { viewModel.loadData() }
+            is Resource.Success -> DetailContent(viewModel = viewModel, detail = state.data)
         }
-
-        else -> Unit
     }
+}
 
-    val detail = (detailResource as Resource.Success).data
+@Composable
+private fun DetailContent(
+    viewModel: DetailPageViewModel,
+    detail: AnimeDetailPageData
+) {
+    val context = LocalContext.current
     val displayAnimeName = localizedText(detail.animeName)
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -1294,26 +1317,38 @@ private fun RelatedAnimeSection(
     val virtualItemCount = remember(identity) { detailRelatedVirtualItemCount(videos.size) }
     val initialVirtualIndex = remember(identity) { detailRelatedInitialVirtualIndex(videos.size) }
     val rowState = rememberLazyListState(initialFirstVisibleItemIndex = initialVirtualIndex)
-    val scope = rememberCoroutineScope()
     var selectedVirtualIndex by remember(identity) { mutableStateOf(initialVirtualIndex) }
     var rowFocused by remember(identity) { mutableStateOf(false) }
     var dimUnselected by remember(identity) { mutableStateOf(false) }
-    var moveJob by remember(identity) { mutableStateOf<Job?>(null) }
+    val cardStridePx = with(LocalDensity.current) { 164.dp.toPx() }
+    val moveEvents = remember(identity) {
+        MutableSharedFlow<Int>(
+            extraBufferCapacity = 2,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST
+        )
+    }
     val selectedLogicalIndex = detailRelatedLogicalIndex(selectedVirtualIndex, videos.size)
     val selectedVideo = videos[selectedLogicalIndex]
     val selectedAccent = rememberArtworkAccent(selectedVideo.imageUrl, enabled = rowFocused)
 
-    fun moveSelection(delta: Int) {
-        val target = detailRelatedMoveVirtualIndex(
-            currentIndex = selectedVirtualIndex,
-            delta = delta,
-            itemCount = videos.size
-        )
-        if (target == selectedVirtualIndex) return
-        selectedVirtualIndex = target
-        dimUnselected = false
-        moveJob?.cancel()
-        moveJob = scope.launch { rowState.animateScrollToItem(target) }
+    LaunchedEffect(identity, rowState, cardStridePx) {
+        moveEvents.collect { delta ->
+            val target = detailRelatedMoveVirtualIndex(
+                currentIndex = selectedVirtualIndex,
+                delta = delta,
+                itemCount = videos.size
+            )
+            if (target == selectedVirtualIndex) return@collect
+            selectedVirtualIndex = target
+            dimUnselected = false
+            rowState.animateScrollBy(
+                value = delta * cardStridePx,
+                animationSpec = tween(
+                    durationMillis = 165,
+                    easing = LinearOutSlowInEasing
+                )
+            )
+        }
     }
 
     LaunchedEffect(rowFocused, selectedVirtualIndex, identity) {
@@ -1327,16 +1362,12 @@ private fun RelatedAnimeSection(
         dimUnselected = true
     }
 
-    DisposableEffect(identity) {
-        onDispose { moveJob?.cancel() }
-    }
-
     FocusGroup(modifier) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(RelatedSectionHeight)
-                .padding(top = 20.dp, bottom = 12.dp)
+                .padding(top = 8.dp, bottom = 24.dp)
         ) {
             Row(
                 modifier = Modifier
@@ -1371,12 +1402,12 @@ private fun RelatedAnimeSection(
                     .onPreviewKeyEvent { event ->
                         when {
                             event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
-                                moveSelection(1)
+                                moveEvents.tryEmit(1)
                                 true
                             }
 
                             event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft -> {
-                                moveSelection(-1)
+                                moveEvents.tryEmit(-1)
                                 true
                             }
 
@@ -1389,9 +1420,9 @@ private fun RelatedAnimeSection(
                             event.type == KeyEventType.KeyUp &&
                                 (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
                                 DetailActivity.startActivity(
-                                    context,
-                                    selectedVideo.id,
-                                    selectedVideo.sourceId.ifBlank { sourceId }
+                                    context = context,
+                                    anime = selectedVideo,
+                                    sourceId = selectedVideo.sourceId.ifBlank { sourceId }
                                 )
                                 true
                             }
@@ -1435,7 +1466,7 @@ private fun RelatedAnimeSection(
                             RelatedPosterCard(
                                 anime = video,
                                 selected = selected,
-                                accent = selectedAccent,
+                                selectedAccent = selectedAccent,
                                 modifier = Modifier.size(width = 148.dp, height = 222.dp)
                             )
                         }
@@ -1450,7 +1481,7 @@ private fun RelatedAnimeSection(
 private fun RelatedPosterCard(
     anime: AnimeData,
     selected: Boolean,
-    accent: Color,
+    selectedAccent: Color,
     modifier: Modifier = Modifier
 ) {
     val title = localizedText(anime.title)
@@ -1460,8 +1491,12 @@ private fun RelatedPosterCard(
         modifier = modifier
             .border(
                 BorderStroke(
-                    if (selected) 2.5.dp else 1.dp,
-                    if (selected) accent else AulamaTvColors.Outline.copy(alpha = 0.72f)
+                    width = if (selected) 2.5.dp else 1.dp,
+                    color = if (selected) {
+                        selectedAccent
+                    } else {
+                        AulamaTvColors.Outline.copy(alpha = 0.72f)
+                    }
                 ),
                 AulamaCardShape
             )

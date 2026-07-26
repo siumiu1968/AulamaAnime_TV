@@ -3,15 +3,11 @@
 package com.jing.sakura.compose.screen
 
 import android.graphics.Bitmap
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +27,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
@@ -49,14 +46,15 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -72,36 +70,45 @@ import com.jing.sakura.compose.common.AulamaActionButton
 import com.jing.sakura.compose.common.AulamaAccountAvatar
 import com.jing.sakura.compose.common.AulamaAnimeBrandMark
 import com.jing.sakura.compose.common.AulamaCardShape
+import com.jing.sakura.compose.common.AulamaLoadingPulse
 import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.TvLanguage
 import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.aulamaTvBackground
+import com.jing.sakura.compose.common.rememberArtworkAccent
+import com.jing.sakura.compose.common.rememberPosterImageRequest
+import com.jing.sakura.data.AnimeData
+import kotlinx.coroutines.delay
+
+private const val WELCOME_ROTATION_INTERVAL_MS = 5_000L
+private const val WELCOME_TRANSITION_MS = 700
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun DeviceLoginScreen(
     state: AuthUiState,
-    onRetry: () -> Unit
+    onLogin: () -> Unit,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+    welcomeAnime: List<AnimeData>
 ) {
-    if (state is AuthUiState.Checking || state is AuthUiState.RequestingCode) {
-        LoginCheckingScreen()
-    } else {
-        DeviceCodeLoginScreen(state = state, onRetry = onRetry)
+    BackHandler(
+        enabled = state !is AuthUiState.Checking && state !is AuthUiState.Welcome,
+        onBack = onCancel
+    )
+    when (state) {
+        AuthUiState.Checking -> LoginCheckingScreen(showProgress = false)
+        AuthUiState.Welcome -> LoginWelcomeScreen(
+            onLogin = onLogin,
+            featuredAnime = welcomeAnime
+        )
+        AuthUiState.RequestingCode -> LoginCheckingScreen(showProgress = true)
+        else -> DeviceCodeLoginScreen(state = state, onRetry = onRetry)
     }
 }
 
 @Composable
-private fun LoginCheckingScreen() {
-    val orbit = rememberInfiniteTransition(label = "login-check-orbit")
-    val rotation by orbit.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "login-check-rotation"
-    )
+private fun LoginCheckingScreen(showProgress: Boolean) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -112,26 +119,178 @@ private fun LoginCheckingScreen() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(32.dp)
         ) {
-            AulamaAnimeBrandMark(height = 160.dp)
-            Canvas(
-                modifier = Modifier
-                    .size(48.dp)
-                    .graphicsLayer { rotationZ = rotation }
-            ) {
-                drawCircle(
-                    color = Color.White.copy(alpha = 0.12f),
-                    style = Stroke(width = 3.dp.toPx())
-                )
-                drawArc(
-                    color = AulamaTvColors.Cyan,
-                    startAngle = -90f,
-                    sweepAngle = 112f,
-                    useCenter = false,
-                    style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                )
-            }
+            AulamaAnimeBrandMark(height = 180.dp)
+            if (showProgress) LoginProgressIndicator()
         }
     }
+}
+
+@Composable
+private fun LoginProgressIndicator() {
+    AulamaLoadingPulse()
+}
+
+@Composable
+private fun LoginWelcomeScreen(
+    onLogin: () -> Unit,
+    featuredAnime: List<AnimeData>
+) {
+    val loginFocusRequester = remember { FocusRequester() }
+    var featuredIndex by remember { mutableStateOf(0) }
+    LaunchedEffect(featuredAnime) {
+        featuredIndex = 0
+        while (featuredAnime.size > 1) {
+            delay(WELCOME_ROTATION_INTERVAL_MS)
+            featuredIndex = (featuredIndex + 1) % featuredAnime.size
+        }
+    }
+    val selectedAnime = featuredAnime.getOrNull(featuredIndex)
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .aulamaTvBackground()
+    ) {
+        val compactLayout = maxWidth < 1_300.dp || maxHeight < 760.dp
+        WelcomeAnimeBackdrop(
+            anime = featuredAnime,
+            selectedIndex = featuredIndex
+        )
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .widthIn(max = if (compactLayout) 560.dp else 640.dp)
+                .padding(start = if (compactLayout) 56.dp else 76.dp, end = 24.dp),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(if (compactLayout) 18.dp else 24.dp)
+        ) {
+            AulamaAnimeBrandMark(height = if (compactLayout) 104.dp else 128.dp)
+            Crossfade(
+                targetState = selectedAnime,
+                animationSpec = tween(durationMillis = WELCOME_TRANSITION_MS),
+                label = "welcome-anime-title"
+            ) { anime ->
+                if (anime != null) {
+                    val artworkAccent = rememberArtworkAccent(anime.imageUrl)
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            text = "最新焦點",
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontSize = if (compactLayout) 17.sp else 19.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = AulamaTvColors.TextSecondary
+                        )
+                        Text(
+                            text = localizedText(anime.title),
+                            style = MaterialTheme.typography.headlineSmall.copy(
+                                fontSize = if (compactLayout) 31.sp else 37.sp,
+                                lineHeight = if (compactLayout) 37.sp else 43.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            ),
+                            color = artworkAccent,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+            Text(
+                text = "下一集，喺大螢幕繼續。",
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontSize = if (compactLayout) 38.sp else 46.sp,
+                    lineHeight = if (compactLayout) 44.sp else 52.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = AulamaTvColors.TextPrimary,
+                textAlign = TextAlign.Start
+            )
+            Text(
+                text = "登入 Aulama ID，把收藏、觀看進度同個人化推薦帶返嚟。",
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = if (compactLayout) 17.sp else 20.sp,
+                    lineHeight = if (compactLayout) 24.sp else 28.sp
+                ),
+                color = AulamaTvColors.TextSecondary,
+                textAlign = TextAlign.Start
+            )
+            Spacer(Modifier.height(if (compactLayout) 4.dp else 8.dp))
+            AulamaActionButton(
+                label = "使用 Aulama ID 登入",
+                icon = Icons.AutoMirrored.Filled.Login,
+                onClick = onLogin,
+                modifier = Modifier
+                    .width(if (compactLayout) 380.dp else 420.dp)
+                    .height(70.dp)
+                    .focusRequester(loginFocusRequester),
+                centerLabel = true,
+                labelFontSize = 20.sp,
+                labelLineHeight = 25.sp,
+                iconSize = 25.dp,
+                contentHeight = 64.dp
+            )
+        }
+        LaunchedEffect(Unit) { loginFocusRequester.requestFocus() }
+    }
+}
+
+@Composable
+private fun WelcomeAnimeBackdrop(anime: List<AnimeData>, selectedIndex: Int) {
+    if (anime.isEmpty()) return
+    anime.forEachIndexed { index, item ->
+        val artworkAlpha by animateFloatAsState(
+            targetValue = if (index == selectedIndex) 0.9f else 0f,
+            animationSpec = tween(durationMillis = WELCOME_TRANSITION_MS),
+            label = "welcome-anime-backdrop-$index"
+        )
+        AsyncImage(
+            model = rememberPosterImageRequest(
+                imageUrl = item.imageUrl,
+                widthPx = 960,
+                heightPx = 1_360
+            ),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            alignment = Alignment.TopEnd,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = artworkAlpha
+                    scaleX = 1.42f
+                    scaleY = 1.42f
+                    transformOrigin = TransformOrigin(1f, 0f)
+                }
+        )
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.horizontalGradient(
+                    colorStops = arrayOf(
+                        0f to AulamaTvColors.Background,
+                        0.42f to AulamaTvColors.Background,
+                        0.52f to AulamaTvColors.Background.copy(alpha = 0.96f),
+                        0.62f to AulamaTvColors.Background.copy(alpha = 0.72f),
+                        0.74f to AulamaTvColors.Background.copy(alpha = 0.30f),
+                        0.86f to AulamaTvColors.Background.copy(alpha = 0.06f),
+                        1f to Color.Transparent
+                    )
+                )
+            )
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colorStops = arrayOf(
+                        0f to AulamaTvColors.Background.copy(alpha = 0.24f),
+                        0.56f to Color.Transparent,
+                        1f to AulamaTvColors.Background.copy(alpha = 0.94f)
+                    )
+                )
+            )
+    )
 }
 
 @Composable
@@ -145,6 +304,10 @@ private fun DeviceCodeLoginScreen(
             .aulamaTvBackground()
     ) {
         val compactLayout = maxWidth < 1500.dp || maxHeight < 850.dp
+        val qrSize = DeviceLoginLayoutPolicy.qrSizeDp(
+            availableWidthDp = maxWidth.value,
+            availableHeightDp = maxHeight.value
+        ).dp
         val horizontalPadding = if (compactLayout) 48.dp else 72.dp
         val verticalPadding = if (compactLayout) 32.dp else 48.dp
 
@@ -164,7 +327,7 @@ private fun DeviceCodeLoginScreen(
                 Text(
                     text = "使用 Aulama ID 登入",
                     style = MaterialTheme.typography.titleMedium.copy(
-                        fontSize = if (compactLayout) 15.sp else 17.sp,
+                        fontSize = if (compactLayout) 17.sp else 19.sp,
                         fontWeight = FontWeight.Bold
                     ),
                     color = AulamaTvColors.Cyan
@@ -172,8 +335,8 @@ private fun DeviceCodeLoginScreen(
                 Text(
                     text = "將你嘅片庫\n帶到大螢幕",
                     style = MaterialTheme.typography.headlineLarge.copy(
-                        fontSize = if (compactLayout) 34.sp else 42.sp,
-                        lineHeight = if (compactLayout) 40.sp else 48.sp,
+                        fontSize = if (compactLayout) 38.sp else 44.sp,
+                        lineHeight = if (compactLayout) 44.sp else 50.sp,
                         fontWeight = FontWeight.Bold
                     ),
                     color = AulamaTvColors.TextPrimary
@@ -181,8 +344,8 @@ private fun DeviceCodeLoginScreen(
                 Text(
                     text = "收藏、觀看進度同個人化推薦會自動同步。",
                     style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = if (compactLayout) 16.sp else 18.sp,
-                        lineHeight = if (compactLayout) 22.sp else 26.sp
+                        fontSize = if (compactLayout) 18.sp else 20.sp,
+                        lineHeight = if (compactLayout) 25.sp else 28.sp
                     ),
                     color = AulamaTvColors.TextSecondary
                 )
@@ -200,6 +363,7 @@ private fun DeviceCodeLoginScreen(
                     state = state,
                     onRetry = onRetry,
                     compact = compactLayout,
+                    qrSize = qrSize,
                     modifier = Modifier.widthIn(max = if (compactLayout) 700.dp else 760.dp)
                 )
             }
@@ -223,14 +387,17 @@ private fun LoginStep(number: String, text: String, compact: Boolean) {
             Text(
                 text = number,
                 color = AulamaTvColors.Cyan,
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontSize = if (compact) 16.sp else 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
             )
         }
         Text(
             text = text,
             color = AulamaTvColors.TextSecondary,
             style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = if (compact) 15.sp else 17.sp
+                fontSize = if (compact) 17.sp else 19.sp
             )
         )
     }
@@ -241,6 +408,7 @@ private fun LoginStatePanel(
     state: AuthUiState,
     onRetry: () -> Unit,
     compact: Boolean,
+    qrSize: Dp,
     modifier: Modifier = Modifier
 ) {
     val code = when (state) {
@@ -269,11 +437,12 @@ private fun LoginStatePanel(
         verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp)
     ) {
         if (code != null) {
-            DeviceCodeContent(code, remaining, compact)
+            DeviceCodeContent(code, remaining, compact, qrSize)
         }
 
         val status: String? = when (state) {
             AuthUiState.Checking,
+            AuthUiState.Welcome,
             AuthUiState.RequestingCode -> null
             is AuthUiState.Waiting -> if (state.pending) "等待你確認登入" else "裝置碼已準備好"
             is AuthUiState.RateLimited -> "每小時最多嘗試 3 次，請於 ${state.retryAfterSeconds} 秒後重試"
@@ -305,7 +474,12 @@ private fun LoginStatePanel(
 }
 
 @Composable
-private fun DeviceCodeContent(code: DeviceCode, remainingSeconds: Long, compact: Boolean) {
+private fun DeviceCodeContent(
+    code: DeviceCode,
+    remainingSeconds: Long,
+    compact: Boolean,
+    qrSize: Dp
+) {
     val approvalUrl = remember(code.verificationUri, code.userCode) {
         "${code.verificationUri}?code=${code.userCode}"
     }
@@ -333,7 +507,7 @@ private fun DeviceCodeContent(code: DeviceCode, remainingSeconds: Long, compact:
             contentDescription = "掃描 QR Code 登入",
             contentScale = ContentScale.Fit,
             modifier = Modifier
-                .size(if (compact) 148.dp else 178.dp)
+                .size(qrSize)
                 .background(Color.White, RoundedCornerShape(10.dp))
                 .padding(if (compact) 8.dp else 10.dp)
         )
@@ -344,18 +518,18 @@ private fun DeviceCodeContent(code: DeviceCode, remainingSeconds: Long, compact:
             Text(
                 text = "掃描或輸入裝置碼",
                 style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = if (compact) 16.sp else 18.sp
+                    fontSize = if (compact) 18.sp else 20.sp
                 ),
                 color = AulamaTvColors.TextSecondary
             )
             Text(
                 text = code.userCode,
                 fontSize = when {
-                    code.userCode.length > 10 -> if (compact) 26.sp else 32.sp
-                    code.userCode.length > 8 -> if (compact) 30.sp else 36.sp
-                    else -> if (compact) 36.sp else 42.sp
+                    code.userCode.length > 10 -> if (compact) 29.sp else 34.sp
+                    code.userCode.length > 8 -> if (compact) 34.sp else 38.sp
+                    else -> if (compact) 40.sp else 44.sp
                 },
-                lineHeight = if (compact) 40.sp else 46.sp,
+                lineHeight = if (compact) 44.sp else 48.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.sp,
                 color = AulamaTvColors.TextPrimary,
@@ -365,8 +539,8 @@ private fun DeviceCodeContent(code: DeviceCode, remainingSeconds: Long, compact:
             Text(
                 text = code.verificationUri,
                 style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = if (compact) 14.sp else 16.sp,
-                    lineHeight = if (compact) 18.sp else 21.sp
+                    fontSize = if (compact) 16.sp else 18.sp,
+                    lineHeight = if (compact) 21.sp else 23.sp
                 ),
                 color = AulamaTvColors.Cyan,
                 maxLines = 2,
@@ -377,12 +551,12 @@ private fun DeviceCodeContent(code: DeviceCode, remainingSeconds: Long, compact:
                     imageVector = Icons.Default.Timer,
                     contentDescription = null,
                     tint = AulamaTvColors.Amber,
-                    modifier = Modifier.size(19.dp)
+                    modifier = Modifier.size(21.dp)
                 )
                 Spacer(Modifier.width(7.dp))
                 Text(
                     text = "%d:%02d 後失效".format(remainingSeconds / 60, remainingSeconds % 60),
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp),
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
                     color = AulamaTvColors.TextPrimary
                 )
             }
