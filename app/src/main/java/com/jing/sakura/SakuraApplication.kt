@@ -18,6 +18,8 @@ import com.jing.sakura.auth.AuthViewModel
 import com.jing.sakura.auth.PlaybackHistorySyncQueue
 import com.jing.sakura.auth.PlaybackHistorySyncScheduler
 import com.jing.sakura.auth.SecureAuthStorage
+import com.jing.sakura.auth.SearchHistorySyncQueue
+import com.jing.sakura.auth.SearchHistorySyncScheduler
 import com.jing.sakura.detail.DetailPageViewModel
 import com.jing.sakura.extend.AndroidCookieJar
 import com.jing.sakura.history.HistoryViewModel
@@ -33,6 +35,7 @@ import com.jing.sakura.search.SearchResultViewModel
 import com.jing.sakura.search.SearchViewModel
 import com.jing.sakura.timeline.TimelineViewModel
 import okhttp3.CookieJar
+import okhttp3.Dns
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -45,6 +48,8 @@ import org.koin.core.Koin
 import org.koin.core.qualifier.qualifier
 import org.koin.dsl.module
 import java.lang.ref.WeakReference
+import java.net.InetAddress
+import java.net.Inet4Address
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.concurrent.Executors
@@ -100,6 +105,7 @@ class SakuraApplication : Application(), ImageLoaderFactory {
             modules(httpModule(), roomModule(), viewModelModule())
         }.koin
         PlaybackHistorySyncScheduler.enqueue(this)
+        SearchHistorySyncScheduler.enqueue(this)
         registerActivityLifecycleCallbacks(remotePlaybackCallbacks)
     }
 
@@ -157,6 +163,7 @@ class SakuraApplication : Application(), ImageLoaderFactory {
         single { SecureAuthStorage(get()) }
         single { AulamaAuthRepository(get(qualifier(KoinOkHttpClient.AULAMA)), get()) }
         single { PlaybackHistorySyncQueue(get()) }
+        single { SearchHistorySyncQueue(get()) }
         single {
             WebPageRepository(
                 get(qualifier = qualifier(KoinOkHttpClient.DATA)),
@@ -171,7 +178,8 @@ class SakuraApplication : Application(), ImageLoaderFactory {
                 .addMigrations(
                     SakuraDatabase.MIGRATION_1_2,
                     SakuraDatabase.MIGRATION_2_3,
-                    SakuraDatabase.MIGRATION_3_4
+                    SakuraDatabase.MIGRATION_3_4,
+                    SakuraDatabase.MIGRATION_4_5
                 )
             if (BuildConfig.DEBUG) {
                 builder.setQueryCallback({ sqlQuery, bindArgs ->
@@ -195,7 +203,7 @@ class SakuraApplication : Application(), ImageLoaderFactory {
         viewModel { holder -> VideoPlayerViewModel(holder.get(), get(), get(), get(), get()) }
         viewModelOf(::HomeViewModel)
         viewModelOf(::AuthViewModel)
-        viewModel { holder -> SearchViewModel(get(), holder.get()) }
+        viewModel { holder -> SearchViewModel(get(), get(), get(), holder.get()) }
         viewModel { holder -> TimelineViewModel(get(), holder.get()) }
         viewModelOf(::HistoryViewModel)
         viewModel { holder -> SearchResultViewModel(holder.get(), get(), holder.get()) }
@@ -222,6 +230,12 @@ class SakuraApplication : Application(), ImageLoaderFactory {
     }
 
     private fun provideAulamaOkHttpClient(): OkHttpClient = OkHttpClient.Builder()
+        .dns(object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> =
+                Dns.SYSTEM.lookup(hostname).sortedBy { address ->
+                    if (address is Inet4Address) 0 else 1
+                }
+        })
         .connectTimeout(5L, TimeUnit.SECONDS)
         .readTimeout(15L, TimeUnit.SECONDS)
         .followRedirects(false)
@@ -236,6 +250,15 @@ class SakuraApplication : Application(), ImageLoaderFactory {
                     .header("User-Agent", "Aulama-Anime-TV/${BuildConfig.VERSION_NAME}")
                     .build()
             )
+        }
+        .apply {
+            if (BuildConfig.DEBUG) {
+                addNetworkInterceptor(
+                    HttpLoggingInterceptor().apply {
+                        level = HttpLoggingInterceptor.Level.BASIC
+                    }
+                )
+            }
         }
         .build()
 

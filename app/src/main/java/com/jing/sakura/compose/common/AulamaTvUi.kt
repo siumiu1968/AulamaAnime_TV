@@ -147,13 +147,14 @@ fun AulamaSectionHeader(
     title: String,
     modifier: Modifier = Modifier,
     count: Int? = null,
-    accent: Color = AulamaTvColors.Cyan
+    accent: Color = AulamaTvColors.Cyan,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 36.dp, vertical = 8.dp)
 ) {
     val displayTitle = localizedText(title)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 36.dp, vertical = 8.dp),
+            .padding(contentPadding),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Spacer(

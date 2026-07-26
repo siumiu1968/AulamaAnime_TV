@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -19,11 +21,18 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
@@ -38,6 +47,7 @@ import com.jing.sakura.compose.common.AulamaActionButton
 import com.jing.sakura.compose.common.AulamaCardShape
 import com.jing.sakura.compose.common.AulamaTvColors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -48,6 +58,9 @@ fun TvUpdateDialog(
     onLater: () -> Unit
 ) {
     val downloadFocus = remember { FocusRequester() }
+    val notesScrollState = rememberScrollState()
+    val scrollScope = rememberCoroutineScope()
+    val scrollStepPx = with(LocalDensity.current) { 132.dp.toPx() }
     val isBusy = downloadState is TvUpdateDownloadState.Starting ||
         downloadState is TvUpdateDownloadState.Downloading ||
         downloadState is TvUpdateDownloadState.PreparingInstall ||
@@ -61,7 +74,26 @@ fun TvUpdateDialog(
         )
     ) {
         Surface(
-            modifier = Modifier.widthIn(min = 460.dp, max = 620.dp),
+            modifier = Modifier
+                .widthIn(min = 460.dp, max = 620.dp)
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val direction = when (event.key) {
+                        Key.DirectionUp -> -1
+                        Key.DirectionDown -> 1
+                        else -> return@onPreviewKeyEvent false
+                    }
+                    val delta = releaseNotesScrollDelta(
+                        direction = direction,
+                        canScrollBackward = notesScrollState.canScrollBackward,
+                        canScrollForward = notesScrollState.canScrollForward,
+                        stepPx = scrollStepPx
+                    )
+                    if (delta != 0f) {
+                        scrollScope.launch { notesScrollState.scrollBy(delta) }
+                    }
+                    notesScrollState.maxValue > 0
+                },
             shape = AulamaCardShape,
             color = AulamaTvColors.SurfaceRaised
         ) {
@@ -75,7 +107,8 @@ fun TvUpdateDialog(
                     color = AulamaTvColors.TextPrimary
                 )
                 ReleaseNotes(
-                    notes = update.notes.ifBlank { stringResource(R.string.update_body) }
+                    notes = update.notes.ifBlank { stringResource(R.string.update_body) },
+                    scrollState = notesScrollState
                 )
                 DownloadProgress(downloadState)
                 Row(
@@ -112,13 +145,13 @@ fun TvUpdateDialog(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun ReleaseNotes(notes: String) {
+private fun ReleaseNotes(notes: String, scrollState: ScrollState) {
     val items = remember(notes) { parseTvReleaseNotes(notes) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = 220.dp)
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(scrollState),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (items.none { it.kind == TvReleaseNoteKind.Heading }) {
@@ -169,6 +202,17 @@ private fun ReleaseNotes(notes: String) {
             }
         }
     }
+}
+
+internal fun releaseNotesScrollDelta(
+    direction: Int,
+    canScrollBackward: Boolean,
+    canScrollForward: Boolean,
+    stepPx: Float
+): Float = when {
+    direction < 0 && canScrollBackward -> -stepPx
+    direction > 0 && canScrollForward -> stepPx
+    else -> 0f
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

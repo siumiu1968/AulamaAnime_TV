@@ -602,9 +602,11 @@ private fun AnimatedLoginButton(label: String, onClick: () -> Unit, enabled: Boo
 fun AccountDialog(
     account: AulamaAccount,
     language: TvLanguage,
+    previewEnabled: Boolean,
     isCheckingForUpdate: Boolean,
     currentVersion: String,
     onLanguageChange: (TvLanguage) -> Unit,
+    onPreviewEnabledChange: (Boolean) -> Unit,
     onCheckForUpdate: () -> Unit,
     onDismiss: () -> Unit,
     onLogout: () -> Unit
@@ -689,6 +691,15 @@ fun AccountDialog(
                     )
                 }
             }
+            AulamaActionButton(
+                label = "自動播放預覽 · ${if (previewEnabled) "開啟" else "關閉"}",
+                icon = Icons.Default.Check.takeIf { previewEnabled },
+                accent = AulamaTvColors.Cyan,
+                onClick = { onPreviewEnabledChange(!previewEnabled) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            )
             AulamaActionButton(
                 label = if (isCheckingForUpdate) {
                     "正在檢查更新"

@@ -1,5 +1,6 @@
 package com.jing.sakura.home
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,7 +13,8 @@ class PreviewSessionPolicyTest {
                 scheduledSession = 4,
                 currentSession = 5,
                 isScreenResumed = true,
-                hasFocusedContent = true
+                hasFocusedContent = true,
+                previewEnabled = true
             )
         )
         assertTrue(
@@ -20,14 +22,37 @@ class PreviewSessionPolicyTest {
                 scheduledSession = 5,
                 currentSession = 5,
                 isScreenResumed = true,
-                hasFocusedContent = true
+                hasFocusedContent = true,
+                previewEnabled = true
             )
         )
     }
 
     @Test
     fun pausedOrUnfocusedScreenCannotStartPreview() {
-        assertFalse(shouldStartPreview(3, 3, isScreenResumed = false, hasFocusedContent = true))
-        assertFalse(shouldStartPreview(3, 3, isScreenResumed = true, hasFocusedContent = false))
+        assertFalse(shouldStartPreview(3, 3, false, true, previewEnabled = true))
+        assertFalse(shouldStartPreview(3, 3, true, false, previewEnabled = true))
+    }
+
+    @Test
+    fun disabledPreferenceRejectsPreviewAndKeepsCardsOpaque() {
+        assertFalse(shouldStartPreview(3, 3, true, true, previewEnabled = false))
+        assertEquals(
+            1f,
+            previewCardAlpha(
+                rowFocused = true,
+                selected = false,
+                dimUnselected = true,
+                previewActive = true,
+                previewEnabled = false
+            )
+        )
+    }
+
+    @Test
+    fun enabledPreviewUsesSharedDimAndPlaybackOpacity() {
+        assertEquals(0.28f, previewCardAlpha(true, false, true, false, true))
+        assertEquals(0.10f, previewCardAlpha(true, false, true, true, true))
+        assertEquals(1f, previewCardAlpha(true, true, true, true, true))
     }
 }

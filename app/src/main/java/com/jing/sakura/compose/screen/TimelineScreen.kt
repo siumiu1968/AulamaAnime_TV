@@ -42,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +89,7 @@ import com.jing.sakura.compose.common.AutoMarqueeText
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.HeroPreviewPlayer
 import com.jing.sakura.compose.common.LoadingOverlay
+import com.jing.sakura.compose.common.TvPreviewPreferences
 import com.jing.sakura.compose.common.aulamaTvBackground
 import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.rememberArtworkAccent
@@ -97,6 +99,7 @@ import com.jing.sakura.data.Resource
 import com.jing.sakura.data.UpdateTimeLine
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.home.HeroPreviewState
+import com.jing.sakura.home.previewCardAlpha
 import com.jing.sakura.home.shouldStartPreview
 import com.jing.sakura.timeline.TimelineViewModel
 import com.jing.sakura.timeline.resolveTimelineSynopsis
@@ -111,6 +114,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 
 @Composable
 fun TimelineScreen(viewModel: TimelineViewModel) {
+    val context = LocalContext.current
+    val previewPreferences = remember(context) { TvPreviewPreferences.get(context) }
+    val previewEnabled by previewPreferences.previewEnabled.collectAsState()
     val timeline = viewModel.timelines.collectAsState().value
     val synopses = viewModel.synopses.collectAsState().value
     val previewState = viewModel.previewState.collectAsState().value
@@ -125,6 +131,7 @@ fun TimelineScreen(viewModel: TimelineViewModel) {
                 sourceId = viewModel.sourceId,
                 synopses = synopses,
                 previewState = previewState,
+                previewEnabled = previewEnabled,
                 onDaySelected = viewModel::prepareDay,
                 onAnimeHighlighted = viewModel::loadSynopsis,
                 onPreparePreview = viewModel::preparePreview,
@@ -147,6 +154,7 @@ fun TimeLine(
     sourceId: String,
     synopses: Map<String, String>,
     previewState: HeroPreviewState,
+    previewEnabled: Boolean,
     onDaySelected: (Int) -> Unit,
     onAnimeHighlighted: (AnimeData) -> Unit,
     onPreparePreview: (AnimeData) -> Unit,
@@ -192,11 +200,11 @@ fun TimeLine(
     )
     val accent by animateColorAsState(
         targetValue = rawAccent,
-        animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
         label = "timeline-accent"
     )
     val readyPreview = (previewState as? HeroPreviewState.Ready)?.spec
-    val previewActive = previewArmed && previewFirstFrameReady && readyPreview != null
+    val previewActive = previewEnabled && previewArmed && previewFirstFrameReady && readyPreview != null
     val chromeAlpha by animateFloatAsState(
         targetValue = if (previewActive) 0.28f else 1f,
         animationSpec = tween(320, easing = FastOutSlowInEasing),
@@ -374,6 +382,7 @@ fun TimeLine(
                         accent = accent,
                         dimUnselected = dimUnselected,
                         previewActive = previewActive,
+                        previewEnabled = previewEnabled,
                         rowFocusRequester = rowFocusRequesters[dayIndex],
                         upFocusRequester = dayFocusRequesters[dayIndex],
                         onFocusChanged = { focused ->
@@ -415,7 +424,8 @@ fun TimeLine(
         rowHasFocus,
         interactionVersion,
         isScreenResumed,
-        previewSession
+        previewSession,
+        previewEnabled
     ) {
         val scheduledSession = previewSession
         onCancelPreview()
@@ -423,7 +433,7 @@ fun TimeLine(
         previewArmed = false
         previewFirstFrameReady = false
         val selected = highlightedAnime ?: return@LaunchedEffect
-        if (!rowHasFocus || !isScreenResumed) return@LaunchedEffect
+        if (!rowHasFocus || !isScreenResumed || !previewEnabled) return@LaunchedEffect
         delay(3_000)
         dimUnselected = true
         delay(12_000)
@@ -431,7 +441,8 @@ fun TimeLine(
                 scheduledSession = scheduledSession,
                 currentSession = previewSession,
                 isScreenResumed = isScreenResumed,
-                hasFocusedContent = rowHasFocus
+                hasFocusedContent = rowHasFocus,
+                previewEnabled = previewEnabled
             )
         ) return@LaunchedEffect
         onPreparePreview(selected)
@@ -473,6 +484,7 @@ private fun TimelinePosterCarousel(
     accent: Color,
     dimUnselected: Boolean,
     previewActive: Boolean,
+    previewEnabled: Boolean,
     rowFocusRequester: FocusRequester,
     upFocusRequester: FocusRequester,
     onFocusChanged: (Boolean) -> Unit,
@@ -572,13 +584,13 @@ private fun TimelinePosterCarousel(
                 val anime = items[timelineLogicalIndex(virtualIndex, items.size)]
                 val selected = focused && virtualIndex == selectedVirtualIndex
                 val cardAlpha by animateFloatAsState(
-                    targetValue = when {
-                        !focused -> 1f
-                        selected -> 1f
-                        previewActive -> 0.16f
-                        !dimUnselected -> 1f
-                        else -> 0.48f
-                    },
+                    targetValue = previewCardAlpha(
+                        rowFocused = focused,
+                        selected = selected,
+                        dimUnselected = dimUnselected,
+                        previewActive = previewActive,
+                        previewEnabled = previewEnabled
+                    ),
                     animationSpec = tween(
                         durationMillis = if (previewActive) 320 else 620,
                         easing = FastOutSlowInEasing
@@ -702,24 +714,54 @@ private fun TimelineBackdrop(
     accent: Color,
     previewActive: Boolean
 ) {
+    val targetBackdrop = remember(anime?.sourceId, anime?.id, anime?.imageUrl) {
+        anime
+            ?.takeIf { it.imageUrl.isNotBlank() }
+            ?.let {
+                TimelineBackdropState(
+                    key = "${it.sourceId}:${it.id}:${it.imageUrl}",
+                    imageUrl = it.imageUrl
+                )
+            }
+    }
+    var readyBackdrop by remember { mutableStateOf<TimelineBackdropState?>(null) }
+    val currentTargetKey by rememberUpdatedState(targetBackdrop?.key)
     val artworkAlpha by animateFloatAsState(
         targetValue = if (previewActive) 0f else 0.76f,
         animationSpec = tween(360, easing = FastOutSlowInEasing),
         label = "timeline-artwork-alpha"
     )
+    LaunchedEffect(targetBackdrop) {
+        if (targetBackdrop == null) readyBackdrop = null
+    }
     Box(modifier = Modifier.fillMaxSize()) {
+        targetBackdrop
+            ?.takeIf { it.key != readyBackdrop?.key }
+            ?.let { pending ->
+                AsyncImage(
+                    model = rememberPosterImageRequest(
+                        imageUrl = pending.imageUrl,
+                        widthPx = 960,
+                        heightPx = 1360
+                    ),
+                    contentDescription = null,
+                    onSuccess = {
+                        if (currentTargetKey == pending.key) readyBackdrop = pending
+                    },
+                    modifier = Modifier
+                        .size(1.dp)
+                        .graphicsLayer { alpha = 0f }
+                )
+            }
         AnimatedContent(
-            targetState = TimelineBackdropState(
-                key = anime?.let { "${it.sourceId}:${it.id}" }.orEmpty(),
-                imageUrl = anime?.imageUrl.orEmpty()
-            ),
+            targetState = readyBackdrop,
             transitionSpec = {
-                fadeIn(tween(420, delayMillis = 55, easing = FastOutSlowInEasing))
-                    .togetherWith(fadeOut(tween(250, easing = FastOutSlowInEasing)))
+                fadeIn(tween(420, easing = FastOutSlowInEasing))
+                    .togetherWith(fadeOut(tween(300, easing = FastOutSlowInEasing)))
             },
             label = "timeline-backdrop"
         ) { state ->
-            if (state.imageUrl.isNotBlank()) {
+            if (state != null) {
                 val request = rememberPosterImageRequest(
                     imageUrl = state.imageUrl,
                     widthPx = 960,

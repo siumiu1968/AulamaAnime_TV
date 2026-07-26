@@ -4,12 +4,13 @@ import android.Manifest
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.speech.SpeechRecognizer
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Arrangement.spacedBy
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,16 +23,15 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -44,20 +44,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
-import androidx.tv.material3.Border
-import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Surface
 import coil.compose.AsyncImage
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
@@ -85,25 +86,18 @@ import com.jing.sakura.http.WsMessageHandler
 import com.jing.sakura.room.SearchHistoryEntity
 import com.jing.sakura.search.SearchResultActivity
 import com.jing.sakura.search.SearchViewModel
+import com.jing.sakura.compose.theme.SakuraTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private val PopularSearchTopics = listOf(
-    "異世界",
-    "日常",
-    "戀愛",
-    "戰鬥",
-    "奇幻",
-    "校園",
-    "推理",
-    "治癒"
-)
+private val SearchSectionContentInset = 14.dp
 
 @Composable
 fun SearchScreen(viewModel: SearchViewModel) {
 
     val context = LocalContext.current
+    val historyFocusRequester = remember { FocusRequester() }
     val onSearch = { keyword: String ->
         if (keyword.isNotBlank()) {
             keyword.trim().let {
@@ -121,36 +115,17 @@ fun SearchScreen(viewModel: SearchViewModel) {
             title = stringResource(R.string.button_search),
             subtitle = "用語音、遙控器或手機快速找到作品"
         )
-        InputKeywordRow(onSearch)
-
-        AulamaSectionHeader(
-            title = "熱門題材",
-            accent = AulamaTvColors.Pink
+        InputKeywordRow(
+            onSearch = onSearch,
+            historyFocusRequester = historyFocusRequester
         )
-        LazyRow(
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                horizontal = 36.dp,
-                vertical = 8.dp
-            ),
-            horizontalArrangement = spacedBy(14.dp)
-        ) {
-            items(PopularSearchTopics) { topic ->
-                Keyword(
-                    text = topic,
-                    modifier = Modifier
-                        .widthIn(min = 112.dp, max = 180.dp)
-                        .heightIn(min = 50.dp),
-                    onClick = { onSearch(topic) }
-                )
-            }
-        }
 
         Row(
             Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(horizontal = 36.dp, vertical = 12.dp),
-            horizontalArrangement = spacedBy(28.dp)
+                .padding(horizontal = 36.dp, vertical = 18.dp),
+            horizontalArrangement = spacedBy(32.dp)
         ) {
             val serverUrl = WebServerContext.serverUrl.collectAsState().value
             if (serverUrl.isNotEmpty()) {
@@ -163,13 +138,14 @@ fun SearchScreen(viewModel: SearchViewModel) {
                     AulamaSectionHeader(
                         title = stringResource(R.string.search_mobile_input),
                         modifier = Modifier.padding(horizontal = 0.dp),
-                        accent = AulamaTvColors.Pink
+                        accent = AulamaTvColors.Pink,
+                        contentPadding = PaddingValues(vertical = 8.dp)
                     )
                     Text(
                         text = "掃描後可用手機輸入搜尋內容",
                         style = MaterialTheme.typography.bodyMedium,
                         color = AulamaTvColors.TextSecondary,
-                        modifier = Modifier.padding(horizontal = 4.dp)
+                        modifier = Modifier.padding(start = SearchSectionContentInset)
                     )
                     val img = remember(serverUrl) {
                         val bitMatrix =
@@ -196,7 +172,7 @@ fun SearchScreen(viewModel: SearchViewModel) {
                         model = img,
                         contentDescription = stringResource(R.string.search_mobile_input),
                         modifier = Modifier
-                            .padding(top = 6.dp)
+                            .padding(start = SearchSectionContentInset, top = 6.dp)
                             .size(218.dp)
                             .background(androidx.compose.ui.graphics.Color.White, AulamaCardShape)
                             .border(1.dp, AulamaTvColors.Outline, AulamaCardShape)
@@ -217,15 +193,20 @@ fun SearchScreen(viewModel: SearchViewModel) {
                 Column(
                     Modifier
                         .fillMaxHeight()
-                        .weight(1f)
+                        .width(420.dp)
                 ) {
                     AulamaSectionHeader(
                         title = stringResource(R.string.search_history),
                         modifier = Modifier.padding(horizontal = 0.dp),
-                        accent = AulamaTvColors.Amber
+                        accent = AulamaTvColors.Amber,
+                        contentPadding = PaddingValues(vertical = 8.dp)
                     )
                     Spacer(modifier = Modifier.height(6.dp))
-                    SearchHistoryColumn(viewModel = viewModel, onKeywordClick = onSearch)
+                    SearchHistoryColumn(
+                        viewModel = viewModel,
+                        firstItemFocusRequester = historyFocusRequester,
+                        onKeywordClick = onSearch
+                    )
 
                 }
             }
@@ -242,7 +223,10 @@ fun SearchScreen(viewModel: SearchViewModel) {
     ExperimentalTvMaterial3Api::class
 )
 @Composable
-fun InputKeywordRow(onSearch: (String) -> Unit) {
+fun InputKeywordRow(
+    onSearch: (String) -> Unit,
+    historyFocusRequester: FocusRequester
+) {
     val speechFocusRequester = remember {
         FocusRequester()
     }
@@ -287,7 +271,7 @@ fun InputKeywordRow(onSearch: (String) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 8.dp),
+            .padding(horizontal = 36.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         AulamaIconButton(
@@ -304,14 +288,20 @@ fun InputKeywordRow(onSearch: (String) -> Unit) {
                     }
                 }
             },
-            modifier = Modifier.focusRequester(speechFocusRequester),
+            modifier = Modifier
+                .focusRequester(speechFocusRequester)
+                .focusProperties { down = historyFocusRequester },
             accent = if (sttState.isSpeaking) AulamaTvColors.Pink else AulamaTvColors.Cyan
         )
         Spacer(modifier = Modifier.width(20.dp))
         CustomTextField(
             value = inputKeyword,
             onValueChange = { inputKeyword = it },
-            modifier = Modifier.weight(1f),
+            onSubmit = { onSearch(inputKeyword.trim()) },
+            modifier = Modifier
+                .weight(1f)
+                .focusProperties { down = historyFocusRequester },
+            downFocusRequester = historyFocusRequester,
             placeholder = {
                 if (sttState.isSpeaking) {
                     Text(text = stringResource(R.string.speak_search_keyword))
@@ -329,7 +319,9 @@ fun InputKeywordRow(onSearch: (String) -> Unit) {
                 onSearch(inputKeyword.trim())
             },
             enabled = inputKeyword.isNotBlank(),
-            modifier = Modifier.focusRequester(searchButtonFocusRequester),
+            modifier = Modifier
+                .focusRequester(searchButtonFocusRequester)
+                .focusProperties { down = historyFocusRequester },
             accent = AulamaTvColors.Green
         )
     }
@@ -360,6 +352,7 @@ fun InputKeywordRow(onSearch: (String) -> Unit) {
 @Composable
 fun SearchHistoryColumn(
     viewModel: SearchViewModel,
+    firstItemFocusRequester: FocusRequester,
     onKeywordClick: (keyword: String) -> Unit = {}
 ) {
     val pagingItems = viewModel.searchHistoryPager.collectAsLazyPagingItems()
@@ -374,14 +367,19 @@ fun SearchHistoryColumn(
     val listState = rememberLazyListState()
     FocusGroup {
         LazyColumn(
-            state = listState, content = {
+            state = listState,
+            contentPadding = PaddingValues(
+                horizontal = 0.dp,
+                vertical = 4.dp
+            ),
+            content = {
                 items(pagingItems.itemCount, key = { pagingItems[it]?.keyword ?: it }) { kwIndex ->
                     val history = pagingItems[kwIndex] ?: return@items
                     Keyword(text = history.keyword,
                         modifier = Modifier
                             .run {
                                 if (kwIndex == 0) {
-                                    initiallyFocused()
+                                    initiallyFocused().focusRequester(firstItemFocusRequester)
                                 } else {
                                     restorableFocus()
                                 }
@@ -440,32 +438,53 @@ fun Keyword(
     var focused by remember {
         mutableStateOf(false)
     }
-    Surface(onClick = {},
-        scale = ClickableSurfaceDefaults.scale(focusedScale = AulamaFocusScale),
-        shape = ClickableSurfaceDefaults.shape(shape = AulamaCardShape),
-        border = ClickableSurfaceDefaults.border(
-            border = Border(
-                BorderStroke(1.dp, AulamaTvColors.Outline),
-                shape = AulamaCardShape
-            ),
-            focusedBorder = Border(
-                BorderStroke(
-                    2.dp, MaterialTheme.colorScheme.border
-                ),
-                shape = AulamaCardShape
-            )
-        ),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = AulamaTvColors.SurfaceRaised,
-            focusedContainerColor = androidx.compose.ui.graphics.Color(0xFF173A40)
-        ),
+    KeywordSurface(
+        text = text,
+        focused = focused,
         modifier = modifier
             .onFocusChanged {
                 focused = it.isFocused || it.hasFocus
             }
             .customClick(onClick, onLongClick)
+    )
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+private fun KeywordSurface(
+    text: String,
+    focused: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val scale by animateFloatAsState(
+        targetValue = if (focused) AulamaFocusScale else 1f,
+        animationSpec = tween(140),
+        label = "search-history-focus-scale"
+    )
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(AulamaCardShape)
+            .background(
+                if (focused) androidx.compose.ui.graphics.Color(0xFF173A40)
+                else androidx.compose.ui.graphics.Color.Transparent
+            )
+            .then(
+                if (focused) {
+                    Modifier.border(2.dp, AulamaTvColors.FocusBorder, AulamaCardShape)
+                } else {
+                    Modifier
+                }
+            )
+            .focusable()
     ) {
-        var textModifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+        var textModifier = Modifier.padding(
+            horizontal = SearchSectionContentInset,
+            vertical = 8.dp
+        )
         if (focused) {
             textModifier = textModifier.basicMarquee()
         }
@@ -476,5 +495,39 @@ fun Keyword(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+@Preview(
+    name = "搜尋記錄 - 預設與焦點",
+    widthDp = 460,
+    heightDp = 150,
+    showBackground = true,
+    backgroundColor = 0xFF05070C
+)
+@Composable
+private fun SearchHistoryKeywordPreview() {
+    SakuraTheme {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = spacedBy(10.dp)
+        ) {
+            KeywordSurface(
+                text = "葬送的芙莉蓮",
+                focused = false,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 50.dp)
+            )
+            KeywordSurface(
+                text = "進擊的巨人",
+                focused = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 50.dp)
+            )
+        }
     }
 }

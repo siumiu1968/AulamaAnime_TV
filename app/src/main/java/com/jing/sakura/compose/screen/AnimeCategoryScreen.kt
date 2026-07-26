@@ -42,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -444,30 +445,66 @@ private fun DiscoverBackdrop(
     accent: Color,
     reducedMotion: Boolean
 ) {
+    val targetBackdrop = remember(imageUrl) {
+        imageUrl.takeIf(String::isNotBlank)?.let {
+            DiscoverBackdropState(key = it, imageUrl = it)
+        }
+    }
+    var readyBackdrop by remember { mutableStateOf<DiscoverBackdropState?>(null) }
+    val currentTargetKey by rememberUpdatedState(targetBackdrop?.key)
+    val animatedAccent by animateColorAsState(
+        targetValue = accent,
+        animationSpec = tween(
+            durationMillis = if (reducedMotion) 0 else 360,
+            easing = FastOutSlowInEasing
+        ),
+        label = "discover-backdrop-accent"
+    )
+    LaunchedEffect(targetBackdrop) {
+        if (targetBackdrop == null) readyBackdrop = null
+    }
     Box(modifier = Modifier.fillMaxSize()) {
+        targetBackdrop
+            ?.takeIf { it.key != readyBackdrop?.key }
+            ?.let { pending ->
+                AsyncImage(
+                    model = rememberPosterImageRequest(
+                        imageUrl = pending.imageUrl,
+                        widthPx = 720,
+                        heightPx = 1020
+                    ),
+                    contentDescription = null,
+                    onSuccess = {
+                        if (currentTargetKey == pending.key) readyBackdrop = pending
+                    },
+                    modifier = Modifier
+                        .size(1.dp)
+                        .graphicsLayer { alpha = 0f }
+                )
+            }
         AnimatedContent(
-            targetState = imageUrl,
+            targetState = readyBackdrop,
             transitionSpec = {
                 fadeIn(
                     tween(
-                        durationMillis = if (reducedMotion) 0 else 180,
+                        durationMillis = if (reducedMotion) 0 else 420,
                         easing = FastOutSlowInEasing
                     )
                 ).togetherWith(
                     fadeOut(
                         tween(
-                            durationMillis = if (reducedMotion) 0 else 120,
+                            durationMillis = if (reducedMotion) 0 else 300,
                             easing = FastOutSlowInEasing
                         )
                     )
                 )
             },
             label = "discover-artwork-backdrop"
-        ) { artworkUrl ->
-            if (artworkUrl.isNotBlank()) {
+        ) { state ->
+            if (state != null) {
                 AsyncImage(
                     model = rememberPosterImageRequest(
-                        imageUrl = artworkUrl,
+                        imageUrl = state.imageUrl,
                         widthPx = 720,
                         heightPx = 1020
                     ),
@@ -490,7 +527,7 @@ private fun DiscoverBackdrop(
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(accent.copy(alpha = 0.15f), Color.Transparent),
+                        colors = listOf(animatedAccent.copy(alpha = 0.15f), Color.Transparent),
                         radius = 760f
                     )
                 )
@@ -517,6 +554,11 @@ private fun DiscoverBackdrop(
         )
     }
 }
+
+private data class DiscoverBackdropState(
+    val key: String,
+    val imageUrl: String
+)
 
 @Composable
 private fun DiscoverFilterPanel(

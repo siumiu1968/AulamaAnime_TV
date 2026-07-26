@@ -3,6 +3,7 @@
 package com.jing.sakura.compose.screen
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -41,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -424,19 +426,54 @@ private fun LibraryAnimeRow(
 
 @Composable
 private fun LibraryBackdrop(anime: AnimeData?, accent: Color) {
+    val targetBackdrop = remember(anime?.sourceId, anime?.id, anime?.imageUrl) {
+        anime
+            ?.takeIf { it.imageUrl.isNotBlank() }
+            ?.let {
+                LibraryBackdropState(
+                    key = "${historyKey(it.id, it.sourceId)}:${it.imageUrl}",
+                    imageUrl = it.imageUrl
+                )
+            }
+    }
+    var readyBackdrop by remember { mutableStateOf<LibraryBackdropState?>(null) }
+    val currentTargetKey by rememberUpdatedState(targetBackdrop?.key)
+    val animatedAccent by animateColorAsState(
+        targetValue = accent,
+        animationSpec = tween(360, easing = FastOutSlowInEasing),
+        label = "library-backdrop-accent"
+    )
+    LaunchedEffect(targetBackdrop) {
+        if (targetBackdrop == null) readyBackdrop = null
+    }
     Box(modifier = Modifier.fillMaxSize()) {
+        targetBackdrop
+            ?.takeIf { it.key != readyBackdrop?.key }
+            ?.let { pending ->
+                AsyncImage(
+                    model = rememberPosterImageRequest(
+                        imageUrl = pending.imageUrl,
+                        widthPx = 960,
+                        heightPx = 1_360
+                    ),
+                    contentDescription = null,
+                    onSuccess = {
+                        if (currentTargetKey == pending.key) readyBackdrop = pending
+                    },
+                    modifier = Modifier
+                        .size(1.dp)
+                        .graphicsLayer { alpha = 0f }
+                )
+            }
         AnimatedContent(
-            targetState = LibraryBackdropState(
-                key = anime?.let { historyKey(it.id, it.sourceId) }.orEmpty(),
-                imageUrl = anime?.imageUrl.orEmpty()
-            ),
+            targetState = readyBackdrop,
             transitionSpec = {
-                fadeIn(tween(420, delayMillis = 55, easing = FastOutSlowInEasing))
-                    .togetherWith(fadeOut(tween(250, easing = FastOutSlowInEasing)))
+                fadeIn(tween(420, easing = FastOutSlowInEasing))
+                    .togetherWith(fadeOut(tween(300, easing = FastOutSlowInEasing)))
             },
             label = "library-backdrop"
         ) { state ->
-            if (state.imageUrl.isNotBlank()) {
+            if (state != null) {
                 val request = rememberPosterImageRequest(
                     imageUrl = state.imageUrl,
                     widthPx = 960,
@@ -463,7 +500,7 @@ private fun LibraryBackdrop(anime: AnimeData?, accent: Color) {
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(accent.copy(alpha = 0.18f), Color.Transparent),
+                        colors = listOf(animatedAccent.copy(alpha = 0.18f), Color.Transparent),
                         radius = 820f
                     )
                 )

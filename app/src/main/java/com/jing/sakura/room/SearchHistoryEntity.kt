@@ -1,10 +1,14 @@
 package com.jing.sakura.room
 
 import androidx.room.Entity
-import androidx.room.PrimaryKey
 
-@Entity(tableName = "search_history")
+@Entity(
+    tableName = "search_history",
+    primaryKeys = ["accountKey", "keywordKey"]
+)
 data class SearchHistoryEntity(
-    @PrimaryKey val keyword: String,
+    val accountKey: String,
+    val keywordKey: String,
+    val keyword: String,
     val searchTime: Long
 )

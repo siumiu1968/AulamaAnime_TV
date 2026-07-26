@@ -38,4 +38,38 @@ class TvUpdateUiTest {
         assertTrue(items.any { it.text == "支援 更新頁面" })
         assertFalse(items.any { it.text.contains('#') || it.text.contains("**") })
     }
+
+    @Test
+    fun scrollsLongReleaseNotesWithVerticalDpadOnlyWhenPossible() {
+        assertEquals(
+            120f,
+            releaseNotesScrollDelta(
+                direction = 1,
+                canScrollBackward = false,
+                canScrollForward = true,
+                stepPx = 120f
+            ),
+            0.001f
+        )
+        assertEquals(
+            -120f,
+            releaseNotesScrollDelta(
+                direction = -1,
+                canScrollBackward = true,
+                canScrollForward = false,
+                stepPx = 120f
+            ),
+            0.001f
+        )
+        assertEquals(
+            0f,
+            releaseNotesScrollDelta(
+                direction = 1,
+                canScrollBackward = true,
+                canScrollForward = false,
+                stepPx = 120f
+            ),
+            0.001f
+        )
+    }
 }

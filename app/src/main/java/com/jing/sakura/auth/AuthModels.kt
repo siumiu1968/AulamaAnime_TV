@@ -62,6 +62,31 @@ data class PlaybackHistoryPayload(
     val updatedAt: String
 )
 
+data class SearchHistorySyncItem(
+    val keyword: String,
+    val updatedAt: String,
+    val updatedAtEpochMs: Long
+)
+
+internal object SearchHistorySyncParser {
+    fun parse(payload: String): List<SearchHistorySyncItem> {
+        val root = runCatching {
+            com.google.gson.JsonParser.parseString(payload).asJsonObject
+        }.getOrNull() ?: return emptyList()
+        return root.getAsJsonArray("items")?.mapNotNull { element ->
+            val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+            val keyword = item.get("keyword")?.asString?.trim().orEmpty()
+            val updatedAt = item.get("updatedAt")?.asString?.trim().orEmpty()
+            if (keyword.isBlank()) return@mapNotNull null
+            SearchHistorySyncItem(
+                keyword = keyword,
+                updatedAt = updatedAt,
+                updatedAtEpochMs = CloudTimestamp.parseEpochMs(updatedAt)
+            )
+        }?.sortedByDescending(SearchHistorySyncItem::updatedAtEpochMs)?.take(5).orEmpty()
+    }
+}
+
 internal object CloudTimestamp {
     private val timestampPattern = Regex(
         """^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})$"""

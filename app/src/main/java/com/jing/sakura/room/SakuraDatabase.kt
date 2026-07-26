@@ -8,7 +8,7 @@ import com.jing.sakura.repo.SakuraSource
 
 @Database(
     entities = [VideoHistoryEntity::class, SearchHistoryEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class SakuraDatabase : RoomDatabase() {
@@ -124,6 +124,34 @@ abstract class SakuraDatabase : RoomDatabase() {
                 db.execSQL("alter table video_history_temp rename to video_history")
             }
 
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE `search_history_temp` (
+                        `accountKey` TEXT NOT NULL,
+                        `keywordKey` TEXT NOT NULL,
+                        `keyword` TEXT NOT NULL,
+                        `searchTime` INTEGER NOT NULL,
+                        PRIMARY KEY(`accountKey`, `keywordKey`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT OR REPLACE INTO `search_history_temp`(
+                        `accountKey`, `keywordKey`, `keyword`, `searchTime`
+                    )
+                    SELECT 'guest', lower(trim(`keyword`)), trim(`keyword`), `searchTime`
+                    FROM `search_history`
+                    WHERE trim(`keyword`) <> ''
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE `search_history`")
+                db.execSQL("ALTER TABLE `search_history_temp` RENAME TO `search_history`")
+            }
         }
 
     }

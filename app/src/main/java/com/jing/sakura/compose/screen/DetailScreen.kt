@@ -2,11 +2,17 @@
 
 package com.jing.sakura.compose.screen
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,6 +55,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,6 +103,7 @@ import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.ArtworkLoading
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.FocusGroup
+import com.jing.sakura.compose.common.TvPreviewPreferences
 import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.rememberArtworkAccent
 import com.jing.sakura.compose.common.rememberDpadRepeatGate
@@ -109,6 +117,7 @@ import com.jing.sakura.data.Resource
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.detail.DetailPageViewModel
 import com.jing.sakura.detail.relatedAnimeKey
+import com.jing.sakura.home.previewCardAlpha
 import com.jing.sakura.extend.secondsToMinuteAndSecondText
 import com.jing.sakura.extend.showShortToast
 import com.jing.sakura.player.NavigateToPlayerArg
@@ -133,6 +142,8 @@ fun DetailScreen(
     initialResumeEpisode: String = ""
 ) {
     val context = LocalContext.current
+    val previewPreferences = remember(context) { TvPreviewPreferences.get(context) }
+    val previewEnabled by previewPreferences.previewEnabled.collectAsState()
     LaunchedEffect(viewModel) {
         viewModel.favoriteErrors.collect(context::showShortToast)
     }
@@ -154,7 +165,11 @@ fun DetailScreen(
             )
 
             is Resource.Error -> ErrorTip(message = state.message) { viewModel.loadData() }
-            is Resource.Success -> DetailContent(viewModel = viewModel, detail = state.data)
+            is Resource.Success -> DetailContent(
+                viewModel = viewModel,
+                detail = state.data,
+                previewEnabled = previewEnabled
+            )
         }
     }
 }
@@ -162,7 +177,8 @@ fun DetailScreen(
 @Composable
 private fun DetailContent(
     viewModel: DetailPageViewModel,
-    detail: AnimeDetailPageData
+    detail: AnimeDetailPageData,
+    previewEnabled: Boolean
 ) {
     val context = LocalContext.current
     val displayAnimeName = localizedText(detail.animeName)
@@ -439,6 +455,7 @@ private fun DetailContent(
                     RelatedAnimeSection(
                         videos = detail.otherAnimeList,
                         sourceId = viewModel.sourceId,
+                        previewEnabled = previewEnabled,
                         onNavigateUp = {
                             focusedRelatedAnime = null
                             scope.launch {
@@ -491,6 +508,21 @@ private fun DetailContent(
 
 @Composable
 private fun DetailBackdrop(imageUrl: String, accent: Color) {
+    val targetBackdrop = remember(imageUrl) {
+        imageUrl.takeIf(String::isNotBlank)?.let {
+            DetailBackdropState(key = it, imageUrl = it)
+        }
+    }
+    var readyBackdrop by remember { mutableStateOf<DetailBackdropState?>(null) }
+    val currentTargetKey by rememberUpdatedState(targetBackdrop?.key)
+    val animatedAccent by animateColorAsState(
+        targetValue = accent,
+        animationSpec = tween(360, easing = FastOutSlowInEasing),
+        label = "detail-backdrop-accent"
+    )
+    LaunchedEffect(targetBackdrop) {
+        if (targetBackdrop == null) readyBackdrop = null
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
@@ -498,25 +530,51 @@ private fun DetailBackdrop(imageUrl: String, accent: Color) {
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            accent.copy(alpha = 0.2f),
+                            animatedAccent.copy(alpha = 0.2f),
                             Color.Transparent
                         ),
                         radius = 980f
                     )
                 )
         )
-        Crossfade(
-            targetState = imageUrl,
+        targetBackdrop
+            ?.takeIf { it.key != readyBackdrop?.key }
+            ?.let { pending ->
+                AsyncImage(
+                    model = rememberPosterImageRequest(
+                        imageUrl = pending.imageUrl,
+                        widthPx = 1040,
+                        heightPx = 1040
+                    ),
+                    contentDescription = null,
+                    onSuccess = {
+                        if (currentTargetKey == pending.key) readyBackdrop = pending
+                    },
+                    modifier = Modifier
+                        .size(1.dp)
+                        .graphicsLayer { alpha = 0f }
+                )
+            }
+        AnimatedContent(
+            targetState = readyBackdrop,
             modifier = Modifier.fillMaxSize(),
-            animationSpec = tween(durationMillis = 280),
+            transitionSpec = {
+                fadeIn(tween(420, easing = FastOutSlowInEasing))
+                    .togetherWith(fadeOut(tween(300, easing = FastOutSlowInEasing)))
+            },
             label = "detail-backdrop"
-        ) { activeImageUrl ->
+        ) { state ->
+            if (state == null) return@AnimatedContent
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.CenterEnd
             ) {
                 AsyncImage(
-                    model = rememberPosterImageRequest(imageUrl = activeImageUrl, widthPx = 1040, heightPx = 1040),
+                    model = rememberPosterImageRequest(
+                        imageUrl = state.imageUrl,
+                        widthPx = 1040,
+                        heightPx = 1040
+                    ),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     alignment = Alignment.TopEnd,
@@ -556,6 +614,11 @@ private fun DetailBackdrop(imageUrl: String, accent: Color) {
         )
     }
 }
+
+private data class DetailBackdropState(
+    val key: String,
+    val imageUrl: String
+)
 
 @Composable
 private fun DetailHero(
@@ -1306,6 +1369,7 @@ private fun EpisodeTile(
 private fun RelatedAnimeSection(
     videos: List<AnimeData>,
     sourceId: String,
+    previewEnabled: Boolean,
     onNavigateUp: () -> Unit,
     onVideoFocused: (AnimeData) -> Unit,
     modifier: Modifier = Modifier
@@ -1351,8 +1415,8 @@ private fun RelatedAnimeSection(
         }
     }
 
-    LaunchedEffect(rowFocused, selectedVirtualIndex, identity) {
-        if (!rowFocused) {
+    LaunchedEffect(rowFocused, selectedVirtualIndex, identity, previewEnabled) {
+        if (!rowFocused || !previewEnabled) {
             dimUnselected = false
             return@LaunchedEffect
         }
@@ -1450,10 +1514,13 @@ private fun RelatedAnimeSection(
                         val video = videos[detailRelatedLogicalIndex(virtualIndex, videos.size)]
                         val selected = rowFocused && virtualIndex == selectedVirtualIndex
                         val cardAlpha by animateFloatAsState(
-                            targetValue = when {
-                                !rowFocused || selected || !dimUnselected -> 1f
-                                else -> 0.48f
-                            },
+                            targetValue = previewCardAlpha(
+                                rowFocused = rowFocused,
+                                selected = selected,
+                                dimUnselected = dimUnselected,
+                                previewActive = false,
+                                previewEnabled = previewEnabled
+                            ),
                             animationSpec = tween(durationMillis = 420),
                             label = "detail-related-card-alpha"
                         )

@@ -16,6 +16,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -114,6 +116,7 @@ import com.jing.sakura.compose.common.AulamaAnimeBrandMark
 import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.AutoMarqueeText
 import com.jing.sakura.compose.common.TvLanguagePreferences
+import com.jing.sakura.compose.common.TvPreviewPreferences
 import com.jing.sakura.compose.common.ChineseText
 import com.jing.sakura.compose.common.TvLanguage
 import com.jing.sakura.compose.common.localizedText
@@ -142,6 +145,7 @@ import com.jing.sakura.home.homeRowShouldLoop
 import com.jing.sakura.home.moveFiniteHomeRowSelection
 import com.jing.sakura.home.nextHeroIndex
 import com.jing.sakura.home.nextHomeRowIndex
+import com.jing.sakura.home.previewCardAlpha
 import com.jing.sakura.home.resolveHeroDescription
 import com.jing.sakura.home.restoredHomeRowSelection
 import com.jing.sakura.home.shouldResumeHeroRotation
@@ -171,6 +175,8 @@ fun HomeScreen(
     val context = LocalContext.current
     val languagePreferences = remember(context) { TvLanguagePreferences.get(context) }
     val language by languagePreferences.language.collectAsState()
+    val previewPreferences = remember(context) { TvPreviewPreferences.get(context) }
+    val previewEnabled by previewPreferences.previewEnabled.collectAsState()
     val homePageDataResource = viewModel.homePageData.collectAsState().value
     val recommendations = viewModel.recommendations.collectAsState().value
     val syncedRows = viewModel.syncedRows.collectAsState().value
@@ -285,6 +291,7 @@ fun HomeScreen(
     }
     val hasRenderableContent = featured.isNotEmpty() || rows.any { it.value.isNotEmpty() }
     var heroIndex by remember { mutableStateOf(0) }
+    var heroTransitionDirection by remember { mutableStateOf(1) }
     var focusedHero by remember { mutableStateOf<AnimeData?>(null) }
     var autoRotateHero by remember { mutableStateOf(true) }
     var heroManualInteractionCount by remember { mutableStateOf(0) }
@@ -414,6 +421,7 @@ fun HomeScreen(
         while (autoRotateHero && featured.size > 1) {
             delay(HERO_ROTATION_INTERVAL_MS)
             focusedHero = null
+            heroTransitionDirection = 1
             heroIndex = nextHeroIndex(heroIndex, 1, featured.size)
         }
     }
@@ -489,9 +497,10 @@ fun HomeScreen(
         focusedRowIndex,
         interactionEvents,
         isScreenResumed,
-        previewSession
+        previewSession,
+        previewEnabled
     ) {
-        if (focusedRowIndex == null || !isScreenResumed) {
+        if (focusedRowIndex == null || !isScreenResumed || !previewEnabled) {
             viewModel.cancelHeroPreview()
             previewIdle = false
             previewArmed = false
@@ -514,7 +523,8 @@ fun HomeScreen(
                         scheduledSession = scheduledSession,
                         currentSession = previewSession,
                         isScreenResumed = isScreenResumed,
-                        hasFocusedContent = focusedRowIndex != null
+                        hasFocusedContent = focusedRowIndex != null,
+                        previewEnabled = previewEnabled
                     )
                 ) return@collectLatest
                 viewModel.prepareHeroPreview(selected)
@@ -528,6 +538,14 @@ fun HomeScreen(
         previewArmed = false
         previewFirstFrameReady = false
         viewModel.cancelHeroPreview()
+    }
+    LaunchedEffect(previewEnabled) {
+        if (!previewEnabled) {
+            previewIdle = false
+            previewArmed = false
+            previewFirstFrameReady = false
+            viewModel.cancelHeroPreview()
+        }
     }
     LaunchedEffect(rows.size, hero?.id) {
         if (!requestedInitialFocus && hero != null) {
@@ -638,6 +656,7 @@ fun HomeScreen(
             featuredCount = featured.size,
             selectedIndex = heroIndex,
             actionFocusRequester = heroActionFocus,
+            transitionDirection = heroTransitionDirection,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(top = 72.dp)
@@ -651,6 +670,7 @@ fun HomeScreen(
                     autoRotateHero = false
                     heroManualInteractionCount += 1
                     focusedHero = null
+                    heroTransitionDirection = if (delta < 0) -1 else 1
                     heroIndex = nextHeroIndex(heroIndex, delta, featured.size)
                 }
             },
@@ -699,6 +719,7 @@ fun HomeScreen(
                         title = activeRow.name,
                         videos = activeRow.value,
                         previewActive = previewActive,
+                        previewEnabled = previewEnabled,
                         initialSelectedIndex = savedSelectedIndex,
                         onSelectionChanged = { index ->
                             rowSelections[activeRow.name] = index
@@ -804,9 +825,11 @@ fun HomeScreen(
         AccountDialog(
             account = account,
             language = language,
+            previewEnabled = previewEnabled,
             isCheckingForUpdate = isCheckingForUpdate,
             currentVersion = com.jing.sakura.BuildConfig.VERSION_NAME,
             onLanguageChange = languagePreferences::setLanguage,
+            onPreviewEnabledChange = previewPreferences::setPreviewEnabled,
             onCheckForUpdate = onCheckForUpdate,
             onDismiss = { showAccountDialog = false },
             onLogout = {
@@ -977,6 +1000,7 @@ private fun HeroPanel(
     featuredCount: Int,
     selectedIndex: Int,
     actionFocusRequester: FocusRequester,
+    transitionDirection: Int,
     modifier: Modifier = Modifier,
     onMove: (Int) -> Unit,
     onFocused: () -> Unit,
@@ -997,50 +1021,71 @@ private fun HeroPanel(
                 .widthIn(max = 510.dp),
             verticalArrangement = Arrangement.Center
         ) {
-            if (!compact) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(
-                        Modifier
-                            .size(width = 22.dp, height = 3.dp)
-                            .background(accent, RoundedCornerShape(2.dp))
-                    )
-                    Spacer(Modifier.width(9.dp))
-                    androidx.tv.material3.Text(
-                        text = localizedText(sectionLabel),
-                        color = accent,
-                        style = MaterialTheme.typography.titleSmall.copy(
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
+            val reducedMotion = rememberReducedMotion()
+            AnimatedContent(
+                targetState = anime,
+                contentKey = { item -> "${item.sourceId}:${item.id}" },
+                transitionSpec = {
+                    val direction = if (transitionDirection < 0) -1 else 1
+                    val duration = if (reducedMotion) 0 else 280
+                    (slideInHorizontally(
+                        animationSpec = tween(duration, easing = FastOutSlowInEasing),
+                        initialOffsetX = { width -> direction * (width / 12).coerceAtLeast(1) }
+                    ) + fadeIn(tween(duration, easing = FastOutSlowInEasing)))
+                        .togetherWith(
+                            slideOutHorizontally(
+                                animationSpec = tween(duration, easing = FastOutSlowInEasing),
+                                targetOffsetX = { width -> -direction * (width / 16).coerceAtLeast(1) }
+                            ) + fadeOut(tween(if (reducedMotion) 0 else 170))
                         )
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-            }
-            AutoMarqueeText(
-                text = localizedText(anime.title),
-                color = accent,
-                style = MaterialTheme.typography.displaySmall.copy(
-                    fontSize = if (compact) 29.sp else 34.sp,
-                    lineHeight = if (compact) 34.sp else 38.sp,
-                    fontWeight = FontWeight.ExtraBold
-                ),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(if (compact) 7.dp else 10.dp))
-            HeroMetadata(anime = anime, accent = accent)
-            if (anime.description.isNotBlank()) {
+                },
+                label = "home-hero-copy"
+            ) { displayedAnime ->
                 Column {
-                    Spacer(Modifier.height(if (compact) 5.dp else 10.dp))
-                    androidx.tv.material3.Text(
-                        text = localizedText(anime.description),
-                        color = AulamaTvColors.TextSecondary,
-                        maxLines = if (compact) 2 else 3,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = if (compact) 14.sp else 16.sp,
-                            lineHeight = if (compact) 19.sp else 21.sp
-                        )
+                    if (!compact) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Spacer(
+                                Modifier
+                                    .size(width = 22.dp, height = 3.dp)
+                                    .background(accent, RoundedCornerShape(2.dp))
+                            )
+                            Spacer(Modifier.width(9.dp))
+                            androidx.tv.material3.Text(
+                                text = localizedText(sectionLabel),
+                                color = accent,
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    AutoMarqueeText(
+                        text = localizedText(displayedAnime.title),
+                        color = accent,
+                        style = MaterialTheme.typography.displaySmall.copy(
+                            fontSize = if (compact) 29.sp else 34.sp,
+                            lineHeight = if (compact) 34.sp else 38.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        ),
+                        modifier = Modifier.fillMaxWidth()
                     )
+                    Spacer(Modifier.height(if (compact) 7.dp else 10.dp))
+                    HeroMetadata(anime = displayedAnime, accent = accent)
+                    if (displayedAnime.description.isNotBlank()) {
+                        Spacer(Modifier.height(if (compact) 5.dp else 10.dp))
+                        androidx.tv.material3.Text(
+                            text = localizedText(displayedAnime.description),
+                            color = AulamaTvColors.TextSecondary,
+                            maxLines = if (compact) 2 else 3,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = if (compact) 14.sp else 16.sp,
+                                lineHeight = if (compact) 19.sp else 21.sp
+                            )
+                        )
+                    }
                 }
             }
             if (!compact) {
@@ -1244,6 +1289,7 @@ private fun MediaRow(
     title: String,
     videos: List<AnimeData>,
     previewActive: Boolean,
+    previewEnabled: Boolean,
     initialSelectedIndex: Int,
     onSelectionChanged: (Int) -> Unit,
     onFocused: (AnimeData) -> Unit,
@@ -1297,8 +1343,8 @@ private fun MediaRow(
         label = "home-row-header-alpha"
     )
 
-    LaunchedEffect(rowFocused, selectedVirtualIndex, videoIdentity) {
-        if (!rowFocused) {
+    LaunchedEffect(rowFocused, selectedVirtualIndex, videoIdentity, previewEnabled) {
+        if (!rowFocused || !previewEnabled) {
             dimUnselected = false
             return@LaunchedEffect
         }
@@ -1422,15 +1468,25 @@ private fun MediaRow(
                     key = { itemIndex -> "$itemIndex:${videos[itemIndex % videos.size].id}" }
                 ) { itemIndex ->
                     val video = videos[itemIndex % videos.size]
+                    val targetCardAlpha = if (!rowFocused) {
+                        0.48f
+                    } else {
+                        previewCardAlpha(
+                            rowFocused = true,
+                            selected = itemIndex == selectedVirtualIndex,
+                            dimUnselected = dimUnselected,
+                            previewActive = previewActive,
+                            previewEnabled = previewEnabled
+                        )
+                    }
                     val cardAlpha by animateFloatAsState(
-                        targetValue = when {
-                            !rowFocused || itemIndex == selectedVirtualIndex -> 1f
-                            previewActive -> 0.16f
-                            !dimUnselected -> 1f
-                            else -> 0.52f
-                        },
+                        targetValue = targetCardAlpha,
                         animationSpec = tween(
-                            durationMillis = if (previewActive) 320 else 620,
+                            durationMillis = when {
+                                previewActive -> 320
+                                !rowFocused || !dimUnselected -> 360
+                                else -> 620
+                            },
                             easing = FastOutSlowInEasing
                         ),
                         label = "home-row-card-alpha"

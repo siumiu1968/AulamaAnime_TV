@@ -239,6 +239,47 @@ class AulamaAuthRepository(
         }
     }
 
+    suspend fun fetchSearchHistory(): List<SearchHistorySyncItem>? {
+        val body = authenticatedBody("/search-history") ?: return null
+        return SearchHistorySyncParser.parse(body)
+    }
+
+    suspend fun saveSearchHistory(keyword: String, updatedAtEpochMs: Long): List<SearchHistorySyncItem>? {
+        val session = _session.value ?: return null
+        val body = JsonObject().apply {
+            addProperty("keyword", keyword.trim())
+            addProperty("updatedAt", CloudTimestamp.formatEpochMs(updatedAtEpochMs))
+        }.toString().toRequestBody(JSON_MEDIA_TYPE)
+        val request = authenticatedRequest("$API_BASE/search-history", session).post(body).build()
+        return executeSearchHistoryMutation(request)
+    }
+
+    suspend fun deleteSearchHistory(
+        keyword: String,
+        updatedAtEpochMs: Long = System.currentTimeMillis()
+    ): List<SearchHistorySyncItem>? {
+        val session = _session.value ?: return null
+        val url = API_BASE.toHttpUrl().newBuilder()
+            .addPathSegment("search-history")
+            .addPathSegment(keyword.trim())
+            .addQueryParameter("updatedAt", CloudTimestamp.formatEpochMs(updatedAtEpochMs))
+            .build()
+        val request = authenticatedRequest(url.toString(), session).delete().build()
+        return executeSearchHistoryMutation(request)
+    }
+
+    suspend fun clearSearchHistory(
+        updatedAtEpochMs: Long = System.currentTimeMillis()
+    ): List<SearchHistorySyncItem>? {
+        val session = _session.value ?: return null
+        val url = API_BASE.toHttpUrl().newBuilder()
+            .addPathSegment("search-history")
+            .addQueryParameter("updatedAt", CloudTimestamp.formatEpochMs(updatedAtEpochMs))
+            .build()
+        val request = authenticatedRequest(url.toString(), session).delete().build()
+        return executeSearchHistoryMutation(request)
+    }
+
     suspend fun sendRemoteHeartbeat(): Boolean {
         val session = _session.value ?: return false
         val capabilities = com.google.gson.JsonArray().apply {
@@ -345,6 +386,18 @@ class AulamaAuthRepository(
                 return@use false
             }
             response.isSuccessful
+        }
+
+    private suspend fun executeSearchHistoryMutation(request: Request): List<SearchHistorySyncItem>? =
+        client.executeWithCoroutine(request).use { response ->
+            if (response.code == 401 || response.code == 403) {
+                clearSession()
+                return@use null
+            }
+            if (!response.isSuccessful) {
+                throw IllegalStateException("搜尋紀錄同步失敗（${response.code}）")
+            }
+            SearchHistorySyncParser.parse(response.body?.string().orEmpty())
         }
 
     private suspend fun <T> execute(request: Request, parser: (Int, String, String?) -> T): T =
