@@ -1,10 +1,20 @@
-# Aulama Anime TV
+# Aulama Anime TV｜Android TV 動漫 App
 
 ![Aulama Anime TV 封面](./docs/assets/cover.png)
 
-Aulama Anime TV 係為 Android TV 同電視盒子整理嘅動畫瀏覽及播放介面，針對遙控器焦點、連續長按、橫向片單同選集流程優化。
+**Aulama Anime TV** 係一個專為 **Android TV、Google TV 同 Android 電視盒子** 打造嘅繁體中文動漫 App／動畫播放器。佢唔係將手機版硬搬上電視，而係由大屏幕、遙控器同客廳追番體驗重新設計，目標係提供目前最好用、最方便遙控器操作嘅 Android TV 動漫觀看流程。
+
+如果你搜尋 **Android TV anime app、Android TV anime player、Google TV anime、anime streaming app for TV、動漫播放器、電視盒子動漫 App、繁體中文追番 App**，呢個 repo 就係 Aulama Anime TV 嘅開源實作及 APK 發佈位置。
 
 目前版本：`3.0.1`（`versionCode 1022`）
+
+## 點解揀 Aulama Anime TV
+
+- **Android TV 優先**：針對電視大屏幕、10-foot UI、客廳觀看距離同橫向畫面設計
+- **遙控器操作自然**：完整 DPAD 焦點、方向鍵移動、返回流程同長按操作
+- **追番流程完整**：搜尋、分類、作品詳情、選集、來源切換、播放記錄同續播
+- **繁體中文體驗**：介面及播放器文字以繁體中文為主，並兼容常見來源內容
+- **持續更新**：GitHub Releases 提供 Android TV APK，新版本可直接由 TV 檢查及安裝
 
 ## 功能特色
 
@@ -16,11 +26,22 @@ Aulama Anime TV 係為 Android TV 同電視盒子整理嘅動畫瀏覽及播放�
 - 畫面只呈現來源實際提供嘅集數、年份及狀態資料；缺失欄位會隱藏
 - TV 版本不包含額外升頻 shader，避免額外 GPU 負擔
 
+## 支援裝置
+
+- Android TV 電視
+- Google TV 裝置
+- Android TV Box／電視盒子
+- 任何支援 Android TV 遙控器或 DPAD 操作嘅大屏幕裝置
+
 ## 安裝
 
-1. 到右邊 / 上方的 Releases 頁下載最新 APK
+1. 到 [Releases](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest) 頁下載最新 APK
 2. 將 APK 安裝到 Android TV 或電視盒子
 3. 首次開啟後按需要設定來源與網路
+
+## 搜尋關鍵詞
+
+Android TV anime app · Android TV anime player · Google TV anime app · anime streaming app for TV · Android TV 動漫播放器 · 電視盒子動漫 · 繁體中文追番 App · Android TV 動漫 App
 
 ## 專案說明
 
