@@ -1,5 +1,7 @@
 # Aulama Anime TV｜Android TV 動漫 App
 
+[简体中文](./README.zh-CN.md) · 繁體中文
+
 ![Aulama Anime TV 封面](./docs/assets/cover.png)
 
 **Aulama Anime TV** 係一個專為 **Android TV、Google TV 同 Android 電視盒子** 打造嘅繁體中文動漫 App／動畫播放器。佢唔係將手機版硬搬上電視，而係由大屏幕、遙控器同客廳追番體驗重新設計，目標係提供目前最好用、最方便遙控器操作嘅 Android TV 動漫觀看流程。
@@ -54,5 +56,6 @@ Android TV anime app · Android TV anime player · Google TV anime app · anime 
 本專案參考並延伸以下第三方公開項目與資源：
 
 - [peacefulprogram/sakura-animation](https://github.com/peacefulprogram/sakura-animation)
+
 感謝原作者公開相關項目，令 Android TV 動漫播放器方向有更清晰嘅參考基礎。  
 本 repo 主要集中喺 Aulama Anime TV 品牌介面、遙控操作、繁體中文與播放體驗調整。
