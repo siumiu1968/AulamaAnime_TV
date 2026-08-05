@@ -6,6 +6,7 @@
     <string name="player_4k_mode_resource_saver">畫質・省資源</string>
     <string name="player_4k_mode_fast">4K・快速</string>
     <string name="player_4k_mode_balanced">4K・平衡</string>
+    <string name="player_4k_mode_quality">4K・畫質</string>
     <string name="player_4k_mode_applied">已切換至 %1$s</string>
     <string name="player_4k_mode_downgraded">裝置負載較高，已調整至 %1$s</string>
     <string name="player_speed_boost_label">快進 2×</string>

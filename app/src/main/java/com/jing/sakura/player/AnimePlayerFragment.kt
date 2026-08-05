@@ -67,6 +67,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         get(qualifier = qualifier(SakuraApplication.KoinOkHttpClient.MEDIA))
 
     private var player: ExoPlayer? = null
+    private var trackSelector: DefaultTrackSelector? = null
     private var glue: ProgressTransportControlGlue<LeanbackPlayerAdapter>? = null
     private var current4kMode = Tv4kMode.OFF
     private var skipSegmentActions: View? = null
@@ -362,16 +363,18 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun buildPlayer(): ExoPlayer {
-        val trackSelector = DefaultTrackSelector(requireContext()).apply {
+        val initialConstraint = current4kMode.trackConstraint
+        val selector = DefaultTrackSelector(requireContext()).apply {
             setParameters(
                 buildUponParameters()
-                    .setMaxVideoSize(1920, 1080)
-                    .setMaxVideoBitrate(8_500_000)
+                    .setMaxVideoSize(initialConstraint.maxWidth, initialConstraint.maxHeight)
+                    .setMaxVideoBitrate(initialConstraint.maxBitrate)
                     .setExceedVideoConstraintsIfNecessary(false)
             )
         }
+        trackSelector = selector
         return ExoPlayer.Builder(requireContext())
-            .setTrackSelector(trackSelector)
+            .setTrackSelector(selector)
             .setSeekBackIncrementMs(SEEK_INCREMENT_MS)
             .setSeekForwardIncrementMs(SEEK_INCREMENT_MS)
             .build()
@@ -444,6 +447,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
             it.release()
         }
         player = null
+        trackSelector = null
         glue = null
         current4kMode = Tv4kMode.OFF
     }
@@ -473,6 +477,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
             requireContext().showShortToast(getString(R.string.player_fast_4k_requires_4k_output))
         }
         return runCatching {
+            val previousMode = current4kMode
+            val resumePosition = localPlayer.currentPosition.coerceAtLeast(0L)
+            val shouldResumePlayback = localPlayer.playWhenReady
             val plan = effectiveMode.effectPlan
             val effects: List<Effect> = when (plan.strategy) {
                 Tv4kEffectStrategy.NONE -> emptyList()
@@ -489,6 +496,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
             }
             localPlayer.setVideoEffects(effects)
             current4kMode = effectiveMode
+            if (previousMode.trackConstraint != effectiveMode.trackConstraint) {
+                applyTrackConstraint(localPlayer, effectiveMode.trackConstraint, resumePosition, shouldResumePlayback)
+            }
             glue?.update4kAction(effectiveMode)
             Log.i(
                 TAG,
@@ -512,6 +522,12 @@ class AnimePlayerFragment : VideoSupportFragment() {
             Log.w(TAG, "Unable to apply TV quality mode $mode", error)
             localPlayer.setVideoEffects(emptyList())
             current4kMode = Tv4kMode.OFF
+            applyTrackConstraint(
+                localPlayer,
+                Tv4kMode.OFF.trackConstraint,
+                localPlayer.currentPosition.coerceAtLeast(0L),
+                localPlayer.playWhenReady
+            )
             glue?.update4kAction(Tv4kMode.OFF)
             requireContext().showShortToast(getString(R.string.player_fast_4k_unavailable))
             Tv4kMode.OFF
@@ -539,6 +555,25 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private fun isLowRamDevice(): Boolean =
         (requireContext().getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)
             ?.isLowRamDevice == true
+
+    private fun applyTrackConstraint(
+        localPlayer: ExoPlayer,
+        constraint: Tv4kTrackConstraint,
+        resumePosition: Long,
+        shouldResumePlayback: Boolean
+    ) {
+        val selector = trackSelector ?: return
+        selector.setParameters(
+            selector.buildUponParameters()
+                .setMaxVideoSize(constraint.maxWidth, constraint.maxHeight)
+                .setMaxVideoBitrate(constraint.maxBitrate)
+                .setExceedVideoConstraintsIfNecessary(false)
+        )
+        // Re-select an adaptive HLS variant immediately, without losing progress.
+        localPlayer.prepare()
+        if (resumePosition > 0L) localPlayer.seekTo(resumePosition)
+        localPlayer.playWhenReady = shouldResumePlayback
+    }
 
     private fun PlaybackException.isVideoEffectFailure(): Boolean =
         errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED ||

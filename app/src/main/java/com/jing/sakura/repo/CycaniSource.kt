@@ -37,6 +37,7 @@ class CycaniSource(
 ) : AnimationSource {
 
     private var navCache: List<NavItem>? = null
+    private val webPlaybackResolver by lazy { CycaniWebPlaybackResolver(okHttpClient) }
 
     override val sourceId: String
         get() = SOURCE_ID
@@ -141,7 +142,11 @@ class CycaniSource(
                         episodeId = encodeEpisodePayload(
                             EpisodePayload(
                                 url = url,
-                                needParse = episode.boolean("needParse")
+                                needParse = episode.boolean("needParse"),
+                                webTitle = title,
+                                webYear = detail.string("vod_year"),
+                                episodeLabel = episodeName,
+                                sourceLine = lineName
                             )
                         )
                     )
@@ -249,7 +254,16 @@ class CycaniSource(
     ): Resource<AnimationSource.VideoUrlResult> {
         return try {
             val payload = decodeEpisodePayload(episodeId)
-            val finalUrl = if (payload.needParse) {
+            val webUrl = payload.webRequestOrNull()?.let { request ->
+                try {
+                    webPlaybackResolver.resolve(request)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            val finalUrl = webUrl ?: if (payload.needParse) {
                 val parsed = apiGetRootObject(payload.url)
                 ensureSuccess(parsed)
                 parsed.string("url").ifBlank { throw RuntimeException(trad("获取到的视频链接为空")) }
@@ -260,9 +274,9 @@ class CycaniSource(
             Resource.Success(
                 AnimationSource.VideoUrlResult(
                     url = finalUrl,
-                    headers = linkedMapOf(
-                        "User-Agent" to DESKTOP_USER_AGENT,
-                        "Accept" to "*/*"
+                    headers = CycaniWebPlaybackPolicy.playbackHeaders(
+                        finalUrl,
+                        isCycaniWebSource = webUrl != null
                     )
                 )
             )
@@ -592,6 +606,10 @@ class CycaniSource(
         val raw = JsonObject().apply {
             addProperty("u", payload.url)
             addProperty("p", payload.needParse)
+            addProperty("wt", payload.webTitle)
+            addProperty("wy", payload.webYear)
+            addProperty("e", payload.episodeLabel)
+            addProperty("s", payload.sourceLine)
         }.toString()
         return PAYLOAD_PREFIX + Base64.encodeToString(
             raw.toByteArray(Charsets.UTF_8),
@@ -610,7 +628,11 @@ class CycaniSource(
         val json = JsonParser.parseString(raw).asJsonObject
         return EpisodePayload(
             url = json.string("u"),
-            needParse = json.boolean("p")
+            needParse = json.boolean("p"),
+            webTitle = json.string("wt"),
+            webYear = json.string("wy"),
+            episodeLabel = json.string("e"),
+            sourceLine = json.string("s")
         )
     }
 
@@ -655,8 +677,16 @@ class CycaniSource(
 
     private data class EpisodePayload(
         val url: String,
-        val needParse: Boolean
-    )
+        val needParse: Boolean,
+        val webTitle: String = "",
+        val webYear: String = "",
+        val episodeLabel: String = "",
+        val sourceLine: String = ""
+    ) {
+        fun webRequestOrNull(): CycaniWebEpisodeRequest? =
+            if (webTitle.isBlank() || webYear.isBlank() || episodeLabel.isBlank()) null
+            else CycaniWebEpisodeRequest(webTitle, webYear, episodeLabel, sourceLine)
+    }
 
     private val defaultHeaders: okhttp3.Request.Builder.() -> Unit = {
         header("User-Agent", DESKTOP_USER_AGENT)
