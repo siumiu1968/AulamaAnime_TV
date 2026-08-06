@@ -88,7 +88,88 @@ class CycaniSource(
         return HomePageData(sourceId = sourceId, seriesList = homeGroups)
     }
 
-    override suspend fun fetchDetailPage(animeId: String): AnimeDetailPageData = coroutineScope {
+    override suspend fun fetchDetailPage(animeId: String): AnimeDetailPageData = try {
+        fetchWebDetailPage(animeId)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        fetchLegacyDetailPage(animeId)
+    }
+
+    private suspend fun fetchWebDetailPage(animeId: String): AnimeDetailPageData = coroutineScope {
+        val legacyDetail = apiGetDataObject("$API_BASE_URL/video/info/$animeId")
+        val legacyTitle = legacyDetail.string("vod_name").ifBlank {
+            throw RuntimeException(trad("未找到番劇標題"))
+        }
+        val legacyYear = legacyDetail.string("vod_year").ifBlank {
+            throw RuntimeException(trad("未找到番劇年份"))
+        }
+        val cachedSynopsis = async {
+            try {
+                withTimeoutOrNull(CACHED_SYNOPSIS_TIMEOUT_MS) {
+                    fetchCachedSynopsis(animeId)
+                }.orEmpty()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                ""
+            }
+        }
+        val detail = webPlaybackResolver.fetchDetail(
+            CycaniWebTitleRequest(legacyTitle, legacyYear)
+        )
+        val title = localizeText(detail.title).ifBlank {
+            throw RuntimeException(trad("未找到番剧标题"))
+        }
+        if (isSuppressedAnimeTitle(title)) {
+            throw RuntimeException(trad("此作品已下架"))
+        }
+        val imageUrl = detail.imageUrl.ifBlank {
+            throw RuntimeException(trad("未找到番剧封面"))
+        }
+        val playLists = detail.playLists.mapIndexed { index, playList ->
+            AnimePlayList(
+                name = localizeText(playList.source.title).normalizePlayLineName(),
+                episodeList = playList.sections.map { section ->
+                    AnimePlayListEpisode(
+                        episode = localizeText(section.title),
+                        episodeId = encodeEpisodePayload(
+                            EpisodePayload(
+                                url = "",
+                                needParse = false,
+                                webTitle = title,
+                                webYear = detail.year,
+                                episodeLabel = section.title,
+                                sourceLine = playList.source.title,
+                                webSectionId = section.id
+                            )
+                        )
+                    )
+                },
+                defaultPlayList = index == 0
+            )
+        }
+        val infoList = buildList {
+            addInfo("地區", trad(detail.area))
+            addInfo("年份", trad(detail.year))
+            addInfo("狀態", trad(detail.state))
+            addInfo("聲優／演員", detail.actor.joinToString("、").let(::localizeText))
+            addInfo("導演", detail.director.joinToString("、").let(::localizeText))
+            addInfo("編劇", localizeText(detail.writer))
+        }
+        val description = cachedSynopsis.await().ifBlank { localizeText(detail.description) }
+
+        AnimeDetailPageData(
+            animeId = animeId,
+            animeName = title,
+            description = description,
+            imageUrl = imageUrl,
+            playLists = playLists,
+            infoList = infoList
+        )
+    }
+
+    private suspend fun fetchLegacyDetailPage(animeId: String): AnimeDetailPageData = coroutineScope {
         val cachedSynopsis = async {
             try {
                 withTimeoutOrNull(CACHED_SYNOPSIS_TIMEOUT_MS) {
@@ -254,7 +335,15 @@ class CycaniSource(
     ): Resource<AnimationSource.VideoUrlResult> {
         return try {
             val payload = decodeEpisodePayload(episodeId)
-            val webUrl = payload.webRequestOrNull()?.let { request ->
+            val webUrl = payload.webSectionId.takeIf(String::isNotBlank)?.let { sectionId ->
+                try {
+                    webPlaybackResolver.resolveSection(sectionId)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+            } ?: payload.webRequestOrNull()?.let { request ->
                 try {
                     webPlaybackResolver.resolve(request)
                 } catch (error: CancellationException) {
@@ -263,12 +352,17 @@ class CycaniSource(
                     null
                 }
             }
-            val finalUrl = webUrl ?: if (payload.needParse) {
-                val parsed = apiGetRootObject(payload.url)
+            val fallbackPayload = if (webUrl == null && payload.url.isBlank()) {
+                resolveLegacyEpisodePayload(animeId, payload)
+            } else {
+                payload
+            }
+            val finalUrl = webUrl ?: if (fallbackPayload.needParse) {
+                val parsed = apiGetRootObject(fallbackPayload.url)
                 ensureSuccess(parsed)
                 parsed.string("url").ifBlank { throw RuntimeException(trad("获取到的视频链接为空")) }
             } else {
-                payload.url
+                fallbackPayload.url.ifBlank { throw RuntimeException(trad("获取到的视频链接为空")) }
             }
 
             Resource.Success(
@@ -283,6 +377,42 @@ class CycaniSource(
         } catch (e: Exception) {
             Resource.Error(e.message ?: trad("加载视频失败"))
         }
+    }
+
+    private suspend fun resolveLegacyEpisodePayload(
+        animeId: String,
+        payload: EpisodePayload
+    ): EpisodePayload {
+        val detail = apiGetDataObject("$API_BASE_URL/video/info/$animeId")
+        val requestedLine = payload.sourceLine.normalizePlayLineName()
+        val sources = detail.array("vod_play_from").asJsonObjects().sortedBy { source ->
+            val line = localizeText(source.string("name"))
+                .ifBlank { source.string("code") }
+                .normalizePlayLineName()
+            if (line == requestedLine) 0 else 1
+        }
+        for (source in sources) {
+            val code = source.string("code")
+            if (code.isBlank()) continue
+            val episodes = apiGetDataArray(
+                "$API_BASE_URL/video/play_url",
+                linkedMapOf("id" to animeId, "from" to code)
+            ).asJsonObjects()
+            val rows = episodes.mapIndexed { index, episode ->
+                JsonObject().apply {
+                    addProperty("id", index)
+                    addProperty("title", episode.string("name").ifBlank { "第${index + 1}集" })
+                }
+            }
+            val selected = CycaniWebPlaybackPolicy.selectExactEpisode(payload.episodeLabel, rows)
+                ?: continue
+            val episode = episodes.getOrNull(selected.id.toIntOrNull() ?: -1) ?: continue
+            val url = episode.string("url")
+            if (url.isNotBlank()) {
+                return EpisodePayload(url = url, needParse = episode.boolean("needParse"))
+            }
+        }
+        throw RuntimeException(trad("未找到播放列表"))
     }
 
     override suspend fun getVideoCategories(): List<VideoCategoryGroup> {
@@ -610,6 +740,7 @@ class CycaniSource(
             addProperty("wy", payload.webYear)
             addProperty("e", payload.episodeLabel)
             addProperty("s", payload.sourceLine)
+            addProperty("ws", payload.webSectionId)
         }.toString()
         return PAYLOAD_PREFIX + Base64.encodeToString(
             raw.toByteArray(Charsets.UTF_8),
@@ -632,7 +763,8 @@ class CycaniSource(
             webTitle = json.string("wt"),
             webYear = json.string("wy"),
             episodeLabel = json.string("e"),
-            sourceLine = json.string("s")
+            sourceLine = json.string("s"),
+            webSectionId = json.string("ws")
         )
     }
 
@@ -681,7 +813,8 @@ class CycaniSource(
         val webTitle: String = "",
         val webYear: String = "",
         val episodeLabel: String = "",
-        val sourceLine: String = ""
+        val sourceLine: String = "",
+        val webSectionId: String = ""
     ) {
         fun webRequestOrNull(): CycaniWebEpisodeRequest? =
             if (webTitle.isBlank() || webYear.isBlank() || episodeLabel.isBlank()) null

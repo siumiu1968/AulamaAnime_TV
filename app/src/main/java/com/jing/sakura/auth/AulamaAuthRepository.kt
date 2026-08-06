@@ -12,6 +12,7 @@ import com.jing.sakura.repo.isSuppressedAnime
 import com.jing.sakura.remote.RemoteCommandAckStatus
 import com.jing.sakura.remote.RemotePlaybackCommand
 import com.jing.sakura.remote.RemotePlaybackCommandParser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.MediaType.Companion.toMediaType
@@ -36,10 +37,16 @@ class AulamaAuthRepository(
             addProperty("deviceName", "${Build.MANUFACTURER} ${Build.MODEL}".trim())
             addProperty("appVersion", BuildConfig.VERSION_NAME)
         }.toString().toRequestBody(JSON_MEDIA_TYPE)
-        return execute(
-            Request.Builder().url("$API_BASE/device/code").post(body).build()
-        ) { code, responseBody, retryAfter ->
-            DeviceAuthParser.parseDeviceCode(code, responseBody, retryAfter, nowEpochMs)
+        return try {
+            execute(
+                Request.Builder().url("$API_BASE/device/code").post(body).build()
+            ) { code, responseBody, retryAfter ->
+                DeviceAuthParser.parseDeviceCode(code, responseBody, retryAfter, nowEpochMs)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            DeviceCodeRequestResult.Failed(NETWORK_ERROR_MESSAGE)
         }
     }
 
@@ -50,10 +57,16 @@ class AulamaAuthRepository(
         val body = JsonObject().apply {
             addProperty("device_code", deviceCode)
         }.toString().toRequestBody(JSON_MEDIA_TYPE)
-        return execute(
-            Request.Builder().url("$API_BASE/device/token").post(body).build()
-        ) { code, responseBody, retryAfter ->
-            DeviceAuthParser.parseTokenPoll(code, responseBody, retryAfter, nowEpochMs)
+        return try {
+            execute(
+                Request.Builder().url("$API_BASE/device/token").post(body).build()
+            ) { code, responseBody, retryAfter ->
+                DeviceAuthParser.parseTokenPoll(code, responseBody, retryAfter, nowEpochMs)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            DeviceTokenPollResult.Failed(NETWORK_ERROR_MESSAGE)
         }
     }
 
@@ -411,6 +424,7 @@ class AulamaAuthRepository(
 
     companion object {
         private const val API_BASE = "https://aulama.org/anime/api"
+        private const val NETWORK_ERROR_MESSAGE = "網絡連線失敗，請稍後再試"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

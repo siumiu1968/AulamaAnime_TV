@@ -15,8 +15,8 @@ android {
         applicationId = "com.codex.ciyuanbox.tv"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1022
-        versionName = "3.0.1"
+        versionCode = 1024
+        versionName = "3.0.3"
 
     }
     packaging {
@@ -153,5 +153,6 @@ dependencies {
     implementation("androidx.webkit:webkit:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 
 }
