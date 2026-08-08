@@ -85,7 +85,7 @@ class CycaniSource(
             throw RuntimeException(trad("次元城首页未解析到内容"))
         }
 
-        return HomePageData(sourceId = sourceId, seriesList = homeGroups)
+        return HomePageData(sourceId = sourceId, seriesList = refreshArtworkGroups(homeGroups))
     }
 
     override suspend fun fetchDetailPage(animeId: String): AnimeDetailPageData = try {
@@ -291,7 +291,7 @@ class CycaniSource(
         return AnimePageData(
             page = page,
             hasNextPage = total > page * pageSize,
-            animeList = items
+            animeList = webPlaybackResolver.refreshArtwork(items)
         )
     }
 
@@ -313,12 +313,14 @@ class CycaniSource(
                 }
             }
         }.awaitAll()
+        val current = Calendar.getInstance().run {
+            val dayOfWeek = get(Calendar.DAY_OF_WEEK)
+            (dayOfWeek + 5) % 7
+        }
+        val refreshed = refreshArtworkTimeline(timeline)
         UpdateTimeLine(
-            current = Calendar.getInstance().run {
-                val dayOfWeek = get(Calendar.DAY_OF_WEEK)
-                (dayOfWeek + 5) % 7
-            },
-            timeline = timeline
+            current = current,
+            timeline = refreshed
         )
     }
 
@@ -516,7 +518,9 @@ class CycaniSource(
         }.getOrNull()
         if (syncedPage != null) {
             return syncedPage.copy(
-                animeList = syncedPage.animeList.filterNot(::isSuppressedAnime)
+                animeList = webPlaybackResolver.refreshArtwork(
+                    syncedPage.animeList.filterNot(::isSuppressedAnime)
+                )
             )
         }
 
@@ -540,8 +544,34 @@ class CycaniSource(
         return AnimePageData(
             page = page,
             hasNextPage = total > page * pageSize,
-            animeList = items
+            animeList = webPlaybackResolver.refreshArtwork(items)
         )
+    }
+
+    private suspend fun refreshArtworkGroups(
+        groups: List<NamedValue<List<AnimeData>>>
+    ): List<NamedValue<List<AnimeData>>> {
+        if (groups.isEmpty()) return groups
+        val refreshed = webPlaybackResolver.refreshArtwork(groups.flatMap { it.value })
+        var cursor = 0
+        return groups.map { group ->
+            val next = refreshed.slice(cursor until cursor + group.value.size)
+            cursor += group.value.size
+            NamedValue(group.name, next)
+        }
+    }
+
+    private suspend fun refreshArtworkTimeline(
+        timeline: List<Pair<String, List<AnimeData>>>
+    ): List<Pair<String, List<AnimeData>>> {
+        if (timeline.isEmpty()) return timeline
+        val refreshed = webPlaybackResolver.refreshArtwork(timeline.flatMap { it.second })
+        var cursor = 0
+        return timeline.map { (label, items) ->
+            val next = refreshed.slice(cursor until cursor + items.size)
+            cursor += items.size
+            label to next
+        }
     }
 
     private suspend fun fetchNavItems(): List<NavItem> {

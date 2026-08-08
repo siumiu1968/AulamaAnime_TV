@@ -69,5 +69,42 @@ class CycaniWebPlaybackPolicyTest {
         assertFalse(CycaniWebPlaybackPolicy.isTrustedPlaybackUrl("http://media.example/video.m3u8"))
     }
 
+    @Test
+    fun updatesLegacyArtworkFromTheCurrentWebCatalogue() {
+        val index = CycaniWebPlaybackPolicy.buildArtworkIndex(rows(
+            """[
+              {
+                "video_id": "3772",
+                "title": "关于我转生变成史莱姆这档事 第四季",
+                "year": "2026",
+                "cover_url": "https://img2.cycimg.me/pic/cover/l/6c/a4/515594_ZRYPc.jpg"
+              }
+            ]"""
+        ))
+        assertEquals(
+            "https://img2.cycimg.me/pic/cover/l/6c/a4/515594_ZRYPc.jpg",
+            CycaniWebPlaybackPolicy.latestArtwork(
+                "關於我轉生變成史萊姆這檔事 第四季",
+                "2026",
+                index
+            )
+        )
+    }
+
+    @Test
+    fun refusesAmbiguousTitleOnlyArtworkMatches() {
+        val index = CycaniWebPlaybackPolicy.buildArtworkIndex(rows(
+            """[
+              {"video_id":"1","title":"同名作品","year":"2025","cover_url":"https://img.example/one.jpg"},
+              {"video_id":"2","title":"同名作品","year":"2026","cover_url":"https://img.example/two.jpg"}
+            ]"""
+        ))
+        assertEquals("", CycaniWebPlaybackPolicy.latestArtwork("同名作品", "", index))
+        assertEquals(
+            "https://img.example/two.jpg",
+            CycaniWebPlaybackPolicy.latestArtwork("同名作品", "2026", index)
+        )
+    }
+
     private fun rows(json: String) = JsonParser.parseString(json).asJsonArray.map { it.asJsonObject }
 }

@@ -4,8 +4,15 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.github.houbb.opencc4j.util.ZhConverterUtil
+import com.jing.sakura.data.AnimeData
 import com.jing.sakura.extend.TraditionalChinese
 import com.jing.sakura.extend.getHtml
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import java.util.Locale
@@ -18,6 +25,10 @@ internal class CycaniWebPlaybackResolver(
     private val client: OkHttpClient,
     private val apiBaseUrl: String = WEB_API_BASE
 ) {
+    private val artworkMutex = Mutex()
+    @Volatile private var artworkIndex: CycaniWebArtworkIndex? = null
+    @Volatile private var artworkExpiresAt: Long = 0L
+
 
     /**
      * Maps a legacy catalogue item to the current Android/Web backend by its
@@ -53,6 +64,23 @@ internal class CycaniWebPlaybackResolver(
             writer = detail.string("writer"),
             playLists = playLists
         )
+    }
+
+    suspend fun refreshArtwork(items: List<AnimeData>): List<AnimeData> {
+        if (items.isEmpty()) return items
+        val index = try {
+            loadArtworkIndex()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            return items
+        }
+        return items.map { item ->
+            CycaniWebPlaybackPolicy.latestArtwork(item.title, item.year, index)
+                .takeIf(String::isNotBlank)
+                ?.let { latest -> item.copy(imageUrl = latest) }
+                ?: item
+        }
     }
 
     /** Resolves one Web section at the moment it is selected for playback. */
@@ -117,6 +145,47 @@ internal class CycaniWebPlaybackResolver(
         }
         error("Cycani Web has no unique title and year match")
     }
+
+    private suspend fun loadArtworkIndex(): CycaniWebArtworkIndex {
+        val now = System.currentTimeMillis()
+        artworkIndex?.takeIf { artworkExpiresAt > now }?.let { return it }
+        return artworkMutex.withLock {
+            val lockedNow = System.currentTimeMillis()
+            artworkIndex?.takeIf { artworkExpiresAt > lockedNow }?.let { return@withLock it }
+            try {
+                val loaded = fetchArtworkIndex()
+                artworkIndex = loaded
+                artworkExpiresAt = lockedNow + ARTWORK_CACHE_TTL_MS
+                loaded
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                artworkIndex?.let {
+                    artworkExpiresAt = lockedNow + ARTWORK_STALE_RETRY_MS
+                    return@withLock it
+                }
+                throw error
+            }
+        }
+    }
+
+    private suspend fun fetchArtworkIndex(): CycaniWebArtworkIndex = coroutineScope {
+        val firstRoot = get("/videos", artworkPageParameters(1))
+        val firstData = dataObject(firstRoot)
+        val firstRows = dataArray(firstData, "list")
+        val total = firstData.objectOrNull("pager")?.int("total") ?: firstRows.size
+        val pageCount = minOf(MAX_ARTWORK_PAGES, maxOf(1, (total + ARTWORK_PAGE_SIZE - 1) / ARTWORK_PAGE_SIZE))
+        val remaining = (2..pageCount).map { page ->
+            async { dataList(get("/videos", artworkPageParameters(page))) }
+        }.awaitAll()
+        CycaniWebPlaybackPolicy.buildArtworkIndex(firstRows + remaining.flatten())
+    }
+
+    private fun artworkPageParameters(page: Int): Map<String, String> = mapOf(
+        "zone_id" to "1",
+        "page" to page.toString(),
+        "page_size" to ARTWORK_PAGE_SIZE.toString()
+    )
 
     private fun searchQueries(title: String): List<String> = listOf(
         runCatching { ZhConverterUtil.toSimple(title) }.getOrElse { title },
@@ -195,8 +264,12 @@ internal class CycaniWebPlaybackResolver(
 
     private companion object {
         const val WEB_API_BASE = "https://mapi.cycback.org/"
-        const val WEB_USER_AGENT = "AulamaAnimeTV/3.0.3 (Android TV)"
+        const val WEB_USER_AGENT = "AulamaAnimeTV/3.0.4 (Android TV)"
         const val MAX_SECTION_PAGES = 10
+        const val ARTWORK_PAGE_SIZE = 500
+        const val MAX_ARTWORK_PAGES = 20
+        const val ARTWORK_CACHE_TTL_MS = 10 * 60 * 1000L
+        const val ARTWORK_STALE_RETRY_MS = 60 * 1000L
     }
 }
 
@@ -230,7 +303,50 @@ internal data class CycaniWebDetail(
     val playLists: List<CycaniWebPlayList>
 )
 
+internal data class CycaniWebArtworkIndex(
+    val byTitleYear: Map<String, String>,
+    val byTitle: Map<String, String>
+)
+
 internal object CycaniWebPlaybackPolicy {
+    fun buildArtworkIndex(candidates: List<JsonObject>): CycaniWebArtworkIndex {
+        val titleYearCandidates = mutableMapOf<String, MutableMap<String, String>>()
+        val titleCandidates = mutableMapOf<String, MutableMap<String, String>>()
+        candidates.forEach { candidate ->
+            val id = candidate.string("video_id").ifBlank { candidate.string("id") }
+            val cover = candidate.string("cover_url").ifBlank { candidate.string("vod_pic") }
+            val year = yearOf(candidate.string("year").ifBlank { candidate.string("publish_date") })
+            val titles = listOf(
+                candidate.string("title"),
+                candidate.string("name"),
+                candidate.string("subtitle"),
+                candidate.string("english_title"),
+                candidate.string("englishTitle")
+            ).map(::canonical).filter(String::isNotBlank).distinct()
+            if (id.isBlank() || cover.isBlank()) return@forEach
+            titles.forEach { title ->
+                titleCandidates.getOrPut(title, ::linkedMapOf)[id] = cover
+                if (year.isNotBlank()) titleYearCandidates.getOrPut("$year:$title", ::linkedMapOf)[id] = cover
+            }
+        }
+        fun unique(rows: Map<String, Map<String, String>>): Map<String, String> = rows.mapNotNull { (key, values) ->
+            values.values.singleOrNull()?.let { key to it }
+        }.toMap()
+        return CycaniWebArtworkIndex(
+            byTitleYear = unique(titleYearCandidates),
+            byTitle = unique(titleCandidates)
+        )
+    }
+
+    fun latestArtwork(title: String, year: String, index: CycaniWebArtworkIndex): String {
+        val canonicalTitle = canonical(title)
+        if (canonicalTitle.isBlank()) return ""
+        val normalizedYear = yearOf(year)
+        return normalizedYear.takeIf(String::isNotBlank)
+            ?.let { index.byTitleYear["$it:$canonicalTitle"] }
+            ?: index.byTitle[canonicalTitle].orEmpty()
+    }
+
     fun uniqueTitleYearMatch(
         expectedTitle: String,
         expectedYear: String,
