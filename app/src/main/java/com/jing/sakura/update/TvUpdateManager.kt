@@ -9,7 +9,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
-import com.google.gson.JsonParser
 import com.jing.sakura.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,13 +23,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.io.IOException
+import java.io.InputStream
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 data class TvUpdate(
     val version: String,
+    val versionCode: Int?,
     val downloadUrl: String,
+    val sha256: String,
     val notes: String
 )
 
@@ -72,9 +73,21 @@ class TvUpdateManager(private val activity: Activity) {
     private val downloadManager = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
     private val preferences = activity.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .callTimeout(30, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .retryOnConnectionFailure(false)
         .build()
+    private val checker = TvUpdateChecker(
+        client = client,
+        primary = TvUpdateEndpoint(PRIMARY_UPDATE_URL, TvUpdateSourceFormat.AULAMA_MANIFEST),
+        fallback = TvUpdateEndpoint(FALLBACK_UPDATE_URL, TvUpdateSourceFormat.GITHUB_RELEASE),
+        currentVersionCode = BuildConfig.VERSION_CODE,
+        currentVersionName = BuildConfig.VERSION_NAME,
+        userAgent = "Aulama-Anime-TV/${BuildConfig.VERSION_NAME}"
+    )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _downloadState = MutableStateFlow<TvUpdateDownloadState>(TvUpdateDownloadState.Idle)
     val downloadState: StateFlow<TvUpdateDownloadState> = _downloadState.asStateFlow()
@@ -88,53 +101,30 @@ class TvUpdateManager(private val activity: Activity) {
         }
 
     suspend fun checkForUpdateDetailed(): TvUpdateCheckResult = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url(LATEST_RELEASE_URL)
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "Aulama-Anime-TV/${BuildConfig.VERSION_NAME}")
-            .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("GitHub Release request failed: ${response.code}")
-            }
-            val root = JsonParser.parseString(response.body?.string().orEmpty()).asJsonObject
-            if (root.get("draft")?.asBoolean == true) return@withContext TvUpdateCheckResult.UpToDate
-            val version = extractVersion(root.get("tag_name")?.asString.orEmpty())
-            if (!isNewerVersion(version, BuildConfig.VERSION_NAME)) {
-                return@withContext TvUpdateCheckResult.UpToDate
-            }
-            val apkAssets = root.getAsJsonArray("assets")
-                ?.mapNotNull { it.takeIf { value -> value.isJsonObject }?.asJsonObject }
-                ?.filter { item ->
-                    item.get("name")?.asString.orEmpty().endsWith(".apk", ignoreCase = true)
-                }
-                .orEmpty()
-            val asset = apkAssets.firstOrNull { item ->
-                item.get("name")?.asString.orEmpty().contains("tv", ignoreCase = true)
-            } ?: apkAssets.firstOrNull()
-            if (asset == null) throw IOException("Release does not contain an APK")
-            val update = TvUpdate(
-                version = version,
-                downloadUrl = asset.get("browser_download_url")?.asString.orEmpty(),
-                notes = root.get("body")?.asString.orEmpty().trim().take(MAX_RELEASE_NOTES_LENGTH)
-            )
-            if (update.downloadUrl.isBlank()) throw IOException("Release APK URL is empty")
-            TvUpdateCheckResult.Available(update)
-        }
+        checker.checkForUpdateDetailed()
     }
 
     fun download(update: TvUpdate): Long {
+        val expectedSha256 = update.sha256.lowercase()
+        require(SHA256_PATTERN.matches(expectedSha256)) { "更新檔案 SHA-256 無效" }
+        PRODUCTION_TV_UPDATE_URL_POLICY.requireDownloadUrl(update.downloadUrl)
+
         val pendingId = preferences.getLong(PENDING_DOWNLOAD_ID, -1L)
         if (pendingId >= 0L) {
             val pendingSnapshot = querySnapshot(pendingId)
-            if (pendingSnapshot != null && pendingSnapshot.status in RESUMABLE_DOWNLOAD_STATUSES) {
+            val pendingSha256 = preferences.getString(PENDING_DOWNLOAD_SHA256, null)
+            if (pendingSnapshot != null &&
+                pendingSnapshot.status in RESUMABLE_DOWNLOAD_STATUSES &&
+                pendingSha256.equals(expectedSha256, ignoreCase = true)
+            ) {
                 if (pendingSnapshot.status == DownloadManager.STATUS_SUCCESSFUL) {
                     installPermissionRequested = false
                 }
                 monitorDownload(pendingId)
                 return pendingId
             }
-            preferences.edit().remove(PENDING_DOWNLOAD_ID).apply()
+            downloadManager.remove(pendingId)
+            clearPendingDownload(pendingId)
         }
 
         _downloadState.value = TvUpdateDownloadState.Starting
@@ -158,7 +148,10 @@ class TvUpdateManager(private val activity: Activity) {
             }
             .getOrThrow()
             .also { downloadId ->
-                preferences.edit().putLong(PENDING_DOWNLOAD_ID, downloadId).apply()
+                preferences.edit()
+                    .putLong(PENDING_DOWNLOAD_ID, downloadId)
+                    .putString(PENDING_DOWNLOAD_SHA256, expectedSha256)
+                    .apply()
                 monitorDownload(downloadId)
             }
     }
@@ -180,7 +173,7 @@ class TvUpdateManager(private val activity: Activity) {
         scope.cancel()
     }
 
-    fun installPendingUpdate(): Boolean {
+    private fun installPendingUpdate(): Boolean {
         val downloadId = preferences.getLong(PENDING_DOWNLOAD_ID, -1L)
         if (downloadId < 0) return false
         val status = queryStatus(downloadId) ?: return false
@@ -209,7 +202,7 @@ class TvUpdateManager(private val activity: Activity) {
                     .setDataAndType(uri, APK_MIME_TYPE)
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             )
-            preferences.edit().remove(PENDING_DOWNLOAD_ID).apply()
+            clearPendingDownload(downloadId)
             true
         }.getOrDefault(false)
     }
@@ -240,6 +233,14 @@ class TvUpdateManager(private val activity: Activity) {
 
                     DownloadManager.STATUS_SUCCESSFUL -> {
                         _downloadState.value = TvUpdateDownloadState.PreparingInstall
+                        if (!verifyDownloadedApk(downloadId)) {
+                            downloadManager.remove(downloadId)
+                            clearPendingDownload(downloadId)
+                            _downloadState.value = TvUpdateDownloadState.Failed(
+                                "更新檔案驗證失敗，請重新下載"
+                            )
+                            break
+                        }
                         val launched = withContext(Dispatchers.Main.immediate) {
                             installPendingUpdate()
                         }
@@ -293,8 +294,22 @@ class TvUpdateManager(private val activity: Activity) {
 
     private fun clearPendingDownload(downloadId: Long) {
         if (preferences.getLong(PENDING_DOWNLOAD_ID, -1L) == downloadId) {
-            preferences.edit().remove(PENDING_DOWNLOAD_ID).apply()
+            preferences.edit()
+                .remove(PENDING_DOWNLOAD_ID)
+                .remove(PENDING_DOWNLOAD_SHA256)
+                .apply()
         }
+    }
+
+    private fun verifyDownloadedApk(downloadId: Long): Boolean {
+        val expected = preferences.getString(PENDING_DOWNLOAD_SHA256, null)
+            ?.lowercase()
+            ?.takeIf(SHA256_PATTERN::matches)
+            ?: return false
+        val uri = downloadManager.getUriForDownloadedFile(downloadId) ?: return false
+        return runCatching {
+            activity.contentResolver.openInputStream(uri)?.use(::sha256Hex) == expected
+        }.getOrDefault(false)
     }
 
     private fun downloadFailureMessage(reason: Int): String = when (reason) {
@@ -306,33 +321,14 @@ class TvUpdateManager(private val activity: Activity) {
         else -> "下載失敗，請檢查網絡後再試"
     }
 
-    private fun isNewerVersion(remote: String, local: String): Boolean {
-        val remoteParts = remote.toVersionParts()
-        val localParts = local.toVersionParts()
-        val maxSize = maxOf(remoteParts.size, localParts.size)
-        repeat(maxSize) { index ->
-            val remotePart = remoteParts.getOrElse(index) { 0 }
-            val localPart = localParts.getOrElse(index) { 0 }
-            if (remotePart != localPart) return remotePart > localPart
-        }
-        return false
-    }
-
-    private fun extractVersion(value: String): String =
-        VERSION_PATTERN.find(value)?.value.orEmpty()
-
-    private fun String.toVersionParts(): List<Int> =
-        substringBefore('-')
-            .split('.')
-            .map { part -> part.filter(Char::isDigit).toIntOrNull() ?: 0 }
-
     companion object {
-        private const val LATEST_RELEASE_URL =
-            "https://api.github.com/repos/siumiu1968/ciyuanbox-tv/releases/latest"
+        private const val PRIMARY_UPDATE_URL = "https://aulama.org/anime/tv-update.json"
+        private const val FALLBACK_UPDATE_URL =
+            "https://api.github.com/repos/siumiu1968/AulamaAnime_TV/releases/latest"
         private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
         private const val PREFERENCES = "tv_update"
         private const val PENDING_DOWNLOAD_ID = "pending_download_id"
-        private const val MAX_RELEASE_NOTES_LENGTH = 4_000
+        private const val PENDING_DOWNLOAD_SHA256 = "pending_download_sha256"
         private const val DOWNLOAD_POLL_INTERVAL_MS = 500L
         private val RESUMABLE_DOWNLOAD_STATUSES = setOf(
             DownloadManager.STATUS_PENDING,
@@ -340,8 +336,18 @@ class TvUpdateManager(private val activity: Activity) {
             DownloadManager.STATUS_PAUSED,
             DownloadManager.STATUS_SUCCESSFUL
         )
-        private val VERSION_PATTERN = Regex("\\d+(?:\\.\\d+)+")
     }
 
     private var monitoredDownloadId: Long = -1L
+}
+
+internal fun sha256Hex(input: InputStream): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        if (read > 0) digest.update(buffer, 0, read)
+    }
+    return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
 }

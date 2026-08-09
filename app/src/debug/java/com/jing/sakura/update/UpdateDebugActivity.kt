@@ -21,7 +21,9 @@ class UpdateDebugActivity : ComponentActivity() {
         updateManager = TvUpdateManager(this)
         val update = TvUpdate(
             version = "2.9.1",
+            versionCode = null,
             downloadUrl = "https://github.com/siumiu1968/ciyuanbox-tv/releases/download/v2.9.1/aulama-anime-tv-v2.9.1.apk",
+            sha256 = "4614cf90052700b857b109f485c2060f87a1750fef54194e24f07befbeda0584",
             notes = """
                 ## 今次更新
                 - 測試真實 APK 下載進度
