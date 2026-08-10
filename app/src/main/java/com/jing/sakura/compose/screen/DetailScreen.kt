@@ -121,6 +121,7 @@ import com.jing.sakura.home.previewCardAlpha
 import com.jing.sakura.extend.secondsToMinuteAndSecondText
 import com.jing.sakura.extend.showShortToast
 import com.jing.sakura.player.NavigateToPlayerArg
+import com.jing.sakura.player.EpisodePlaybackSequencePolicy
 import com.jing.sakura.player.PlaybackActivity
 import com.jing.sakura.room.VideoHistoryEntity
 import kotlinx.coroutines.channels.BufferOverflow
@@ -292,12 +293,17 @@ private fun DetailContent(
 
     val onPrimaryPlay = primaryPlayPosition?.let { (playlistIndex, episodeIndex) ->
         {
+            val selectedEpisode = playlists[playlistIndex].playlist.episodeList[episodeIndex]
+            val canonicalPlaylist = detail.playLists[playlistIndex]
             openPlayback(
                 context = context,
                 animeName = displayAnimeName,
                 detail = detail,
-                playlist = playlists[playlistIndex].playlist,
-                episodeIndex = episodeIndex,
+                playlist = canonicalPlaylist,
+                episodeIndex = EpisodePlaybackSequencePolicy.indexOfEpisode(
+                    canonicalPlaylist.episodeList,
+                    selectedEpisode.episodeId
+                ).coerceAtLeast(0),
                 sourceId = viewModel.sourceId
             )
         }
@@ -437,13 +443,18 @@ private fun DetailContent(
                         }
                     },
                     onEpisodeClick = { episodeIndex, _ ->
+                        val selectedEpisode = playlist.episodeList[episodeIndex]
+                        val canonicalPlaylist = detail.playLists[playlistIndex]
                         restoreEpisodePosition = playlistIndex to episodeIndex
                         openPlayback(
                             context = context,
                             animeName = displayAnimeName,
                             detail = detail,
-                            playlist = playlist,
-                            episodeIndex = episodeIndex,
+                            playlist = canonicalPlaylist,
+                            episodeIndex = EpisodePlaybackSequencePolicy.indexOfEpisode(
+                                canonicalPlaylist.episodeList,
+                                selectedEpisode.episodeId
+                            ).coerceAtLeast(0),
                             sourceId = viewModel.sourceId
                         )
                     }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
+import kotlinx.coroutines.delay
 
 /** Scrolls only when the single-line title genuinely overflows its bounded area. */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalTvMaterial3Api::class)
@@ -39,17 +41,29 @@ fun AutoMarqueeText(
 ) {
     var overflows by remember(text) { mutableStateOf(false) }
     val scrolls = enabled && overflows
+    var marqueeStarted by remember(text, scrolls) { mutableStateOf(false) }
     val edgeFade = 14.dp
+
+    LaunchedEffect(scrolls) {
+        marqueeStarted = false
+        if (scrolls) {
+            // Let basicMarquee leave its initial pause before exposing the edge mask.
+            delay(MARQUEE_EDGE_FADE_DELAY_MILLIS)
+            marqueeStarted = true
+        }
+    }
 
     Box(
         modifier = modifier
             .clipToBounds()
             .graphicsLayer {
-                if (scrolls) compositingStrategy = CompositingStrategy.Offscreen
+                if (shouldDrawMarqueeEdgeFade(scrolls, marqueeStarted)) {
+                    compositingStrategy = CompositingStrategy.Offscreen
+                }
             }
             .drawWithContent {
                 drawContent()
-                if (scrolls && size.width > 0f) {
+                if (shouldDrawMarqueeEdgeFade(scrolls, marqueeStarted) && size.width > 0f) {
                     val fadeFraction = (edgeFade.toPx() / size.width).coerceIn(0f, 0.16f)
                     drawRect(
                         brush = Brush.horizontalGradient(
@@ -80,7 +94,7 @@ fun AutoMarqueeText(
                             iterations = Int.MAX_VALUE,
                             animationMode = MarqueeAnimationMode.Immediately,
                             repeatDelayMillis = 1_000,
-                            initialDelayMillis = 1_500,
+                            initialDelayMillis = MARQUEE_INITIAL_DELAY_MILLIS.toInt(),
                             spacing = MarqueeSpacing(48.dp),
                             velocity = velocity
                         )
@@ -105,3 +119,6 @@ fun AutoMarqueeText(
         }
     }
 }
+
+private const val MARQUEE_INITIAL_DELAY_MILLIS = 1_500L
+private const val MARQUEE_EDGE_FADE_DELAY_MILLIS = MARQUEE_INITIAL_DELAY_MILLIS + 50L

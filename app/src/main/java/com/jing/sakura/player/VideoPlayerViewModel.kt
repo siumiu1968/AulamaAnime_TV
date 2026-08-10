@@ -25,7 +25,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
-import java.util.regex.Pattern
 
 
 class VideoPlayerViewModel(
@@ -79,6 +78,7 @@ class VideoPlayerViewModel(
     private var forcedCompletedEpisodeId: String? = null
 
     private var loadVideoJob: Pair<AnimePlayListEpisode, Job>? = null
+    private var playbackSegmentsJob: Job? = null
 
     private var pendingRemoteResumeMs = anime.resumePositionMs
 
@@ -173,15 +173,44 @@ class VideoPlayerViewModel(
     }
 
     private fun fetchPlaybackSegments(episode: AnimePlayListEpisode, index: Int) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val segments = runCatching {
-                authRepository.fetchPlaybackSegments(
-                    animeId = anime.animeId,
-                    episodeId = episode.episodeId,
-                    episodeIndex = index
+        playbackSegmentsJob?.cancel()
+        val episodeId = episode.episodeId
+        playbackSegmentsJob = viewModelScope.launch(Dispatchers.IO) {
+            var segments: PlaybackSegments? = null
+            for (attempt in 1..PlaybackSegmentsRetryPolicy.MAX_ATTEMPTS) {
+                val result = runCatching {
+                    authRepository.fetchPlaybackSegments(
+                        animeId = anime.animeId,
+                        episodeId = episodeId,
+                        episodeIndex = index
+                    )
+                }.onFailure { error ->
+                    if (error !is CancellationException) {
+                        Log.w(TAG, "Playback segments request failed (attempt $attempt/${PlaybackSegmentsRetryPolicy.MAX_ATTEMPTS})", error)
+                    }
+                }
+                result.exceptionOrNull()?.let { error ->
+                    if (error is CancellationException) throw error
+                }
+                segments = result.getOrNull()
+                if (segments != null) break
+
+                val retryDelayMs = PlaybackSegmentsRetryPolicy.retryDelayAfter(attempt) ?: break
+                Log.w(TAG, "Playback segments unavailable; retrying attempt ${attempt + 1}/${PlaybackSegmentsRetryPolicy.MAX_ATTEMPTS}")
+                delay(retryDelayMs)
+            }
+            val activeEpisodeId = _playList.getOrNull(_playIndex.value)?.episodeId
+            if (PlaybackSegmentsRetryPolicy.belongsToActiveEpisode(
+                    activeIndex = _playIndex.value,
+                    activeEpisodeId = activeEpisodeId,
+                    requestIndex = index,
+                    requestEpisodeId = episodeId
                 )
-            }.getOrNull()
-            if (_playIndex.value == index) _playbackSegments.emit(segments)
+            ) {
+                _playbackSegments.emit(segments)
+            } else {
+                Log.w(TAG, "Ignoring stale playback segments response")
+            }
         }
     }
 
@@ -299,29 +328,21 @@ class VideoPlayerViewModel(
     }
 
     fun playPreviousEpisodeIfExists() {
-        val prevIndex = when {
-            _playList.isEmpty() -> null
-            _playIndex.value > 0 -> _playIndex.value - 1
-            else -> null
-        }
+        val prevIndex = EpisodePlaybackSequencePolicy.previousIndex(_playIndex.value)
         if (prevIndex != null) {
             playEpisodeOfIndex(prevIndex)
         }
     }
 
     fun playNextEpisodeAdjacent() {
-        val nextIndex = when {
-            _playList.isEmpty() -> null
-            _playIndex.value >= 0 && _playIndex.value + 1 < _playList.size -> _playIndex.value + 1
-            else -> null
-        }
+        val nextIndex = EpisodePlaybackSequencePolicy.nextIndex(_playIndex.value, _playList.size)
         if (nextIndex != null) {
             playEpisodeOfIndex(nextIndex)
         }
     }
 
     fun hasNextEpisode(): Boolean =
-        _playIndex.value >= 0 && _playIndex.value + 1 < _playList.size
+        EpisodePlaybackSequencePolicy.nextIndex(_playIndex.value, _playList.size) != null
 
     /** Persists a durable completed snapshot before the player leaves the current episode. */
     fun completeCurrentEpisode(onCompleted: () -> Unit) {
@@ -349,38 +370,7 @@ class VideoPlayerViewModel(
     }
 
     private fun findNextEpisodeIndex(): Int? {
-        if (_playList.size < 2) {
-            return null
-        }
-        val idx = _playIndex.value
-        if (idx < 0) {
-            return null
-        }
-        val episode = _playList[idx]
-        val num = extractNumberFromText(episode.episode)
-        if (num != null) {
-            if (idx + 1 < _playList.size) {
-                val nextNum = extractNumberFromText(_playList[idx + 1].episode)
-                if (nextNum != null && nextNum > num) {
-                    return idx + 1
-                }
-            }
-            if (idx > 0) {
-                val prevNum = extractNumberFromText(_playList[idx - 1].episode)
-                if (prevNum != null && prevNum > num) {
-                    return idx - 1
-                }
-            }
-        }
-        return null
-    }
-
-    private fun extractNumberFromText(text: String): Int? {
-        return Pattern.compile("\\d+").matcher(text)
-            .takeIf { it.find() }
-            ?.run {
-                group().toInt()
-            }
+        return EpisodePlaybackSequencePolicy.nextIndex(_playIndex.value, _playList.size)
     }
 
     fun onPlayPositionChange(currentPosition: Long, duration: Long) {

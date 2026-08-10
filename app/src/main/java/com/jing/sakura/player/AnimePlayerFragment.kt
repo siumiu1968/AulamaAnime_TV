@@ -75,6 +75,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var continueOutroButton: TextView? = null
     private var activePlaybackSkip: ActivePlaybackSkip? = null
     private val skipUiState = PlaybackSkipUiStateMachine()
+    private val skipExitGrace = PlaybackSkipExitGracePolicy()
     private var primaryControlsDock: ViewGroup? = null
     private var playbackProgress: View? = null
     private var lastPrimaryControl: View? = null
@@ -112,6 +113,15 @@ class AnimePlayerFragment : VideoSupportFragment() {
         }
     }
 
+    private val hideSkipUiAfterGraceRunnable = Runnable {
+        if (skipExitGrace.shouldCommitExit(SystemClock.uptimeMillis())) {
+            skipExitGrace.clear()
+            skipUiState.update(null)
+            activePlaybackSkip = null
+            hideSkipUi()
+        }
+    }
+
     private val centerLongPressRunnable = Runnable {
         applyCenterKeyAction(centerKeyController.onLongPressTimeout(SystemClock.uptimeMillis()))
     }
@@ -141,7 +151,10 @@ class AnimePlayerFragment : VideoSupportFragment() {
             Log.d(TAG, "playbackState=${playbackStateName(playbackState)}")
             when (playbackState) {
                 Player.STATE_BUFFERING -> progressBarManager.show()
-                Player.STATE_READY -> progressBarManager.hide()
+                Player.STATE_READY -> {
+                    progressBarManager.hide()
+                    renderSkipSegment(player?.currentPosition?.coerceAtLeast(0L) ?: 0L)
+                }
                 Player.STATE_ENDED -> {
                     progressBarManager.hide()
                     advanceToNextEpisode()
@@ -891,6 +904,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
     override fun onDestroyView() {
         view?.removeCallbacks(centerLongPressRunnable)
+        clearSkipState()
         cancelControlsAutoHide()
         applyCenterKeyAction(centerKeyController.cancel())
         playerHeader?.removeCallbacks(hideHeaderRunnable)
@@ -903,7 +917,6 @@ class AnimePlayerFragment : VideoSupportFragment() {
         skipSegmentActions = null
         skipSegmentButton = null
         continueOutroButton = null
-        activePlaybackSkip = null
         primaryControlsDock = null
         playbackProgress = null
         lastPrimaryControl = null
@@ -936,9 +949,14 @@ class AnimePlayerFragment : VideoSupportFragment() {
             positionMs,
             viewModel.hasNextEpisode()
         )
+        if (active == null) {
+            scheduleSkipUiExit()
+            return
+        }
+        cancelScheduledSkipUiExit()
         val decision = skipUiState.update(active)
         activePlaybackSkip = decision.active
-        if (!decision.isVisible || active == null) {
+        if (!decision.isVisible) {
             hideSkipUi()
             return
         }
@@ -978,6 +996,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun hideSkipUi() {
+        cancelScheduledSkipUiExit()
         val shouldRestoreTransport = skipSegmentButton?.hasFocus() == true ||
             continueOutroButton?.hasFocus() == true
         val restoreWithoutShowingControls = skipFocusWasAutomatic
@@ -1002,9 +1021,30 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun clearSkipState() {
+        cancelScheduledSkipUiExit()
         skipUiState.reset()
         activePlaybackSkip = null
         hideSkipUi()
+    }
+
+    private fun scheduleSkipUiExit() {
+        val actions = skipSegmentActions
+        if (actions?.visibility != View.VISIBLE) {
+            skipExitGrace.clear()
+            skipUiState.update(null)
+            activePlaybackSkip = null
+            hideSkipUi()
+            return
+        }
+        val root = view ?: return
+        val delayMs = skipExitGrace.scheduleExit(SystemClock.uptimeMillis())
+        root.removeCallbacks(hideSkipUiAfterGraceRunnable)
+        root.postDelayed(hideSkipUiAfterGraceRunnable, delayMs)
+    }
+
+    private fun cancelScheduledSkipUiExit() {
+        view?.removeCallbacks(hideSkipUiAfterGraceRunnable)
+        skipExitGrace.onSegmentActive()
     }
 
     private fun activateSkipSegment() {
