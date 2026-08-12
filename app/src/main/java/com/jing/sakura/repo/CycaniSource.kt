@@ -37,7 +37,15 @@ class CycaniSource(
 ) : AnimationSource {
 
     private var navCache: List<NavItem>? = null
-    private val webPlaybackResolver by lazy { CycaniWebPlaybackResolver(okHttpClient) }
+    private val webPlaybackResolver by lazy {
+        CycaniWebPlaybackResolver(
+            client = okHttpClient,
+            authenticatedPlayUrlResolver = { sectionId ->
+                authRepository?.fetchCycaniPlaybackUrl(sectionId)
+                    ?: error("Aulama login is required for Cycani playback")
+            }
+        )
+    }
 
     override val sourceId: String
         get() = SOURCE_ID

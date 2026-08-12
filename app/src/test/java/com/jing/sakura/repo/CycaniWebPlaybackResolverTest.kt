@@ -20,7 +20,8 @@ class CycaniWebPlaybackResolverTest {
         server.start()
         resolver = CycaniWebPlaybackResolver(
             client = OkHttpClient(),
-            apiBaseUrl = server.url("/api/").toString()
+            apiBaseUrl = server.url("/api/").toString(),
+            authenticatedPlayUrlResolver = { error("Playback is not expected in this test") }
         )
     }
 
@@ -55,15 +56,22 @@ class CycaniWebPlaybackResolverTest {
     }
 
     @Test
-    fun playUrlIsResolvedFromSectionOnlyWhenPlaybackStarts() = runBlocking {
-        enqueue(
-            """{"code":0,"msg":"","data":{"url":"https://media.example/episode-1.m3u8"}}"""
+    fun playUrlIsResolvedThroughAuthenticatedBackendOnlyWhenPlaybackStarts() = runBlocking {
+        var resolvedSectionId = ""
+        resolver = CycaniWebPlaybackResolver(
+            client = OkHttpClient(),
+            apiBaseUrl = server.url("/api/").toString(),
+            authenticatedPlayUrlResolver = { sectionId ->
+                resolvedSectionId = sectionId
+                "https://media.example/episode-1.m3u8"
+            }
         )
 
         val url = resolver.resolveSection("51500")
 
         assertEquals("https://media.example/episode-1.m3u8", url)
-        assertEquals("/api/sections/51500/play-url", server.takeRequest().path)
+        assertEquals("51500", resolvedSectionId)
+        assertEquals(0, server.requestCount)
     }
 
     private fun enqueue(body: String) {

@@ -189,6 +189,22 @@ class AulamaAuthRepository(
         return authenticatedBody(url)?.let(PlaybackSegmentsParser::parse)
     }
 
+    /**
+     * Resolves only the authenticated playback URL. Video bytes are fetched
+     * directly by the TV player from the returned CDN URL.
+     */
+    suspend fun fetchCycaniPlaybackUrl(sectionId: String): String? {
+        if (!sectionId.matches(Regex("\\d{1,12}"))) return null
+        val url = API_BASE.toHttpUrl().newBuilder()
+            .addPathSegment("cycani")
+            .addPathSegment("sections")
+            .addPathSegment(sectionId)
+            .addPathSegment("play-url")
+            .build()
+        val body = authenticatedBody(url) ?: return null
+        return parseCycaniPlaybackUrl(body)
+    }
+
     suspend fun fetchFavorites(): List<AnimeData> =
         authenticatedBody("/favorites")
             ?.let(TvLibraryParser::parseFavorites)
@@ -428,3 +444,12 @@ class AulamaAuthRepository(
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }
+
+internal fun parseCycaniPlaybackUrl(body: String): String? = runCatching {
+    val root = JsonParser.parseString(body).asJsonObject
+    root.getAsJsonObject("data")
+        ?.get("url")
+        ?.takeUnless { it.isJsonNull }
+        ?.asString
+        ?: root.get("url")?.takeUnless { it.isJsonNull }?.asString
+}.getOrNull()?.trim()?.takeIf(String::isNotBlank)

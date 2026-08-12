@@ -23,7 +23,8 @@ import java.util.Locale
  */
 internal class CycaniWebPlaybackResolver(
     private val client: OkHttpClient,
-    private val apiBaseUrl: String = WEB_API_BASE
+    private val apiBaseUrl: String = WEB_API_BASE,
+    private val authenticatedPlayUrlResolver: suspend (String) -> String
 ) {
     private val artworkMutex = Mutex()
     @Volatile private var artworkIndex: CycaniWebArtworkIndex? = null
@@ -86,7 +87,7 @@ internal class CycaniWebPlaybackResolver(
     /** Resolves one Web section at the moment it is selected for playback. */
     suspend fun resolveSection(sectionId: String): String {
         require(sectionId.matches(Regex("\\d{1,12}"))) { "Cycani Web section ID is invalid" }
-        val url = dataObject(get("/sections/$sectionId/play-url")).string("url")
+        val url = authenticatedPlayUrlResolver(sectionId)
         if (!CycaniWebPlaybackPolicy.isTrustedPlaybackUrl(url)) {
             error("Cycani Web returned an invalid playback URL")
         }

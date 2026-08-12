@@ -8,7 +8,7 @@
 
 如果你搜尋 **Android TV anime app、Android TV anime player、Google TV anime、anime streaming app for TV、動漫播放器、電視盒子動漫 App、繁體中文追番 App**，呢個 repo 就係 Aulama Anime TV 嘅開源實作及 APK 發佈位置。
 
-目前版本：`3.0.3`（`versionCode 1024`）
+目前版本：`3.0.7`（`versionCode 1028`）
 
 ## 點解揀 Aulama Anime TV
 
