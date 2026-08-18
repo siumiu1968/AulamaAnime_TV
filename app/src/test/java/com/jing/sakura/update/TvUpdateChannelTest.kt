@@ -12,6 +12,12 @@ class TvUpdateChannelTest {
     }
 
     @Test
+    fun togglesBetweenStableAndPreviewWithOneAction() {
+        assertEquals(TvUpdateChannel.Preview, TvUpdateChannel.Stable.toggled())
+        assertEquals(TvUpdateChannel.Stable, TvUpdateChannel.Preview.toggled())
+    }
+
+    @Test
     fun keepsStableAndPreviewManifestsSeparate() {
         val stable = tvUpdateRoute(TvUpdateChannel.Stable)
         val preview = tvUpdateRoute(TvUpdateChannel.Preview)

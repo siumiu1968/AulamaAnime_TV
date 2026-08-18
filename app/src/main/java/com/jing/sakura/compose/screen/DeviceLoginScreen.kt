@@ -5,6 +5,7 @@ package com.jing.sakura.compose.screen
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -19,6 +20,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -29,8 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Login
-import androidx.compose.material.icons.filled.Logout
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Timer
@@ -44,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -52,7 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -77,7 +81,6 @@ import com.jing.sakura.auth.DeviceCode
 import com.jing.sakura.compose.common.AulamaActionButton
 import com.jing.sakura.compose.common.AulamaAccountAvatar
 import com.jing.sakura.compose.common.AulamaAnimeBrandMark
-import com.jing.sakura.compose.common.AulamaCardShape
 import com.jing.sakura.compose.common.AulamaLoadingPulse
 import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.LocalTvLanguage
@@ -91,7 +94,7 @@ import com.jing.sakura.data.AnimeData
 import kotlinx.coroutines.delay
 
 private const val WELCOME_ROTATION_INTERVAL_MS = 8_000L
-private const val WELCOME_TRANSITION_MS = 480
+private const val WELCOME_TRANSITION_MS = 620
 
 internal data class WelcomeCopy(
     val eyebrow: String,
@@ -131,20 +134,20 @@ internal fun welcomeTitleLayout(title: String, compact: Boolean): WelcomeTitleLa
 
 internal fun welcomeCopy(language: TvLanguage): WelcomeCopy = when (language) {
     TvLanguage.Traditional -> WelcomeCopy(
-        eyebrow = "最新焦點",
-        slogan = "下一集，喺大螢幕繼續。",
-        message = "登入 Aulama ID，把收藏、觀看進度同個人化推薦帶返嚟。",
+        eyebrow = "本季焦點",
+        slogan = "讓每一段精彩，都在大螢幕綻放。",
+        message = "登入 Aulama ID，即可跨裝置同步收藏、觀看進度與個人化推薦。",
         loginButton = "使用 Aulama ID 登入",
         guestButton = "免登入使用",
-        guestNote = "遊客資料只會保留喺呢部電視；登入後可跨裝置同步。"
+        guestNote = "遊客資料只會儲存在這部電視；登入後即可跨裝置同步。"
     )
     TvLanguage.Simplified -> WelcomeCopy(
-        eyebrow = "最新焦点",
-        slogan = "下一集，在大屏幕继续。",
-        message = "登录 Aulama ID，同步收藏、观看进度和个性化推荐。",
+        eyebrow = "本季焦点",
+        slogan = "让每一段精彩，都在大屏幕绽放。",
+        message = "登录 Aulama ID，即可跨设备同步收藏、观看进度与个性化推荐。",
         loginButton = "使用 Aulama ID 登录",
         guestButton = "免登录使用",
-        guestNote = "游客数据只保存在这台电视；登录后可跨设备同步。"
+        guestNote = "游客数据只会保存在这台电视；登录后即可跨设备同步。"
     )
 }
 
@@ -222,7 +225,16 @@ private fun LoginWelcomeScreen(
         }
     }
     val selectedAnime = featuredAnime.getOrNull(featuredIndex)
-    val artworkAccent = rememberArtworkAccent(selectedAnime?.imageUrl.orEmpty())
+    val extractedArtworkAccent = rememberArtworkAccent(selectedAnime?.imageUrl.orEmpty())
+    val reducedMotion = rememberReducedMotion()
+    val artworkAccent by animateColorAsState(
+        targetValue = extractedArtworkAccent,
+        animationSpec = tween(
+            durationMillis = if (reducedMotion) 0 else WELCOME_TRANSITION_MS,
+            easing = FastOutSlowInEasing
+        ),
+        label = "welcome-artwork-accent"
+    )
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -366,19 +378,20 @@ private fun WelcomeAnimeBackdrop(anime: List<AnimeData>, selectedIndex: Int, acc
             widthPx = 960,
             heightPx = 1_360
         )
-        Box(modifier = Modifier.fillMaxSize()) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val artworkWidth = minOf(maxWidth * 0.52f, maxHeight * (2f / 3f))
             AsyncImage(
                 model = posterRequest,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
                 alignment = Alignment.TopEnd,
                 modifier = Modifier
-                    .fillMaxSize()
+                    .align(Alignment.TopEnd)
+                    .fillMaxHeight()
+                    .width(artworkWidth)
+                    .aspectRatio(2f / 3f, matchHeightConstraintsFirst = true)
                     .graphicsLayer {
                         alpha = 0.96f
-                        scaleX = 1.42f
-                        scaleY = 1.42f
-                        transformOrigin = TransformOrigin(1f, 0f)
                         compositingStrategy = CompositingStrategy.Offscreen
                     }
                     .drawWithContent {
@@ -387,10 +400,11 @@ private fun WelcomeAnimeBackdrop(anime: List<AnimeData>, selectedIndex: Int, acc
                             brush = Brush.horizontalGradient(
                                 colorStops = arrayOf(
                                     0f to Color.Transparent,
-                                    0.55f to Color.Transparent,
-                                    0.60f to Color.Black.copy(alpha = 0.24f),
-                                    0.66f to Color.Black.copy(alpha = 0.82f),
-                                    0.72f to Color.Black,
+                                    0.025f to Color.Black.copy(alpha = 0.06f),
+                                    0.05f to Color.Black.copy(alpha = 0.22f),
+                                    0.08f to Color.Black.copy(alpha = 0.58f),
+                                    0.115f to Color.Black.copy(alpha = 0.86f),
+                                    0.15f to Color.Black,
                                     1f to Color.Black
                                 )
                             ),
@@ -403,32 +417,34 @@ private fun WelcomeAnimeBackdrop(anime: List<AnimeData>, selectedIndex: Int, acc
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.horizontalGradient(
-                    colorStops = arrayOf(
-                        0f to AulamaTvColors.Background,
-                        0.18f to AulamaTvColors.Background,
-                        0.34f to AulamaTvColors.Background.copy(alpha = 0.98f),
-                        0.47f to AulamaTvColors.Background.copy(alpha = 0.82f),
-                        0.60f to AulamaTvColors.Background.copy(alpha = 0.46f),
-                        0.73f to AulamaTvColors.Background.copy(alpha = 0.10f),
-                        0.86f to Color.Transparent,
-                        1f to Color.Transparent
+            .drawBehind {
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        colorStops = arrayOf(
+                            0f to Color.Transparent,
+                            0.18f to accent.copy(alpha = 0.012f),
+                            0.38f to accent.copy(alpha = 0.032f),
+                            0.58f to accent.copy(alpha = 0.065f),
+                            0.76f to accent.copy(alpha = 0.095f),
+                            0.90f to accent.copy(alpha = 0.065f),
+                            1f to accent.copy(alpha = 0.02f)
+                        )
                     )
                 )
-            )
-            .background(
-                Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0f to AulamaTvColors.Background.copy(alpha = 0.12f),
-                        0.10f to Color.Transparent,
-                        0.86f to Color.Transparent,
-                        0.91f to AulamaTvColors.Background.copy(alpha = 0.12f),
-                        0.96f to AulamaTvColors.Background.copy(alpha = 0.46f),
-                        1f to AulamaTvColors.Background
+                drawRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            accent.copy(alpha = 0.12f),
+                            accent.copy(alpha = 0.092f),
+                            accent.copy(alpha = 0.058f),
+                            accent.copy(alpha = 0.026f),
+                            Color.Transparent
+                        ),
+                        center = Offset(size.width * 0.76f, size.height * 0.46f),
+                        radius = size.width * 0.80f
                     )
                 )
-            )
+            }
     )
     Box(
         modifier = Modifier
@@ -436,14 +452,24 @@ private fun WelcomeAnimeBackdrop(anime: List<AnimeData>, selectedIndex: Int, acc
             .background(
                 Brush.horizontalGradient(
                     colorStops = arrayOf(
-                        0f to Color.Transparent,
-                        0.28f to Color.Transparent,
-                        0.42f to accent.copy(alpha = 0.07f),
-                        0.52f to accent.copy(alpha = 0.16f),
-                        0.62f to accent.copy(alpha = 0.10f),
-                        0.74f to accent.copy(alpha = 0.03f),
-                        0.84f to Color.Transparent,
+                        0f to AulamaTvColors.Background,
+                        0.46f to AulamaTvColors.Background,
+                        0.51f to AulamaTvColors.Background.copy(alpha = 0.94f),
+                        0.57f to AulamaTvColors.Background.copy(alpha = 0.68f),
+                        0.63f to AulamaTvColors.Background.copy(alpha = 0.34f),
+                        0.69f to AulamaTvColors.Background.copy(alpha = 0.12f),
+                        0.74f to AulamaTvColors.Background.copy(alpha = 0.03f),
+                        0.78f to Color.Transparent,
                         1f to Color.Transparent
+                    )
+                )
+            )
+            .background(
+                Brush.verticalGradient(
+                    colorStops = arrayOf(
+                        0f to AulamaTvColors.Background.copy(alpha = 0.16f),
+                        0.58f to Color.Transparent,
+                        1f to AulamaTvColors.Background
                     )
                 )
             )
@@ -776,41 +802,69 @@ fun AccountDialog(
     onLogout: () -> Unit
 ) {
     val dismissFocus = remember { FocusRequester() }
+    val dialogShape = RoundedCornerShape(20.dp)
+    val displayName = account?.name ?: localizedText("遊客模式")
+    val accountStatus = when {
+        !account?.email.isNullOrBlank() -> account?.email.orEmpty()
+        account != null -> account.role.orEmpty()
+        else -> localizedText("本機保存 · 登入後可跨裝置同步")
+    }
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
-                .width(520.dp)
-                .clip(AulamaCardShape)
+                .width(500.dp)
+                .clip(dialogShape)
                 .background(
                     Brush.verticalGradient(
                         listOf(
-                            AulamaTvColors.SurfaceRaised.copy(alpha = 0.90f),
-                            AulamaTvColors.Surface.copy(alpha = 0.76f)
+                            Color(0xF2182230),
+                            AulamaTvColors.Surface.copy(alpha = 0.90f)
                         )
                     )
                 )
-                .border(1.dp, Color.White.copy(alpha = 0.16f), AulamaCardShape)
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .border(1.dp, Color.White.copy(alpha = 0.18f), dialogShape)
+                .padding(horizontal = 22.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            Spacer(
+                modifier = Modifier
+                    .size(width = 84.dp, height = 3.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(
+                                AulamaTvColors.Cyan,
+                                AulamaTvColors.Blue,
+                                Color.Transparent
+                            )
+                        )
+                    )
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(18.dp)
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 if (account != null) {
                     AulamaAccountAvatar(
                         account = account,
                         modifier = Modifier
-                            .size(64.dp)
+                            .size(58.dp)
                             .border(2.dp, AulamaTvColors.Cyan.copy(alpha = 0.55f), CircleShape)
                     )
                 } else {
                     Box(
                         modifier = Modifier
-                            .size(64.dp)
+                            .size(58.dp)
                             .clip(CircleShape)
-                            .background(AulamaTvColors.Surface)
+                            .background(
+                                Brush.radialGradient(
+                                    listOf(
+                                        AulamaTvColors.Cyan.copy(alpha = 0.20f),
+                                        AulamaTvColors.Surface
+                                    )
+                                )
+                            )
                             .border(2.dp, AulamaTvColors.Cyan.copy(alpha = 0.55f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
@@ -818,7 +872,7 @@ fun AccountDialog(
                             imageVector = Icons.Default.Person,
                             contentDescription = null,
                             tint = AulamaTvColors.TextPrimary,
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(30.dp)
                         )
                     }
                 }
@@ -827,141 +881,101 @@ fun AccountDialog(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        text = account?.name ?: localizedText("遊客模式"),
+                        text = displayName,
                         style = MaterialTheme.typography.headlineSmall.copy(
-                            fontSize = 27.sp,
+                            fontSize = 25.sp,
                             fontWeight = FontWeight.SemiBold
                         ),
                         color = AulamaTvColors.TextPrimary,
                         maxLines = 1
                     )
-                    if (!account?.email.isNullOrBlank()) {
-                        Text(
-                            text = account?.email.orEmpty(),
-                            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp),
-                            color = AulamaTvColors.TextSecondary,
-                            maxLines = 1
-                        )
-                    }
                     Text(
-                        text = account?.role ?: localizedText("紀錄與收藏只保留喺呢部電視"),
-                        style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp),
-                        color = AulamaTvColors.Cyan,
+                        text = accountStatus,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = if (account == null) AulamaTvColors.Cyan else AulamaTvColors.TextSecondary,
                         maxLines = 1
                     )
                 }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    text = localizedText("介面語言"),
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold
-                    ),
-                    color = AulamaTvColors.TextPrimary
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    AulamaActionButton(
-                        label = "繁體中文",
-                        icon = Icons.Default.Check.takeIf { language == TvLanguage.Traditional },
-                        accent = AulamaTvColors.Cyan,
-                        onClick = { onLanguageChange(TvLanguage.Traditional) },
-                        modifier = Modifier.weight(1f).height(48.dp)
-                    )
-                    AulamaActionButton(
-                        label = "简体中文",
-                        icon = Icons.Default.Check.takeIf { language == TvLanguage.Simplified },
-                        accent = AulamaTvColors.Blue,
-                        onClick = { onLanguageChange(TvLanguage.Simplified) },
-                        modifier = Modifier.weight(1f).height(48.dp)
-                    )
-                }
-            }
+            AccountSectionLabel(label = "偏好設定", accent = AulamaTvColors.Cyan)
             AulamaActionButton(
-                label = "自動播放預覽 · ${if (previewEnabled) "開啟" else "關閉"}",
-                icon = Icons.Default.Check.takeIf { previewEnabled },
-                accent = AulamaTvColors.Cyan,
+                label = "介面語言",
+                trailingLabel = if (language == TvLanguage.Traditional) "繁體中文" else "簡體中文",
+                icon = Icons.Default.Language,
+                accent = if (language == TvLanguage.Traditional) AulamaTvColors.Cyan else AulamaTvColors.Blue,
+                onClick = {
+                    onLanguageChange(
+                        if (language == TvLanguage.Traditional) {
+                            TvLanguage.Simplified
+                        } else {
+                            TvLanguage.Traditional
+                        }
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                labelFontSize = 15.sp,
+                iconSize = 18.dp,
+                contentHeight = 44.dp
+            )
+            AulamaActionButton(
+                label = "自動播放預覽",
+                trailingLabel = if (previewEnabled) "開啟" else "關閉",
+                icon = Icons.Default.Timer,
+                accent = if (previewEnabled) AulamaTvColors.Green else AulamaTvColors.Blue,
                 onClick = { onPreviewEnabledChange(!previewEnabled) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(44.dp),
+                labelFontSize = 15.sp,
+                iconSize = 18.dp,
+                contentHeight = 44.dp
             )
-            Column(
+            Spacer(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(AulamaCardShape)
-                    .background(AulamaTvColors.Surface.copy(alpha = 0.66f))
-                    .border(1.dp, AulamaTvColors.Outline, AulamaCardShape)
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = localizedText("應用程式更新"),
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.SemiBold
-                        ),
-                        color = AulamaTvColors.TextPrimary
-                    )
-                    Text(
-                        text = "v$currentVersion",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = AulamaTvColors.TextSecondary
-                    )
+                    .height(1.dp)
+                    .background(Color.White.copy(alpha = 0.10f))
+            )
+            AccountSectionLabel(
+                label = "應用程式更新",
+                trailing = "v$currentVersion",
+                accent = if (updateChannel == TvUpdateChannel.Preview) {
+                    AulamaTvColors.Amber
+                } else {
+                    AulamaTvColors.Green
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    AulamaActionButton(
-                        label = "正式版",
-                        icon = Icons.Default.Check.takeIf { updateChannel == TvUpdateChannel.Stable },
-                        accent = AulamaTvColors.Green,
-                        onClick = { onUpdateChannelChange(TvUpdateChannel.Stable) },
-                        modifier = Modifier.weight(1f).height(46.dp)
-                    )
-                    AulamaActionButton(
-                        label = "搶先版",
-                        icon = Icons.Default.Check.takeIf { updateChannel == TvUpdateChannel.Preview },
-                        accent = AulamaTvColors.Amber,
-                        onClick = { onUpdateChannelChange(TvUpdateChannel.Preview) },
-                        modifier = Modifier.weight(1f).height(46.dp)
-                    )
-                }
-                Text(
-                    text = localizedText(
-                        if (updateChannel == TvUpdateChannel.Preview) {
-                            "較早收到測試功能，適合協助試用新版本"
-                        } else {
-                            "只接收完成測試嘅穩定版本"
-                        }
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = AulamaTvColors.TextSecondary
-                )
-                AulamaActionButton(
-                    label = if (isCheckingForUpdate) {
-                        "正在檢查更新"
-                    } else {
-                        "檢查更新"
-                    },
-                    icon = Icons.Default.SystemUpdateAlt,
-                    enabled = !isCheckingForUpdate,
-                    accent = AulamaTvColors.Cyan,
-                    onClick = onCheckForUpdate,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
-                )
-            }
+            )
+            AulamaActionButton(
+                label = "更新通道",
+                trailingLabel = if (updateChannel == TvUpdateChannel.Preview) "搶先版" else "正式版",
+                accent = if (updateChannel == TvUpdateChannel.Preview) {
+                    AulamaTvColors.Amber
+                } else {
+                    AulamaTvColors.Green
+                },
+                onClick = { onUpdateChannelChange(updateChannel.toggled()) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                labelFontSize = 15.sp,
+                contentHeight = 44.dp
+            )
+            AulamaActionButton(
+                label = if (isCheckingForUpdate) "正在檢查更新" else "檢查更新",
+                trailingLabel = "v$currentVersion",
+                icon = Icons.Default.SystemUpdateAlt,
+                enabled = !isCheckingForUpdate,
+                accent = AulamaTvColors.Cyan,
+                onClick = onCheckForUpdate,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                labelFontSize = 15.sp,
+                iconSize = 18.dp,
+                contentHeight = 44.dp
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
@@ -969,17 +983,55 @@ fun AccountDialog(
                 AulamaActionButton(
                     label = "返回",
                     onClick = onDismiss,
-                    modifier = Modifier.height(48.dp).focusRequester(dismissFocus)
+                    modifier = Modifier.height(46.dp).focusRequester(dismissFocus),
+                    contentHeight = 46.dp
                 )
                 AulamaActionButton(
                     label = if (account == null) "登入並跨裝置同步" else "登出",
-                    icon = if (account == null) Icons.AutoMirrored.Filled.Login else Icons.Default.Logout,
+                    icon = if (account == null) Icons.AutoMirrored.Filled.Login else Icons.AutoMirrored.Filled.Logout,
                     accent = if (account == null) AulamaTvColors.Cyan else AulamaTvColors.Pink,
                     onClick = if (account == null) onLogin else onLogout,
-                    modifier = Modifier.height(48.dp)
+                    modifier = Modifier.height(46.dp),
+                    contentHeight = 46.dp
                 )
             }
         }
         LaunchedEffect(Unit) { dismissFocus.requestFocus() }
+    }
+}
+
+@Composable
+private fun AccountSectionLabel(
+    label: String,
+    accent: Color,
+    trailing: String? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Spacer(
+            modifier = Modifier
+                .size(width = 4.dp, height = 18.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(accent)
+        )
+        Spacer(Modifier.width(9.dp))
+        Text(
+            text = localizedText(label),
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
+            color = AulamaTvColors.TextSecondary
+        )
+        if (trailing != null) {
+            Text(
+                text = trailing,
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 13.sp),
+                color = accent
+            )
+        }
     }
 }

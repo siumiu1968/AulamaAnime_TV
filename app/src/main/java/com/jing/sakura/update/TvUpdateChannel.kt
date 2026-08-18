@@ -8,6 +8,11 @@ enum class TvUpdateChannel(val storageValue: String) {
     Stable("stable"),
     Preview("preview");
 
+    fun toggled(): TvUpdateChannel = when (this) {
+        Stable -> Preview
+        Preview -> Stable
+    }
+
     companion object {
         fun fromStorageValue(value: String?): TvUpdateChannel =
             entries.firstOrNull { it.storageValue == value } ?: Stable

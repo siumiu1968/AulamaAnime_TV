@@ -192,6 +192,7 @@ fun AulamaActionButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    trailingLabel: String? = null,
     enabled: Boolean = true,
     accent: Color = AulamaTvColors.Cyan,
     focusedBorderColor: Color = AulamaTvColors.FocusBorder,
@@ -202,6 +203,7 @@ fun AulamaActionButton(
     contentHeight: Dp = 52.dp
 ) {
     val displayLabel = localizedText(label)
+    val displayTrailingLabel = trailingLabel?.let { localizedText(it) }
     Button(
         onClick = onClick,
         enabled = enabled,
@@ -255,7 +257,9 @@ fun AulamaActionButton(
             }
         } else {
             Row(
-                modifier = Modifier.height(contentHeight),
+                modifier = Modifier
+                    .then(if (displayTrailingLabel != null) Modifier.fillMaxWidth() else Modifier)
+                    .height(contentHeight),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
@@ -272,6 +276,18 @@ fun AulamaActionButton(
                         fontWeight = FontWeight.SemiBold
                     )
                 )
+                if (displayTrailingLabel != null) {
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = displayTrailingLabel,
+                        maxLines = 1,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = labelFontSize,
+                            lineHeight = labelLineHeight,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    )
+                }
             }
         }
     }

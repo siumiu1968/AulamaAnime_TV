@@ -1,61 +1,114 @@
-# Aulama Anime TV｜Android TV 動漫 App
+<!-- Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 -->
+<!-- Hallmark · macrostructure: product-evidence-flow · brand: Aulama dark cinema · chrome: real screenshots only · honest: pass -->
 
-[简体中文](./README.zh-CN.md) · 繁體中文
+# Aulama Anime TV — Android TV / Google TV 動漫 App
 
-![Aulama Anime TV 封面](./docs/assets/cover.png)
+**廣東話** · [繁體中文](./README.zh-Hant.md) · [简体中文](./README.zh-CN.md)
 
-**Aulama Anime TV** 係一個專為 **Android TV、Google TV 同 Android 電視盒子** 打造嘅繁體中文動漫 App／動畫播放器。佢唔係將手機版硬搬上電視，而係由大屏幕、遙控器同客廳追番體驗重新設計，目標係提供目前最好用、最方便遙控器操作嘅 Android TV 動漫觀看流程。
+<p align="center">
+  <img src="./docs/assets/cover.png" width="760" alt="Aulama Anime TV 標誌與深色電視介面品牌封面">
+</p>
 
-如果你搜尋 **Android TV anime app、Android TV anime player、Google TV anime、anime streaming app for TV、動漫播放器、電視盒子動漫 App、繁體中文追番 App**，呢個 repo 就係 Aulama Anime TV 嘅開源實作及 APK 發佈位置。
+<p align="center"><strong>為大螢幕而生嘅中文動漫搜尋、選集同播放體驗。</strong></p>
 
-目前搶先版：`3.1.0-beta.1`（`versionCode 1030`）
+<p align="center">
+  <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases/latest"><img alt="最新正式版" src="https://img.shields.io/github/v/release/siumiu1968/AulamaAnime_TV?display_name=tag&sort=semver&label=%E6%AD%A3%E5%BC%8F%E7%89%88&color=16a085"></a>
+  <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases"><img alt="搶先版 3.1.0 Beta 2" src="https://img.shields.io/badge/%E6%90%B6%E5%85%88%E7%89%88-3.1.0--beta.2-e85d9e"></a>
+  <img alt="支援 Android 5.0 或以上" src="https://img.shields.io/badge/Android-5.0%2B-3DDC84?logo=android&logoColor=white">
+  <img alt="GitHub 累計下載次數" src="https://img.shields.io/github/downloads/siumiu1968/AulamaAnime_TV/total?label=downloads&color=4f8ad9">
+</p>
 
-## 點解揀 Aulama Anime TV
+**Aulama Anime TV** 唔係將手機介面放大，而係由遙控器焦點、客廳觀看距離同橫向大螢幕重新設計。由搵動畫、揀集數、切換播放線路，到跳過片頭片尾同續播，都可以用 D-pad 完成。
 
-- **Android TV 優先**：針對電視大屏幕、10-foot UI、客廳觀看距離同橫向畫面設計
-- **遙控器操作自然**：完整 DPAD 焦點、方向鍵移動、返回流程同長按操作
-- **追番流程完整**：搜尋、分類、作品詳情、選集、來源切換、播放記錄同續播
-- **繁體中文體驗**：介面及播放器文字以繁體中文為主，並兼容常見來源內容
-- **持續更新**：GitHub Releases 提供 Android TV APK，新版本可直接由 TV 檢查及安裝
+> 如果你都覺得電視追番應該更順手，歡迎按右上角 **Star**。每一粒 Star 都係我繼續改善遙控操作、搜尋同播放穩定性嘅動力。
 
-## 功能特色
+[下載正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest)　·　[下載搶先版](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.1.0-beta.2)　·　[查看全部版本](https://github.com/siumiu1968/AulamaAnime_TV/releases)
 
-- Home、Detail、Search、History、Timeline、Category 採用共用深色 TV 介面
-- 焦點、封面、選集介面針對 DPAD 遙控器調整
-- 內建繁體中文字串與常見簡體內容轉換
-- 支援搜尋、切換來源、播放記錄、選集及續播
-- 自動檢查 GitHub Release，新版本可直接在 TV 下載並安裝
-- 畫面只呈現來源實際提供嘅集數、年份及狀態資料；缺失欄位會隱藏
-- TV 版本不包含額外升頻 shader，避免額外 GPU 負擔
+## 實際畫面
 
-## 支援裝置
+以下全部係 Android TV 模擬器／實機介面截圖，冇重新繪製假裝置框。
 
-- Android TV 電視
-- Google TV 裝置
-- Android TV Box／電視盒子
-- 任何支援 Android TV 遙控器或 DPAD 操作嘅大屏幕裝置
+![Aulama Anime TV 首頁，顯示精選動畫、完整海報、今日更新與遙控器導覽](./docs/screenshots/home.png)
 
-## 安裝
+| 模糊搜尋 | 作品詳情與選集 |
+| --- | --- |
+| ![搜尋頁支援關鍵字、別名、繁簡名稱同日文原名](./docs/screenshots/search.png) | ![作品詳情頁顯示作品資料、播放線路同集數](./docs/screenshots/detail.png) |
 
-1. 到 [Releases](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest) 頁下載最新 APK
-2. 將 APK 安裝到 Android TV 或電視盒子
-3. 首次開啟後按需要設定來源與網路
+![用戶卡片可切換介面語言、自動播放預覽、更新通道，同埋登入同步資料](./docs/screenshots/account.png)
 
-## 搜尋關鍵詞
+## 有咩特別
 
-Android TV anime app · Android TV anime player · Google TV anime app · anime streaming app for TV · Android TV 動漫播放器 · 電視盒子動漫 · 繁體中文追番 App · Android TV 動漫 App
+### 搜得到
 
-## 專案說明
+- 共用網站搜尋邏輯，支援模糊字詞、別名、繁簡名稱同日文原名。
+- API 暫時失效時會退回本機舊搜尋，唔會令搜尋頁直接失效。
+- 搜尋結果集中顯示作品，唔混入無關推薦。
 
-- 本專案以 Android TV 使用體驗為優先，屬於客製化公開版本
-- 品牌介面、遙控操作、繁體中文同播放器 UI 均有額外調整
-- 網站內容與實際可播放狀態會受來源站點、網路環境、區域限制影響
+### 播得順
 
-## 致謝與引用
+- 主線路、後備 A、後備 B 可以喺詳情頁揀選；播放失敗時會提示可用後備線路。
+- 支援 HLS、播放進度、續播、下一集，同可用來源自動回退。
+- 片頭／片尾時間資料可用時，播放器會顯示精簡嘅跳過按鈕；閒置後自動收起，按遙控器即可再次喚醒。
+- 已排除已停用嘅白底黑字舊播放來源。
 
-本專案參考並延伸以下第三方公開項目與資源：
+### 真正為電視操作
 
-- [peacefulprogram/sakura-animation](https://github.com/peacefulprogram/sakura-animation)
+- 焦點位置、返回路徑、按鈕尺寸同選集排列都針對 Android TV／Google TV D-pad。
+- 長標題會按可用空間調整字級同換行，避免只顯示省略號。
+- 深色介面、完整比例海報同低干擾播放控制，適合客廳觀看距離。
 
-感謝原作者公開相關項目，令 Android TV 動漫播放器方向有更清晰嘅參考基礎。  
-本 repo 主要集中喺 Aulama Anime TV 品牌介面、遙控操作、繁體中文與播放體驗調整。
+### 遊客都用得到
+
+- 免登入即可搜尋同播放；記錄及收藏保留喺本機。
+- 登入 Aulama ID 後，可跨裝置同步收藏、觀看進度同個人資料。
+- 介面會跟隨系統使用繁體中文或簡體中文，亦可喺用戶卡片切換。
+
+### 更新唔再卡死
+
+- 正式版同搶先版兩個更新通道，可以喺用戶卡片一鍵切換。
+- 更新視窗預設聚焦「下載更新」，遙控器一打開就可操作。
+- 下載設有逾時、失敗提示同重新嘗試，避免長時間停喺 0%。
+
+## 下載
+
+| 通道 | 適合邊類用戶 | 下載 |
+| --- | --- | --- |
+| 正式版 `3.0.7` | 想要完成測試、變動較少嘅版本 | [前往最新正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest) |
+| 搶先版 `3.1.0-beta.2` | 願意提早試新功能同回報問題 | [下載 Beta 2](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.1.0-beta.2) |
+
+支援 **Android TV、Google TV、Android 電視盒子**，最低為 **Android 5.0（API 21）**。
+
+## 安裝同基本操作
+
+1. 喺上面下載相應通道嘅 APK。
+2. 將 APK 傳到電視，容許該檔案管理器安裝未知來源應用程式。
+3. 安裝後由 TV Apps 開啟 Aulama Anime TV。
+4. 可以直接用遊客模式，或者用 Aulama ID 登入同步資料。
+
+| 遙控器 | 功能 |
+| --- | --- |
+| 上／下／左／右 | 移動焦點、瀏覽卡片同集數 |
+| OK／確認 | 開啟目前項目 |
+| 返回 | 關閉卡片或返上一頁 |
+| 播放器方向鍵 | 喚醒控制列、選擇跳過／下一集操作 |
+
+## 專案原則
+
+- **TV first**：優先照顧遙控器、焦點同十呎觀看體驗。
+- **資料如實呈現**：來源冇提供嘅年份、集數或狀態唔會自行作出推測。
+- **安全回退**：搜尋、線路同更新服務失效時，盡量保留可用功能。
+- **不託管影片**：作品資料同播放可用性會受第三方來源、網絡同地區限制影響。
+
+## 問題回報
+
+回報時請附上：TV 型號、Android 版本、App 版本、作品／集數、所選線路，同埋可以重現問題嘅步驟。請勿公開登入憑證或私人資料。
+
+[建立 Issue](https://github.com/siumiu1968/AulamaAnime_TV/issues/new)　·　[查看 Releases](https://github.com/siumiu1968/AulamaAnime_TV/releases)
+
+## 致謝
+
+本專案參考並延伸 [peacefulprogram/sakura-animation](https://github.com/peacefulprogram/sakura-animation)，再針對 Aulama 品牌介面、中文搜尋、來源協調、播放穩定性同 Android TV 遙控操作持續調整。
+
+---
+
+覺得 Aulama Anime TV 幫到你？按一下 **Star** 就係最直接嘅支持，亦令更多想喺 Android TV／Google TV 睇動漫嘅用戶更容易搵到呢個專案。

@@ -25,6 +25,7 @@ import com.jing.sakura.R
 import com.jing.sakura.auth.AuthUiState
 import com.jing.sakura.auth.AuthViewModel
 import com.jing.sakura.compose.screen.DeviceLoginScreen
+import com.jing.sakura.compose.screen.FirstLaunchSupportDialog
 import com.jing.sakura.compose.screen.HomeScreen
 import com.jing.sakura.compose.theme.setAulamaTvContent
 import com.jing.sakura.data.Resource
@@ -43,8 +44,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var updateManager: TvUpdateManager
     private val availableUpdate = mutableStateOf<TvUpdate?>(null)
     private val isCheckingForUpdate = mutableStateOf(false)
+    private val automaticUpdateCheckFinished = mutableStateOf(false)
+    private val showFirstLaunchSupport = mutableStateOf(false)
     private var receiverRegistered = false
     private var automaticUpdateCheck: Job? = null
+    private lateinit var firstLaunchSupportStore: FirstLaunchSupportStore
 
     private val downloadReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -58,6 +62,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         updateManager = TvUpdateManager(this)
+        firstLaunchSupportStore = FirstLaunchSupportStore(this)
+        showFirstLaunchSupport.value = firstLaunchSupportStore.shouldShow()
         registerDownloadReceiver()
         val viewModel: HomeViewModel by viewModel()
         val authViewModel: AuthViewModel by viewModel()
@@ -126,15 +132,26 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
-                availableUpdate.value?.let { update ->
-                    TvUpdateDialog(
-                        update = update,
-                        downloadState = downloadState,
-                        onDownload = {
-                            runCatching { updateManager.download(update) }
-                        },
-                        onLater = { availableUpdate.value = null }
-                    )
+                when {
+                    availableUpdate.value != null -> {
+                        val update = checkNotNull(availableUpdate.value)
+                        TvUpdateDialog(
+                            update = update,
+                            downloadState = downloadState,
+                            onDownload = {
+                                runCatching { updateManager.download(update) }
+                            },
+                            onLater = { availableUpdate.value = null }
+                        )
+                    }
+
+                    showFirstLaunchSupport.value &&
+                        automaticUpdateCheckFinished.value &&
+                        downloadState is TvUpdateDownloadState.Idle -> {
+                        FirstLaunchSupportDialog(
+                            onDismiss = ::dismissFirstLaunchSupport
+                        )
+                    }
                 }
             }
         }
@@ -200,8 +217,18 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshAvailableUpdate() {
         if (availableUpdate.value != null || automaticUpdateCheck?.isActive == true) return
+        automaticUpdateCheckFinished.value = false
         automaticUpdateCheck = lifecycleScope.launch {
-            availableUpdate.value = runCatching { updateManager.checkForUpdate() }.getOrNull()
+            try {
+                availableUpdate.value = runCatching { updateManager.checkForUpdate() }.getOrNull()
+            } finally {
+                automaticUpdateCheckFinished.value = true
+            }
         }
+    }
+
+    private fun dismissFirstLaunchSupport() {
+        firstLaunchSupportStore.markSeen()
+        showFirstLaunchSupport.value = false
     }
 }
