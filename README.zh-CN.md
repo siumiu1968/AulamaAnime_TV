@@ -73,7 +73,7 @@
 
 | 通道 | 适合对象 | 下载 |
 | --- | --- | --- |
-| 正式版 `3.0.7` | 希望使用完成测试、变化较少的版本 | [前往最新正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest) |
+| 正式版 `3.1.0` | 希望使用完成测试、变化较少的版本 | [下载最新正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest) |
 | 抢先版 `3.1.0-beta.2` | 愿意提前测试新功能并反馈问题 | [下载 Beta 2](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.1.0-beta.2) |
 
 支持 **Android TV、Google TV、Android 电视盒子**，最低版本为 **Android 5.0（API 21）**。
