@@ -3,24 +3,26 @@
 
 # Aulama Anime TV — Android TV / Google TV 動漫 App
 
-[廣東話](./README.md) · **繁體中文** · [简体中文](./README.zh-CN.md)
+**繁體中文** · [廣東話](./README.yue-Hant.md) · [简体中文](./README.zh-CN.md)
 
 <p align="center">
   <img src="./docs/assets/cover.png" width="760" alt="Aulama Anime TV 標誌與深色電視介面品牌封面">
 </p>
 
-<p align="center"><strong>為大螢幕而生的中文動漫搜尋、選集與播放體驗。</strong></p>
+<p align="center"><strong>大螢幕上的動漫，從搜尋到播放都更從容。</strong></p>
 
 <p align="center">
   <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases/latest"><img alt="最新正式版" src="https://img.shields.io/github/v/release/siumiu1968/AulamaAnime_TV?display_name=tag&sort=semver&label=%E6%AD%A3%E5%BC%8F%E7%89%88&color=16a085"></a>
   <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases"><img alt="搶先版 3.1.0 Beta 2" src="https://img.shields.io/badge/%E6%90%B6%E5%85%88%E7%89%88-3.1.0--beta.2-e85d9e"></a>
   <img alt="支援 Android 5.0 或以上" src="https://img.shields.io/badge/Android-5.0%2B-3DDC84?logo=android&logoColor=white">
-  <img alt="GitHub 累計下載次數" src="https://img.shields.io/github/downloads/siumiu1968/AulamaAnime_TV/total?label=downloads&color=4f8ad9">
+  <img alt="GitHub 累計下載次數" src="https://img.shields.io/github/downloads/siumiu1968/AulamaAnime_TV/total?label=%E7%B4%AF%E8%A8%88%E4%B8%8B%E8%BC%89&color=4f8ad9">
 </p>
 
-**Aulama Anime TV** 並非把手機介面單純放大，而是依照遙控器焦點、客廳觀看距離與橫向大螢幕重新設計。從搜尋動畫、選擇集數、切換播放線路，到跳過片頭片尾與續播，皆可使用 D-pad 完成。
+**Aulama Anime TV** 以 Android TV／Google TV 的遙控器操作、客廳觀看距離與橫向大螢幕為設計核心。搜尋作品、選擇集數、切換主線路或後備線路、續播與跳過片頭片尾，皆可透過 D-pad 完成。
 
-> 如果您也認為電視追番應該更順手，歡迎按下右上角的 **Star**。每一顆 Star，都是我們繼續改善遙控操作、搜尋與播放穩定性的動力。
+> **跳過片頭與片尾，享受 Netflix 式的直覺體驗。** Aulama Anime TV 獨家整合片頭與片尾時間資料，在適當時機顯示一鍵跳過按鈕；長按遙控器 **OK／確認鍵** 可暫時以 **2×** 播放，放開後立即回復正常速度。
+
+> 如果 Aulama Anime TV 讓電視追番更方便，歡迎在 GitHub 按下 **Star**。您的支持會幫助更多用戶找到本專案，也為後續改善帶來動力。
 
 [下載正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest)　·　[下載搶先版](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.1.0-beta.2)　·　[查看全部版本](https://github.com/siumiu1968/AulamaAnime_TV/releases)
 
@@ -44,11 +46,16 @@
 - API 暫時失效時會退回本機舊搜尋，避免搜尋功能直接中斷。
 - 搜尋結果集中呈現作品，不混入無關推薦。
 
+### 一鍵跳過與兩倍速播放
+
+- 獨家整合片頭與片尾時間資料，提供與 Netflix 同樣直覺的一鍵跳過體驗。
+- 跳過按鈕只在適當時機顯示；閒置後自動收起，按下遙控器即可再次喚醒。
+- 長按遙控器 **OK／確認鍵** 可暫時以 **2×** 播放，放開後立即回復原來速度。
+
 ### 多線路播放與自動回退
 
 - 主線路、後備 A、後備 B 可於詳情頁選擇；播放失敗時會提示可用後備線路。
 - 支援 HLS、播放進度、續播、下一集，以及可用來源自動回退。
-- 取得片頭／片尾時間資料時，播放器會顯示精簡的跳過按鈕；閒置後自動收起，按下遙控器即可再次喚醒。
 - 已排除已停用的白底黑字舊播放來源。
 
 ### 為遙控器而設計
@@ -89,6 +96,7 @@
 | --- | --- |
 | 上／下／左／右 | 移動焦點、瀏覽卡片與集數 |
 | OK／確認 | 開啟目前項目 |
+| 長按 OK／確認（播放中） | 暫時以 2× 播放；放開後回復正常速度 |
 | 返回 | 關閉卡片或返回上一頁 |
 | 播放器方向鍵 | 喚醒控制列、選擇跳過／下一集操作 |
 

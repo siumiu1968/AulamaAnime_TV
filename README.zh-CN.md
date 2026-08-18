@@ -3,7 +3,7 @@
 
 # Aulama Anime TV — Android TV / Google TV 动漫 App
 
-[廣東話](./README.md) · [繁體中文](./README.zh-Hant.md) · **简体中文**
+[繁體中文](./README.md) · [廣東話](./README.yue-Hant.md) · **简体中文**
 
 <p align="center">
   <img src="./docs/assets/cover.png" width="760" alt="Aulama Anime TV 标志与深色电视界面品牌封面">
@@ -15,12 +15,14 @@
   <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases/latest"><img alt="最新正式版" src="https://img.shields.io/github/v/release/siumiu1968/AulamaAnime_TV?display_name=tag&sort=semver&label=%E6%AD%A3%E5%BC%8F%E7%89%88&color=16a085"></a>
   <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases"><img alt="抢先版 3.1.0 Beta 2" src="https://img.shields.io/badge/%E6%8A%A2%E5%85%88%E7%89%88-3.1.0--beta.2-e85d9e"></a>
   <img alt="支持 Android 5.0 或更高版本" src="https://img.shields.io/badge/Android-5.0%2B-3DDC84?logo=android&logoColor=white">
-  <img alt="GitHub 累计下载次数" src="https://img.shields.io/github/downloads/siumiu1968/AulamaAnime_TV/total?label=downloads&color=4f8ad9">
+  <img alt="GitHub 累计下载次数" src="https://img.shields.io/github/downloads/siumiu1968/AulamaAnime_TV/total?label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD&color=4f8ad9">
 </p>
 
-**Aulama Anime TV** 不是把手机界面简单放大，而是按照遥控器焦点、客厅观看距离和横向大屏幕重新设计。从搜索动画、选择集数、切换播放线路，到跳过片头片尾和续播，都可以使用 D-pad 完成。
+**Aulama Anime TV** 围绕 Android TV／Google TV 的遥控器操作、客厅观看距离和横向大屏幕设计。搜索作品、选择集数、切换主线路或备用线路、续播与跳过片头片尾，都可以通过 D-pad 完成。
 
-> 如果你也认为电视追番应该更顺手，欢迎点击右上角的 **Star**。每一颗 Star，都是我们继续改善遥控操作、搜索和播放稳定性的动力。
+> **跳过片头和片尾，享受 Netflix 式的直观体验。** Aulama Anime TV 独家整合片头和片尾时间信息，在适当时机显示一键跳过按钮；长按遥控器 **OK／确认键** 可暂时以 **2×** 播放，松开后立即恢复正常速度。
+
+> 如果 Aulama Anime TV 让电视追番更方便，欢迎在 GitHub 点击 **Star**。你的支持会帮助更多用户找到本项目，也为后续改进带来动力。
 
 [下载正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest)　·　[下载抢先版](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.1.0-beta.2)　·　[查看全部版本](https://github.com/siumiu1968/AulamaAnime_TV/releases)
 
@@ -44,11 +46,16 @@
 - API 暂时失效时会回退到本机旧搜索，避免搜索功能直接中断。
 - 搜索结果集中呈现作品，不混入无关推荐。
 
+### 一键跳过与两倍速播放
+
+- 独家整合片头和片尾时间信息，提供与 Netflix 同样直观的一键跳过体验。
+- 跳过按钮只在适当时机显示；闲置后自动收起，按下遥控器即可再次唤醒。
+- 长按遥控器 **OK／确认键** 可暂时以 **2×** 播放，松开后立即恢复原来的速度。
+
 ### 多线路播放与自动回退
 
 - 主线路、备用 A、备用 B 可在详情页选择；播放失败时会提示可用备用线路。
 - 支持 HLS、播放进度、续播、下一集，以及可用来源自动回退。
-- 获得片头／片尾时间信息时，播放器会显示精简的跳过按钮；闲置后自动收起，按下遥控器即可再次唤醒。
 - 已排除已经停用的白底黑字旧播放来源。
 
 ### 为遥控器而设计
@@ -89,6 +96,7 @@
 | --- | --- |
 | 上／下／左／右 | 移动焦点、浏览卡片与集数 |
 | OK／确认 | 打开当前项目 |
+| 长按 OK／确认（播放中） | 暂时以 2× 播放；松开后恢复正常速度 |
 | 返回 | 关闭卡片或返回上一页 |
 | 播放器方向键 | 唤醒控制栏、选择跳过／下一集操作 |
 
