@@ -173,6 +173,22 @@ class AulamaAuthRepository(
         )
     }
 
+    suspend fun fetchAnimeSearchPage(keyword: String, page: Int): AnimePageData? {
+        val normalizedKeyword = keyword.trim()
+        if (normalizedKeyword.isBlank()) {
+            return AnimePageData(page = page.coerceAtLeast(1), hasNextPage = false, animeList = emptyList())
+        }
+        val url = API_BASE.toHttpUrl().newBuilder()
+            .addPathSegment("search")
+            .addQueryParameter("q", normalizedKeyword)
+            .addQueryParameter("page", page.coerceAtLeast(1).toString())
+            .build()
+        val body = authenticatedBody(url) ?: return null
+        return RecommendationParser.parseSearchPage(body, page).let { result ->
+            result.copy(animeList = result.animeList.filterNot(::isSuppressedAnime))
+        }
+    }
+
     suspend fun fetchPlaybackSegments(
         animeId: String,
         episodeId: String,
@@ -187,6 +203,35 @@ class AulamaAuthRepository(
             .addQueryParameter("episodeIndex", episodeIndex.toString())
             .build()
         return authenticatedBody(url)?.let(PlaybackSegmentsParser::parse)
+    }
+
+    internal suspend fun fetchPlaybackProviders(animeId: String): List<AulamaPlaybackProvider>? {
+        if (animeId.isBlank()) return null
+        val url = API_BASE.toHttpUrl().newBuilder()
+            .addPathSegment("playback")
+            .addPathSegment("providers")
+            .addQueryParameter("animeId", animeId)
+            .build()
+        return authenticatedBody(url)?.let(PlaybackProviderParser::parseProviders)
+    }
+
+    internal suspend fun fetchPlaybackProviderSource(
+        animeId: String,
+        provider: String,
+        episodeIndex: Int
+    ): AulamaPlaybackSource? {
+        val normalizedProvider = provider.trim().lowercase()
+        if (animeId.isBlank() || normalizedProvider !in setOf("sakura", "age") || episodeIndex !in 0..4_999) {
+            return null
+        }
+        val url = API_BASE.toHttpUrl().newBuilder()
+            .addPathSegment("playback")
+            .addPathSegment("provider")
+            .addQueryParameter("animeId", animeId)
+            .addQueryParameter("provider", normalizedProvider)
+            .addQueryParameter("episodeIndex", episodeIndex.toString())
+            .build()
+        return authenticatedBody(url)?.let(PlaybackProviderParser::parseSource)
     }
 
     /**

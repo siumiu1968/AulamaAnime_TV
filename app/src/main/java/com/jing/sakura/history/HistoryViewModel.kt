@@ -4,7 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.*
 import com.jing.sakura.auth.AulamaAuthRepository
+import com.jing.sakura.auth.GuestLibraryStore
 import com.jing.sakura.auth.TvLibraryPayload
+import com.jing.sakura.auth.toAnimeData
+import com.jing.sakura.data.AnimeData
 import com.jing.sakura.repo.WebPageRepository
 import com.jing.sakura.room.VideoHistoryDao
 import com.jing.sakura.room.VideoHistoryEntity
@@ -16,7 +19,8 @@ import kotlinx.coroutines.launch
 class HistoryViewModel(
     private val videoHistoryDao: VideoHistoryDao,
     private val repository: WebPageRepository,
-    private val authRepository: AulamaAuthRepository
+    private val authRepository: AulamaAuthRepository,
+    private val guestLibraryStore: GuestLibraryStore
 ) :
     ViewModel() {
 
@@ -28,6 +32,9 @@ class HistoryViewModel(
 
     private val _libraryError = MutableStateFlow<String?>(null)
     val libraryError: StateFlow<String?> = _libraryError
+
+    private val _guestMode = MutableStateFlow(authRepository.session.value == null)
+    val guestMode: StateFlow<Boolean> = _guestMode
 
     @OptIn(ExperimentalPagingApi::class)
     val pager = Pager(
@@ -45,6 +52,13 @@ class HistoryViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             _libraryLoading.value = true
             _libraryError.value = null
+            val isGuest = authRepository.session.value == null
+            _guestMode.value = isGuest
+            if (isGuest) {
+                loadGuestLibrary()
+                _libraryLoading.value = false
+                return@launch
+            }
             runCatching { authRepository.fetchTvLibrary() }
                 .onSuccess { _library.value = it }
                 .onFailure { _libraryError.value = it.message ?: "未能同步片庫" }
@@ -56,6 +70,7 @@ class HistoryViewModel(
     fun deleteAllHistory() {
         viewModelScope.launch(Dispatchers.IO) {
             videoHistoryDao.deleteAll()
+            if (authRepository.session.value == null) loadGuestLibrary()
         }
     }
 
@@ -64,7 +79,17 @@ class HistoryViewModel(
     fun deleteHistoryByAnimeId(animeId: String, sourceId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             videoHistoryDao.deleteHistoryByAnimeId(animeId, sourceId)
+            if (authRepository.session.value == null) loadGuestLibrary()
         }
+    }
+
+    private fun loadGuestLibrary() {
+        val continueWatching = videoHistoryDao.queryRecentHistory(GUEST_HISTORY_LIMIT)
+            .map(VideoHistoryEntity::toGuestAnimeData)
+        _library.value = TvLibraryPayload(
+            continueWatching = continueWatching,
+            favorites = guestLibraryStore.favorites.value.map { it.toAnimeData() }
+        )
     }
 
     @OptIn(ExperimentalPagingApi::class)
@@ -78,4 +103,17 @@ class HistoryViewModel(
             return MediatorResult.Success(true)
         }
     }
+
+    private companion object {
+        const val GUEST_HISTORY_LIMIT = 50
+    }
 }
+
+private fun VideoHistoryEntity.toGuestAnimeData(): AnimeData = AnimeData(
+    id = animeId,
+    url = "",
+    title = animeName,
+    currentEpisode = lastEpisodeName,
+    imageUrl = coverUrl,
+    sourceId = sourceId
+)

@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -58,6 +59,7 @@ fun TvUpdateDialog(
     onLater: () -> Unit
 ) {
     val downloadFocus = remember { FocusRequester() }
+    val laterFocus = remember { FocusRequester() }
     val notesScrollState = rememberScrollState()
     val scrollScope = rememberCoroutineScope()
     val scrollStepPx = with(LocalDensity.current) { 132.dp.toPx() }
@@ -92,7 +94,7 @@ fun TvUpdateDialog(
                     if (delta != 0f) {
                         scrollScope.launch { notesScrollState.scrollBy(delta) }
                     }
-                    notesScrollState.maxValue > 0
+                    delta != 0f
                 },
             shape = AulamaCardShape,
             color = AulamaTvColors.SurfaceRaised
@@ -123,22 +125,28 @@ fun TvUpdateDialog(
                         modifier = Modifier
                             .weight(1f)
                             .focusRequester(downloadFocus)
+                            .focusProperties { right = laterFocus }
                     )
                     AulamaActionButton(
                         label = stringResource(R.string.update_later),
                         onClick = onLater,
                         enabled = !isBusy,
-                        modifier = Modifier.weight(0.7f),
+                        modifier = Modifier
+                            .weight(0.7f)
+                            .focusRequester(laterFocus)
+                            .focusProperties { left = downloadFocus },
                         accent = AulamaTvColors.Blue
                     )
                 }
             }
         }
     }
-    LaunchedEffect(isBusy) {
+    LaunchedEffect(update.version, isBusy) {
         if (!isBusy) {
-            delay(120)
-            runCatching { downloadFocus.requestFocus() }
+            repeat(8) { attempt ->
+                delay(if (attempt == 0) 80 else 100)
+                runCatching { downloadFocus.requestFocus() }
+            }
         }
     }
 }

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.FavoritePayload
+import com.jing.sakura.auth.GuestLibraryStore
 import com.jing.sakura.auth.TvHistoryItem
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimeDetailPageData
@@ -29,6 +30,7 @@ class DetailPageViewModel constructor(
     private val repository: WebPageRepository,
     private val videoHistoryDao: VideoHistoryDao,
     private val authRepository: AulamaAuthRepository,
+    private val guestLibraryStore: GuestLibraryStore,
     val sourceId: String
 ) : ViewModel() {
 
@@ -77,16 +79,24 @@ class DetailPageViewModel constructor(
                     }
                 }
                 val cloudHistoryJob = async {
-                    runCatching { authRepository.fetchTvLibrary() }
-                        .getOrNull()
-                        ?.historyItems
-                        ?.firstOrNull { item ->
-                            (item.animeId == animeId || item.anime.id == animeId) &&
-                                (item.sourceTypeId.isBlank() || item.sourceTypeId == sourceId)
-                        }
+                    if (authRepository.session.value == null) {
+                        null
+                    } else {
+                        runCatching { authRepository.fetchTvLibrary() }
+                            .getOrNull()
+                            ?.historyItems
+                            ?.firstOrNull { item ->
+                                (item.animeId == animeId || item.anime.id == animeId) &&
+                                    (item.sourceTypeId.isBlank() || item.sourceTypeId == sourceId)
+                            }
+                    }
                 }
                 val cloudDetailJob = async {
-                    runCatching { authRepository.fetchTvAnimeDetail(animeId) }.getOrNull()
+                    if (authRepository.session.value == null) {
+                        null
+                    } else {
+                        runCatching { authRepository.fetchTvAnimeDetail(animeId) }.getOrNull()
+                    }
                 }
                 val sourceData = repository.fetchDetailPage(animeId, sourceId)
                 val cloudDetail = cloudDetailJob.await()
@@ -164,10 +174,18 @@ class DetailPageViewModel constructor(
         _favoriteUiState.value = current.copy(isUpdating = true)
         favoriteJob = viewModelScope.launch(Dispatchers.IO) {
             val result = runCatching {
-                if (shouldFavorite) {
-                    authRepository.saveFavorite(detail.toFavoritePayload())
+                if (authRepository.session.value == null) {
+                    if (shouldFavorite) {
+                        guestLibraryStore.save(detail.toFavoritePayload())
+                    } else {
+                        guestLibraryStore.delete(detail.animeId, sourceId)
+                    }
                 } else {
-                    authRepository.deleteFavorite(detail.animeId)
+                    if (shouldFavorite) {
+                        authRepository.saveFavorite(detail.toFavoritePayload())
+                    } else {
+                        authRepository.deleteFavorite(detail.animeId)
+                    }
                 }
             }
             if (result.getOrDefault(false)) {
@@ -180,7 +198,7 @@ class DetailPageViewModel constructor(
                 _favoriteUiState.value = current.copy(isUpdating = false)
                 favoriteErrorChannel.send(
                     if (authRepository.session.value == null) {
-                        "登入狀態已失效，請重新登入"
+                        "未能將收藏儲存到此裝置，請稍後再試"
                     } else {
                         "收藏更新失敗，請稍後再試"
                     }
@@ -193,7 +211,10 @@ class DetailPageViewModel constructor(
         favoriteJob?.cancel()
         favoriteJob = viewModelScope.launch(Dispatchers.IO) {
             if (authRepository.session.value == null) {
-                _favoriteUiState.value = FavoriteUiState(isLoading = false)
+                _favoriteUiState.value = FavoriteUiState(
+                    isFavorite = guestLibraryStore.contains(animeId, sourceId),
+                    isLoading = false
+                )
                 return@launch
             }
             _favoriteUiState.value = FavoriteUiState(isLoading = true)

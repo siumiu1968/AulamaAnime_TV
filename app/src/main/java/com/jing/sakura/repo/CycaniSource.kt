@@ -105,6 +105,15 @@ class CycaniSource(
     }
 
     private suspend fun fetchWebDetailPage(animeId: String): AnimeDetailPageData = coroutineScope {
+        val playbackProviders = async {
+            try {
+                authRepository?.fetchPlaybackProviders(animeId).orEmpty()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
         val legacyDetail = apiGetDataObject("$API_BASE_URL/video/info/$animeId")
         val legacyTitle = legacyDetail.string("vod_name").ifBlank {
             throw RuntimeException(trad("未找到番劇標題"))
@@ -135,9 +144,9 @@ class CycaniSource(
         val imageUrl = detail.imageUrl.ifBlank {
             throw RuntimeException(trad("未找到番剧封面"))
         }
-        val playLists = detail.playLists.mapIndexed { index, playList ->
+        val mainPlayList = detail.playLists.first().let { playList ->
             AnimePlayList(
-                name = localizeText(playList.source.title).normalizePlayLineName(),
+                name = "主線路",
                 episodeList = playList.sections.map { section ->
                     AnimePlayListEpisode(
                         episode = localizeText(section.title),
@@ -154,9 +163,39 @@ class CycaniSource(
                         )
                     )
                 },
-                defaultPlayList = index == 0
+                defaultPlayList = true
             )
         }
+        val canonicalEpisodes = mainPlayList.episodeList
+        val providersById = playbackProviders.await().associateBy { it.id }
+        val backupPlayLists = listOf("sakura" to "後備 A", "age" to "後備 B")
+            .mapNotNull { (providerId, displayName) ->
+                val provider = providersById[providerId]?.takeIf { it.available }
+                    ?: return@mapNotNull null
+                val episodeCount = provider.episodeCount.takeIf { it > 0 }
+                    ?: canonicalEpisodes.size
+                AnimePlayList(
+                    name = displayName,
+                    episodeList = (0 until episodeCount).map { episodeIndex ->
+                        AnimePlayListEpisode(
+                            episode = canonicalEpisodes.getOrNull(episodeIndex)?.episode
+                                ?: "第${episodeIndex + 1}集",
+                            episodeId = encodeEpisodePayload(
+                                EpisodePayload(
+                                    url = "",
+                                    needParse = false,
+                                    sourceLine = displayName,
+                                    externalProvider = providerId,
+                                    externalAnimeId = detail.id,
+                                    externalEpisodeIndex = episodeIndex
+                                )
+                            )
+                        )
+                    },
+                    defaultPlayList = false
+                )
+            }
+        val playLists = listOf(mainPlayList) + backupPlayLists
         val infoList = buildList {
             addInfo("地區", trad(detail.area))
             addInfo("年份", trad(detail.year))
@@ -223,7 +262,7 @@ class CycaniSource(
             val episodes = episodesJson.asJsonObjects().mapIndexedNotNull { index, episode ->
                 val episodeName = localizeText(episode.string("name")).ifBlank { "第${index + 1}集" }
                 val url = episode.string("url")
-                if (url.isBlank()) {
+                if (url.isBlank() || isRetiredCycaniOldPcUrl(url)) {
                     null
                 } else {
                     AnimePlayListEpisode(
@@ -283,6 +322,21 @@ class CycaniSource(
     }
 
     override suspend fun searchAnimation(keyword: String, page: Int): AnimePageData {
+        val websiteSearch = try {
+            authRepository?.fetchAnimeSearchPage(keyword, page)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        }
+        if (websiteSearch != null) {
+            return websiteSearch.copy(
+                animeList = webPlaybackResolver.refreshArtwork(
+                    websiteSearch.animeList.filterNot(::isSuppressedAnime)
+                )
+            )
+        }
+
         val root = apiGetRootObject(
             "$API_BASE_URL/video/search",
             linkedMapOf(
@@ -345,34 +399,54 @@ class CycaniSource(
     ): Resource<AnimationSource.VideoUrlResult> {
         return try {
             val payload = decodeEpisodePayload(episodeId)
-            val webUrl = payload.webSectionId.takeIf(String::isNotBlank)?.let { sectionId ->
-                try {
-                    webPlaybackResolver.resolveSection(sectionId)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (_: Exception) {
-                    null
-                }
-            } ?: payload.webRequestOrNull()?.let { request ->
-                try {
-                    webPlaybackResolver.resolve(request)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (_: Exception) {
-                    null
-                }
+            if (payload.externalProvider.isNotBlank()) {
+                val externalSource = authRepository?.fetchPlaybackProviderSource(
+                    animeId = payload.externalAnimeId,
+                    provider = payload.externalProvider,
+                    episodeIndex = payload.externalEpisodeIndex
+                ) ?: throw RuntimeException(trad("此後備線路暫時未能提供本集"))
+                return Resource.Success(
+                    AnimationSource.VideoUrlResult(
+                        url = externalSource.url,
+                        headers = CycaniWebPlaybackPolicy.playbackHeaders(
+                            externalSource.url,
+                            isCycaniWebSource = false
+                        )
+                    )
+                )
             }
-            val fallbackPayload = if (webUrl == null && payload.url.isBlank()) {
-                resolveLegacyEpisodePayload(animeId, payload)
-            } else {
-                payload
+            val webRequest = payload.webRequestOrNull()
+            val (resolvedPayload, isCycaniWebSource) = when (
+                CycaniPlaybackResolutionPolicy.select(
+                    directUrl = payload.url,
+                    webSectionId = payload.webSectionId,
+                    hasWebRequest = webRequest != null
+                )
+            ) {
+                CycaniPlaybackResolutionPath.WEB_SECTION -> payload.copy(
+                    url = webPlaybackResolver.resolveSection(payload.webSectionId),
+                    needParse = false
+                ) to true
+                CycaniPlaybackResolutionPath.WEB_MATCH -> payload.copy(
+                    url = webPlaybackResolver.resolve(requireNotNull(webRequest)),
+                    needParse = false
+                ) to true
+                CycaniPlaybackResolutionPath.DIRECT -> payload to false
+                CycaniPlaybackResolutionPath.UNAVAILABLE ->
+                    throw RuntimeException(trad("此舊播放源已停用，請切換其他線路"))
             }
-            val finalUrl = webUrl ?: if (fallbackPayload.needParse) {
-                val parsed = apiGetRootObject(fallbackPayload.url)
+            if (isRetiredCycaniOldPcUrl(resolvedPayload.url)) {
+                throw RuntimeException(trad("此舊播放源已停用，請切換其他線路"))
+            }
+            val finalUrl = if (resolvedPayload.needParse) {
+                val parsed = apiGetRootObject(resolvedPayload.url)
                 ensureSuccess(parsed)
                 parsed.string("url").ifBlank { throw RuntimeException(trad("获取到的视频链接为空")) }
             } else {
-                fallbackPayload.url.ifBlank { throw RuntimeException(trad("获取到的视频链接为空")) }
+                resolvedPayload.url.ifBlank { throw RuntimeException(trad("获取到的视频链接为空")) }
+            }
+            if (isRetiredCycaniOldPcUrl(finalUrl)) {
+                throw RuntimeException(trad("此舊播放源已停用，請切換其他線路"))
             }
 
             Resource.Success(
@@ -380,49 +454,13 @@ class CycaniSource(
                     url = finalUrl,
                     headers = CycaniWebPlaybackPolicy.playbackHeaders(
                         finalUrl,
-                        isCycaniWebSource = webUrl != null
+                        isCycaniWebSource = isCycaniWebSource
                     )
                 )
             )
         } catch (e: Exception) {
             Resource.Error(e.message ?: trad("加载视频失败"))
         }
-    }
-
-    private suspend fun resolveLegacyEpisodePayload(
-        animeId: String,
-        payload: EpisodePayload
-    ): EpisodePayload {
-        val detail = apiGetDataObject("$API_BASE_URL/video/info/$animeId")
-        val requestedLine = payload.sourceLine.normalizePlayLineName()
-        val sources = detail.array("vod_play_from").asJsonObjects().sortedBy { source ->
-            val line = localizeText(source.string("name"))
-                .ifBlank { source.string("code") }
-                .normalizePlayLineName()
-            if (line == requestedLine) 0 else 1
-        }
-        for (source in sources) {
-            val code = source.string("code")
-            if (code.isBlank()) continue
-            val episodes = apiGetDataArray(
-                "$API_BASE_URL/video/play_url",
-                linkedMapOf("id" to animeId, "from" to code)
-            ).asJsonObjects()
-            val rows = episodes.mapIndexed { index, episode ->
-                JsonObject().apply {
-                    addProperty("id", index)
-                    addProperty("title", episode.string("name").ifBlank { "第${index + 1}集" })
-                }
-            }
-            val selected = CycaniWebPlaybackPolicy.selectExactEpisode(payload.episodeLabel, rows)
-                ?: continue
-            val episode = episodes.getOrNull(selected.id.toIntOrNull() ?: -1) ?: continue
-            val url = episode.string("url")
-            if (url.isNotBlank()) {
-                return EpisodePayload(url = url, needParse = episode.boolean("needParse"))
-            }
-        }
-        throw RuntimeException(trad("未找到播放列表"))
     }
 
     override suspend fun getVideoCategories(): List<VideoCategoryGroup> {
@@ -779,6 +817,9 @@ class CycaniSource(
             addProperty("e", payload.episodeLabel)
             addProperty("s", payload.sourceLine)
             addProperty("ws", payload.webSectionId)
+            addProperty("xp", payload.externalProvider)
+            addProperty("xa", payload.externalAnimeId)
+            addProperty("xi", payload.externalEpisodeIndex)
         }.toString()
         return PAYLOAD_PREFIX + Base64.encodeToString(
             raw.toByteArray(Charsets.UTF_8),
@@ -802,7 +843,10 @@ class CycaniSource(
             webYear = json.string("wy"),
             episodeLabel = json.string("e"),
             sourceLine = json.string("s"),
-            webSectionId = json.string("ws")
+            webSectionId = json.string("ws"),
+            externalProvider = json.string("xp"),
+            externalAnimeId = json.string("xa"),
+            externalEpisodeIndex = json.int("xi")
         )
     }
 
@@ -852,7 +896,10 @@ class CycaniSource(
         val webYear: String = "",
         val episodeLabel: String = "",
         val sourceLine: String = "",
-        val webSectionId: String = ""
+        val webSectionId: String = "",
+        val externalProvider: String = "",
+        val externalAnimeId: String = "",
+        val externalEpisodeIndex: Int = -1
     ) {
         fun webRequestOrNull(): CycaniWebEpisodeRequest? =
             if (webTitle.isBlank() || webYear.isBlank() || episodeLabel.isBlank()) null

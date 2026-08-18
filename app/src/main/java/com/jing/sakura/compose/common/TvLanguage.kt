@@ -4,13 +4,29 @@ import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
+import androidx.core.os.ConfigurationCompat
 import com.github.houbb.opencc4j.util.ZhConverterUtil
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.util.Locale
 
 enum class TvLanguage(val storageValue: String) {
     Traditional("zh-Hant"),
-    Simplified("zh-Hans")
+    Simplified("zh-Hans");
+
+    companion object {
+        internal fun fromSystemLanguageTag(languageTag: String): TvLanguage {
+            val locale = Locale.forLanguageTag(languageTag.replace('_', '-'))
+            if (locale.language != "zh") return Traditional
+            if (locale.script.equals("Hant", ignoreCase = true)) return Traditional
+            if (locale.script.equals("Hans", ignoreCase = true)) return Simplified
+            return if (locale.country.uppercase(Locale.ROOT) in setOf("TW", "HK", "MO")) {
+                Traditional
+            } else {
+                Simplified
+            }
+        }
+    }
 }
 
 class TvLanguagePreferences private constructor(context: Context) {
@@ -21,7 +37,12 @@ class TvLanguagePreferences private constructor(context: Context) {
     private val _language = MutableStateFlow(
         TvLanguage.entries.firstOrNull {
             it.storageValue == preferences.getString(KEY_LANGUAGE, null)
-        } ?: TvLanguage.Traditional
+        } ?: TvLanguage.fromSystemLanguageTag(
+            ConfigurationCompat.getLocales(context.resources.configuration)
+                .get(0)
+                ?.toLanguageTag()
+                .orEmpty()
+        )
     )
     val language: StateFlow<TvLanguage> = _language
 

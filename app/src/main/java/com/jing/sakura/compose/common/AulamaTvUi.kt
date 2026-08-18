@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -193,6 +194,7 @@ fun AulamaActionButton(
     icon: ImageVector? = null,
     enabled: Boolean = true,
     accent: Color = AulamaTvColors.Cyan,
+    focusedBorderColor: Color = AulamaTvColors.FocusBorder,
     centerLabel: Boolean = false,
     labelFontSize: TextUnit = 16.sp,
     labelLineHeight: TextUnit = 20.sp,
@@ -213,7 +215,7 @@ fun AulamaActionButton(
                 shape = AulamaCardShape
             ),
             focusedBorder = Border(
-                BorderStroke(2.dp, AulamaTvColors.FocusBorder),
+                BorderStroke(2.dp, focusedBorderColor),
                 shape = AulamaCardShape
             )
         ),
@@ -225,24 +227,25 @@ fun AulamaActionButton(
         )
     ) {
         if (centerLabel) {
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(contentHeight)
+                    .offset(y = 1.5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
             ) {
                 if (icon != null) {
                     Icon(
                         imageVector = icon,
                         contentDescription = null,
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .size(iconSize)
+                        modifier = Modifier.size(iconSize)
                     )
+                    Spacer(Modifier.width(8.dp))
                 }
                 Text(
                     text = displayLabel,
                     maxLines = 1,
-                    modifier = Modifier.align(Alignment.Center),
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontSize = labelFontSize,
                         lineHeight = labelLineHeight,

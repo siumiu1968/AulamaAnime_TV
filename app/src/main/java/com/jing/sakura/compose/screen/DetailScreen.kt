@@ -189,6 +189,7 @@ private fun DetailContent(
     val detailAccent = rememberArtworkAccent(detail.imageUrl)
     val favoriteUiState = viewModel.favoriteUiState.collectAsState().value
     var reverseEpisodes by remember { mutableStateOf(false) }
+    var showLinePicker by remember { mutableStateOf(false) }
     var resumeFocusSignal by remember { mutableStateOf(0) }
     var restoreEpisodePosition by remember { mutableStateOf(-1 to -1) }
     var focusedRelatedAnime by remember(detail.animeId) { mutableStateOf<AnimeData?>(null) }
@@ -218,21 +219,29 @@ private fun DetailContent(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val playlists = remember(detail.playLists, reverseEpisodes) {
-        detail.playLists.mapIndexed { index, playlist ->
-            PlayListWrapper(
-                id = index,
-                playlist = if (reverseEpisodes) {
-                    playlist.copy(episodeList = playlist.episodeList.reversed())
-                } else {
-                    playlist
-                }
-            )
+    var selectedPlaylistIndex by remember(detail.animeId, history?.episodeId) {
+        val historyIndex = history?.episodeId?.let { episodeId ->
+            detail.playLists.indexOfFirst { playlist ->
+                playlist.episodeList.any { it.episodeId == episodeId }
+            }.takeIf { it >= 0 }
+        }
+        val fallbackIndex = detail.defaultPlayListIndex
+            .takeIf {
+                it in detail.playLists.indices && detail.playLists[it].episodeList.isNotEmpty()
+            }
+            ?: detail.playLists.indexOfFirst { it.episodeList.isNotEmpty() }.coerceAtLeast(0)
+        mutableStateOf(historyIndex ?: fallbackIndex)
+    }
+    val canonicalPlaylist = detail.playLists.getOrNull(selectedPlaylistIndex)
+    val displayedPlaylist = remember(canonicalPlaylist, reverseEpisodes) {
+        canonicalPlaylist?.let { playlist ->
+            if (reverseEpisodes) playlist.copy(episodeList = playlist.episodeList.reversed())
+            else playlist
         }
     }
-    val relatedBrowsePolicy = remember(playlists.size, activeBackdropAnime?.id) {
+    val relatedBrowsePolicy = remember(displayedPlaylist, activeBackdropAnime?.id) {
         detailRelatedBrowsePolicy(
-            playlistCount = playlists.size,
+            playlistCount = if (displayedPlaylist?.episodeList.isNullOrEmpty()) 0 else 1,
             focusedRelatedAnimeId = activeBackdropAnime?.id
         )
     }
@@ -241,65 +250,56 @@ private fun DetailContent(
         animationSpec = tween(durationMillis = 260),
         label = "detail-hero-height"
     )
-    var focusedEpisodeIndexes by remember(playlists, history?.episodeId) {
-        val focused = MutableList(playlists.size) { 0 }
-        history?.episodeId?.let { episodeId ->
-            playlists.forEachIndexed { playlistIndex, wrapper ->
-                wrapper.playlist.episodeList.indexOfFirst { it.episodeId == episodeId }
-                    .takeIf { it >= 0 }
-                    ?.let { focused[playlistIndex] = it }
-            }
-        }
-        mutableStateOf(focused)
+    var focusedEpisodeIndex by remember(displayedPlaylist, history?.episodeId) {
+        mutableStateOf(
+            history?.episodeId?.let { episodeId ->
+                displayedPlaylist?.episodeList?.indexOfFirst { it.episodeId == episodeId }
+                    ?.takeIf { it >= 0 }
+            } ?: 0
+        )
     }
 
-    val focusRequesters = remember(playlists.size, detail.otherAnimeList.isEmpty()) {
+    val focusRequesters = remember(detail.animeId, detail.otherAnimeList.isEmpty()) {
         DetailPageRowFocusRequesters(
             hero = FocusRequester(),
-            order = playlists.firstOrNull()?.let { FocusRequester() },
-            playlists = List(playlists.size) { FocusRequester() },
+            line = FocusRequester(),
+            order = FocusRequester(),
+            playlist = FocusRequester(),
             related = detail.otherAnimeList.takeIf(List<AnimeData>::isNotEmpty)?.let { FocusRequester() }
         )
     }
     val primaryActionFocusRequester = remember(detail.animeId) { FocusRequester() }
     val restoreEpisodeFocusRequester = remember { FocusRequester() }
     val detailListState = rememberLazyListState()
-    val hasDetailRows = playlists.isNotEmpty() || detail.otherAnimeList.isNotEmpty()
+    val hasEpisodes = !displayedPlaylist?.episodeList.isNullOrEmpty()
+    val hasDetailRows = hasEpisodes || detail.otherAnimeList.isNotEmpty()
+    var heroHasFocus by remember(detail.animeId) { mutableStateOf(false) }
 
     val primaryPlayPosition = remember(
-        playlists,
+        displayedPlaylist,
         history?.episodeId,
-        detail.defaultPlayListIndex,
-        detail.lastPlayEpisodePosition
+        detail.lastPlayEpisodePosition,
+        selectedPlaylistIndex
     ) {
-        fun valid(position: Pair<Int, Int>): Boolean =
-            position.first in playlists.indices &&
-                position.second in playlists[position.first].playlist.episodeList.indices
-
-        val historyPosition = history?.episodeId?.let { episodeId ->
-            playlists.forEachIndexed { playlistIndex, wrapper ->
-                val episodeIndex = wrapper.playlist.episodeList.indexOfFirst { it.episodeId == episodeId }
-                if (episodeIndex >= 0) return@let playlistIndex to episodeIndex
-            }
-            null
-        }
-        val defaultPosition = detail.defaultPlayListIndex to 0
-        listOfNotNull(historyPosition, detail.lastPlayEpisodePosition, defaultPosition)
-            .firstOrNull(::valid)
-            ?: playlists.indexOfFirst { it.playlist.episodeList.isNotEmpty() }
-                .takeIf { it >= 0 }
-                ?.let { it to 0 }
+        val episodes = displayedPlaylist?.episodeList.orEmpty()
+        history?.episodeId?.let { episodeId ->
+            episodes.indexOfFirst { it.episodeId == episodeId }.takeIf { it >= 0 }
+        } ?: detail.lastPlayEpisodePosition
+            .takeIf { it.first == selectedPlaylistIndex }
+            ?.second
+            ?.takeIf { it in episodes.indices }
+        ?: 0.takeIf { episodes.isNotEmpty() }
     }
 
-    val onPrimaryPlay = primaryPlayPosition?.let { (playlistIndex, episodeIndex) ->
+    val onPrimaryPlay = primaryPlayPosition?.let { episodeIndex ->
         {
-            val selectedEpisode = playlists[playlistIndex].playlist.episodeList[episodeIndex]
-            val canonicalPlaylist = detail.playLists[playlistIndex]
+            val selectedEpisode = displayedPlaylist!!.episodeList[episodeIndex]
             openPlayback(
                 context = context,
                 animeName = displayAnimeName,
                 detail = detail,
-                playlist = canonicalPlaylist,
+                playlist = canonicalPlaylist!!,
+                playlistIndex = selectedPlaylistIndex,
                 episodeIndex = EpisodePlaybackSequencePolicy.indexOfEpisode(
                     canonicalPlaylist.episodeList,
                     selectedEpisode.episodeId
@@ -313,6 +313,22 @@ private fun DetailContent(
         modifier = Modifier
             .fillMaxSize()
             .background(AulamaTvColors.Background)
+            .onPreviewKeyEvent { event ->
+                if (
+                    event.type == KeyEventType.KeyDown &&
+                    event.key == Key.DirectionDown &&
+                    heroHasFocus &&
+                    hasEpisodes
+                ) {
+                    scope.launch {
+                        detailListState.scrollToItem(0)
+                        runCatching { focusRequesters.line.requestFocus() }
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
     ) {
         DetailBackdrop(
             imageUrl = activeBackdropImageUrl,
@@ -332,11 +348,21 @@ private fun DetailContent(
                     favoriteEnabled = !favoriteUiState.isLoading && !favoriteUiState.isUpdating,
                     onFavoriteClick = { viewModel.toggleFavorite(detail) },
                     primaryActionFocusRequester = primaryActionFocusRequester,
+                    downFocusRequester = focusRequesters.line.takeIf { hasEpisodes },
                     accent = detailAccent,
                     height = heroHeight,
                     modifier = Modifier
                         .focusRequester(focusRequesters.hero)
+                        .focusProperties {
+                            if (
+                                DetailPlaybackFocusPolicy.downFromHero(hasEpisodes) ==
+                                DetailPlaybackFocusTarget.LINE
+                            ) {
+                                down = focusRequesters.line
+                            }
+                        }
                         .onFocusChanged { state ->
+                            heroHasFocus = state.isFocused || state.hasFocus
                             if (state.isFocused || state.hasFocus) {
                                 focusedRelatedAnime = null
                                 if (hasDetailRows) {
@@ -363,102 +389,78 @@ private fun DetailContent(
             contentPadding = PaddingValues(bottom = 44.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            items(
-                count = playlists.size,
-                key = { "playlist-${playlists[it].id}-$reverseEpisodes" }
-            ) { playlistIndex ->
-                val playlist = playlists[playlistIndex].playlist
-                val initialIndex = focusedEpisodeIndexes.getOrElse(playlistIndex) { 0 }
-                    .coerceIn(0, (playlist.episodeList.lastIndex).coerceAtLeast(0))
-                EpisodeSection(
-                    title = localizedText(playlist.name.toDisplayLineName()),
-                    episodes = playlist.episodeList,
-                    initiallyFocusedIndex = initialIndex,
-                    currentEpisodeId = history?.episodeId,
-                    showOrderControl = playlistIndex == 0,
-                    reverseEpisodes = reverseEpisodes,
-                    orderFocusRequester = focusRequesters.order,
-                    modifier = Modifier.focusRequester(focusRequesters.playlists[playlistIndex]),
-                    restoreFocusRequester = restoreEpisodeFocusRequester,
-                    restoreFocusEpisodeIndex = restoreEpisodePosition
-                        .takeIf { it.first == playlistIndex }
-                        ?.second
-                        ?: -1,
-                    onToggleOrder = {
-                        focusedEpisodeIndexes = MutableList(playlists.size) { 0 }
-                        reverseEpisodes = !reverseEpisodes
-                        scope.launch {
-                            delay(90)
-                            runCatching { focusRequesters.order?.requestFocus() }
-                        }
-                    },
-                    onNavigateUp = {
-                        scope.launch {
-                            if (playlistIndex > 0) {
-                                detailListState.scrollToItem(playlistIndex - 1)
-                                delay(40)
-                                runCatching {
-                                    focusRequesters.playlists[playlistIndex - 1].requestFocus()
-                                }
-                            } else {
+            if (displayedPlaylist != null && displayedPlaylist.episodeList.isNotEmpty()) {
+                item(key = "playlist-$selectedPlaylistIndex-$reverseEpisodes") {
+                    val playlist = displayedPlaylist
+                    val initialIndex = focusedEpisodeIndex
+                        .coerceIn(0, playlist.episodeList.lastIndex.coerceAtLeast(0))
+                    EpisodeSection(
+                        title = localizedText("播放集數"),
+                        lineName = localizedText(playlist.name.toDisplayLineName()),
+                        episodes = playlist.episodeList,
+                        initiallyFocusedIndex = initialIndex,
+                        currentEpisodeId = history?.episodeId,
+                        reverseEpisodes = reverseEpisodes,
+                        lineFocusRequester = focusRequesters.line,
+                        orderFocusRequester = focusRequesters.order,
+                        headerUpFocusRequester = primaryActionFocusRequester,
+                        modifier = Modifier.focusRequester(focusRequesters.playlist),
+                        restoreFocusRequester = restoreEpisodeFocusRequester,
+                        restoreFocusEpisodeIndex = restoreEpisodePosition
+                            .takeIf { it.first == selectedPlaylistIndex }
+                            ?.second
+                            ?: -1,
+                        onChooseLine = { showLinePicker = true },
+                        onToggleOrder = {
+                            focusedEpisodeIndex = 0
+                            reverseEpisodes = !reverseEpisodes
+                            scope.launch {
+                                delay(90)
+                                runCatching { focusRequesters.order.requestFocus() }
+                            }
+                        },
+                        onNavigateUp = {
+                            scope.launch {
                                 detailListState.scrollToItem(0)
-                                val primaryFocusResult = runCatching {
-                                    primaryActionFocusRequester.requestFocus()
-                                }
-                                if (primaryFocusResult.isFailure) {
-                                    runCatching { focusRequesters.hero.requestFocus() }
-                                }
-                            }
-                        }
-                    },
-                    onNavigateDown = when {
-                        playlistIndex < playlists.lastIndex -> {
-                            {
-                                scope.launch {
-                                    detailListState.scrollToItem(playlistIndex + 1)
-                                    delay(40)
-                                    runCatching {
-                                        focusRequesters.playlists[playlistIndex + 1].requestFocus()
-                                    }
+                                if (
+                                    DetailPlaybackFocusPolicy.upFromEpisode() ==
+                                    DetailPlaybackFocusTarget.LINE
+                                ) {
+                                    runCatching { focusRequesters.line.requestFocus() }
                                 }
                             }
-                        }
-
-                        focusRequesters.related != null -> {
+                        },
+                        onNavigateDown = focusRequesters.related?.let {
                             {
                                 scope.launch {
-                                    detailListState.scrollToItem(playlists.size)
+                                    detailListState.scrollToItem(1)
                                     delay(40)
                                     runCatching { focusRequesters.related.requestFocus() }
                                 }
                             }
+                        },
+                        onEpisodeFocused = { episodeIndex, _ ->
+                            focusedRelatedAnime = null
+                            focusedEpisodeIndex = episodeIndex
+                        },
+                        onEpisodeClick = { episodeIndex, _ ->
+                            val selectedEpisode = playlist.episodeList[episodeIndex]
+                            restoreEpisodePosition = selectedPlaylistIndex to episodeIndex
+                            openPlayback(
+                                context = context,
+                                animeName = displayAnimeName,
+                                detail = detail,
+                                playlist = canonicalPlaylist!!,
+                                playlistIndex = selectedPlaylistIndex,
+                                episodeIndex = EpisodePlaybackSequencePolicy.indexOfEpisode(
+                                    canonicalPlaylist.episodeList,
+                                    selectedEpisode.episodeId
+                                ).coerceAtLeast(0),
+                                sourceId = viewModel.sourceId
+                            )
                         }
-
-                        else -> null
-                    },
-                    onEpisodeFocused = { episodeIndex, _ ->
-                        focusedRelatedAnime = null
-                        focusedEpisodeIndexes = focusedEpisodeIndexes.toMutableList().also {
-                            it[playlistIndex] = episodeIndex
-                        }
-                    },
-                    onEpisodeClick = { episodeIndex, _ ->
-                        val selectedEpisode = playlist.episodeList[episodeIndex]
-                        val canonicalPlaylist = detail.playLists[playlistIndex]
-                        restoreEpisodePosition = playlistIndex to episodeIndex
-                        openPlayback(
-                            context = context,
-                            animeName = displayAnimeName,
-                            detail = detail,
-                            playlist = canonicalPlaylist,
-                            episodeIndex = EpisodePlaybackSequencePolicy.indexOfEpisode(
-                                canonicalPlaylist.episodeList,
-                                selectedEpisode.episodeId
-                            ).coerceAtLeast(0),
-                            sourceId = viewModel.sourceId
-                        )
-                    }
-                )
+                    )
+                }
             }
 
             if (detail.otherAnimeList.isNotEmpty()) {
@@ -470,10 +472,10 @@ private fun DetailContent(
                         onNavigateUp = {
                             focusedRelatedAnime = null
                             scope.launch {
-                                if (playlists.isNotEmpty()) {
-                                    detailListState.scrollToItem(playlists.lastIndex)
+                                if (hasEpisodes) {
+                                    detailListState.scrollToItem(0)
                                     delay(40)
-                                    runCatching { focusRequesters.playlists.last().requestFocus() }
+                                    runCatching { focusRequesters.playlist.requestFocus() }
                                 } else {
                                     detailListState.scrollToItem(0)
                                     val primaryFocusResult = runCatching {
@@ -491,6 +493,24 @@ private fun DetailContent(
                 }
             }
         }
+    }
+
+    if (showLinePicker) {
+        PlaybackLinePickerDialog(
+            playlists = detail.playLists,
+            selectedIndex = selectedPlaylistIndex,
+            onSelect = { index ->
+                selectedPlaylistIndex = index
+                focusedEpisodeIndex = 0
+                reverseEpisodes = false
+                showLinePicker = false
+                scope.launch {
+                    delay(80)
+                    runCatching { focusRequesters.line.requestFocus() }
+                }
+            },
+            onDismiss = { showLinePicker = false }
+        )
     }
 
     LaunchedEffect(detail.animeId) {
@@ -640,6 +660,7 @@ private fun DetailHero(
     favoriteEnabled: Boolean,
     onFavoriteClick: () -> Unit,
     primaryActionFocusRequester: FocusRequester,
+    downFocusRequester: FocusRequester?,
     accent: Color,
     height: Dp = DetailHeroHeight,
     modifier: Modifier = Modifier
@@ -648,9 +669,29 @@ private fun DetailHero(
     val displayDescription = localizedText(detail.description).trim()
     val episodeCount = detail.playLists.maxOfOrNull { it.episodeList.size } ?: 0
     val metadata = compactDetailMetadata(detail.infoList, episodeCount)
+    val titleLayout = remember(displayTitle) { DetailTitleLayoutPolicy.forTitle(displayTitle) }
+    val onNavigateDown: (() -> Unit)? = downFocusRequester?.let { requester ->
+        {
+            runCatching { requester.requestFocus() }
+            Unit
+        }
+    }
     var showDescription by remember { mutableStateOf(false) }
 
-    FocusGroup(modifier) {
+    FocusGroup(
+        modifier = modifier.onPreviewKeyEvent { event ->
+            if (
+                event.type == KeyEventType.KeyDown &&
+                event.key == Key.DirectionDown &&
+                onNavigateDown != null
+            ) {
+                onNavigateDown()
+                true
+            } else {
+                false
+            }
+        }
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -672,11 +713,11 @@ private fun DetailHero(
             ) {
                 Text(
                     text = displayTitle,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                    maxLines = titleLayout.maxLines,
+                    overflow = TextOverflow.Clip,
                     style = MaterialTheme.typography.displaySmall.copy(
-                        fontSize = 37.sp,
-                        lineHeight = 43.sp,
+                        fontSize = titleLayout.fontSizeSp.sp,
+                        lineHeight = titleLayout.lineHeightSp.sp,
                         fontWeight = FontWeight.ExtraBold
                     ),
                     color = accent
@@ -697,7 +738,7 @@ private fun DetailHero(
                 if (displayDescription.isNotBlank()) {
                     Text(
                         text = displayDescription,
-                        maxLines = 3,
+                        maxLines = titleLayout.descriptionMaxLines,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodyLarge.copy(
                             fontSize = 17.sp,
@@ -716,9 +757,13 @@ private fun DetailHero(
                             icon = Icons.Default.PlayArrow,
                             accent = accent,
                             onClick = play,
+                            onNavigateDown = onNavigateDown,
                             modifier = Modifier
                                 .width(142.dp)
                                 .focusRequester(primaryActionFocusRequester)
+                                .focusProperties {
+                                    downFocusRequester?.let { down = it }
+                                }
                                 .initiallyFocused()
                         )
                     }
@@ -728,8 +773,12 @@ private fun DetailHero(
                             icon = Icons.Default.Info,
                             accent = AulamaTvColors.Pink,
                             onClick = { showDescription = true },
+                            onNavigateDown = onNavigateDown,
                             modifier = Modifier
                                 .width(132.dp)
+                                .focusProperties {
+                                    downFocusRequester?.let { down = it }
+                                }
                                 .restorableFocus()
                         )
                     }
@@ -739,8 +788,12 @@ private fun DetailHero(
                         accent = if (isFavorite) AulamaTvColors.Cyan else AulamaTvColors.Amber,
                         enabled = favoriteEnabled,
                         onClick = onFavoriteClick,
+                        onNavigateDown = onNavigateDown,
                         modifier = Modifier
                             .width(116.dp)
+                            .focusProperties {
+                                downFocusRequester?.let { down = it }
+                            }
                             .restorableFocus()
                     )
                 }
@@ -847,13 +900,27 @@ private fun DetailActionButton(
     accent: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    onNavigateDown: (() -> Unit)? = null
 ) {
     val shape = RoundedCornerShape(7.dp)
     Surface(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.height(46.dp),
+        modifier = modifier
+            .onPreviewKeyEvent { event ->
+                if (
+                    event.type == KeyEventType.KeyDown &&
+                    event.key == Key.DirectionDown &&
+                    onNavigateDown != null
+                ) {
+                    onNavigateDown()
+                    true
+                } else {
+                    false
+                }
+            }
+            .height(46.dp),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = AulamaTvColors.SurfaceRaised,
             contentColor = AulamaTvColors.TextPrimary,
@@ -1000,15 +1067,18 @@ private fun PlaybackProgressLine(history: VideoHistoryEntity, accent: Color) {
 @Composable
 private fun EpisodeSection(
     title: String,
+    lineName: String,
     episodes: List<AnimePlayListEpisode>,
     initiallyFocusedIndex: Int,
     currentEpisodeId: String?,
-    showOrderControl: Boolean,
     reverseEpisodes: Boolean,
-    orderFocusRequester: FocusRequester?,
+    lineFocusRequester: FocusRequester,
+    orderFocusRequester: FocusRequester,
+    headerUpFocusRequester: FocusRequester,
     modifier: Modifier = Modifier,
     restoreFocusRequester: FocusRequester,
     restoreFocusEpisodeIndex: Int,
+    onChooseLine: () -> Unit,
     onToggleOrder: () -> Unit,
     onNavigateUp: () -> Unit,
     onNavigateDown: (() -> Unit)?,
@@ -1081,18 +1151,36 @@ private fun EpisodeSection(
                         fontWeight = FontWeight.SemiBold
                     ),
                     color = AulamaTvColors.TextPrimary,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.widthIn(min = 112.dp)
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                PlaybackLineControl(
+                    lineName = lineName,
+                    onClick = onChooseLine,
+                    modifier = Modifier
+                        .focusRequester(lineFocusRequester)
+                        .focusProperties {
+                            up = headerUpFocusRequester
+                            right = orderFocusRequester
+                            down = entryEpisodeFocusRequester
+                        }
+                        .initiallyFocused()
                 )
                 Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = localizedText("${episodes.size} 集"),
-                    style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp),
-                    color = AulamaTvColors.TextSecondary
+                OrderControl(
+                    reverse = reverseEpisodes,
+                    onClick = onToggleOrder,
+                    modifier = Modifier
+                        .focusRequester(orderFocusRequester)
+                        .focusProperties {
+                            up = headerUpFocusRequester
+                            left = lineFocusRequester
+                            down = entryEpisodeFocusRequester
+                        }
+                        .restorableFocus()
                 )
-                if (rangeCount > 1 || (showOrderControl && orderFocusRequester != null)) {
-                    Spacer(modifier = Modifier.width(16.dp))
-                }
                 if (rangeCount > 1) {
+                    Spacer(modifier = Modifier.width(10.dp))
                     EpisodeRangeControl(
                         label = rangeLabel,
                         canGoPrevious = selectedRangeIndex > 0,
@@ -1106,20 +1194,13 @@ private fun EpisodeSection(
                             .focusProperties { down = entryEpisodeFocusRequester }
                             .restorableFocus()
                     )
-                    if (showOrderControl && orderFocusRequester != null) {
-                        Spacer(modifier = Modifier.width(10.dp))
-                    }
                 }
-                if (showOrderControl && orderFocusRequester != null) {
-                    OrderControl(
-                        reverse = reverseEpisodes,
-                        onClick = onToggleOrder,
-                        modifier = Modifier
-                            .focusRequester(orderFocusRequester)
-                            .focusProperties { down = entryEpisodeFocusRequester }
-                            .restorableFocus()
-                    )
-                }
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = localizedText("${episodes.size} 集"),
+                    style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp),
+                    color = AulamaTvColors.TextSecondary
+                )
             }
             Spacer(modifier = Modifier.height(7.dp))
             LazyRow(
@@ -1158,7 +1239,7 @@ private fun EpisodeSection(
                     episodeModifier = if (episodeIndex == entryEpisodeIndex) {
                         episodeModifier
                             .focusRequester(entryEpisodeFocusRequester)
-                            .initiallyFocused()
+                            .restorableFocus()
                     } else {
                         episodeModifier.restorableFocus()
                     }
@@ -1257,6 +1338,45 @@ private fun EpisodeRangeControl(
                     .graphicsLayer { alpha = if (canGoNext) 1f else 0.32f }
             )
         }
+    }
+}
+
+@Composable
+private fun PlaybackLineControl(
+    lineName: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(6.dp)
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .height(42.dp)
+            .widthIn(max = 210.dp),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = AulamaTvColors.Cyan,
+            focusedContentColor = Color(0xFF041014),
+            pressedContainerColor = AulamaTvColors.Cyan.copy(alpha = 0.82f)
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = AulamaFocusScale),
+        shape = ClickableSurfaceDefaults.shape(shape),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(BorderStroke(1.dp, AulamaTvColors.Outline), shape = shape),
+            focusedBorder = Border(BorderStroke(2.dp, AulamaTvColors.FocusBorder), shape = shape)
+        )
+    ) {
+        Text(
+            text = localizedText("線路：$lineName ▾"),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontSize = 15.sp,
+                lineHeight = 19.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp)
+        )
     }
 }
 
@@ -1709,11 +1829,95 @@ private fun DescriptionDialog(
     }
 }
 
+@Composable
+private fun PlaybackLinePickerDialog(
+    playlists: List<AnimePlayList>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val selectedFocusRequester = remember(selectedIndex) { FocusRequester() }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xD905070C)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .widthIn(min = 420.dp, max = 560.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AulamaTvColors.Surface)
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = localizedText("選擇播放線路"),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = AulamaTvColors.TextPrimary
+                )
+                playlists.forEachIndexed { index, playlist ->
+                    val available = playlist.episodeList.isNotEmpty()
+                    Surface(
+                        onClick = { if (available) onSelect(index) },
+                        enabled = available,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (index == selectedIndex) {
+                                    Modifier.focusRequester(selectedFocusRequester)
+                                } else {
+                                    Modifier
+                                }
+                            ),
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = if (index == selectedIndex) {
+                                AulamaTvColors.Cyan.copy(alpha = 0.14f)
+                            } else {
+                                Color.Transparent
+                            },
+                            focusedContainerColor = AulamaTvColors.Cyan,
+                            focusedContentColor = Color(0xFF041014),
+                            disabledContainerColor = Color.Transparent,
+                            disabledContentColor = AulamaTvColors.TextSecondary.copy(alpha = 0.48f)
+                        ),
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(7.dp))
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            Text(
+                                text = localizedText(playlist.name.toDisplayLineName()),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = localizedText(playbackLineAvailabilityText(playlist)),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        LaunchedEffect(selectedIndex) {
+            runCatching { selectedFocusRequester.requestFocus() }
+        }
+    }
+}
+
+internal fun playbackLineAvailabilityText(playlist: AnimePlayList): String =
+    if (playlist.episodeList.isEmpty()) "不可用 · 未有可播放集數"
+    else "可用 · ${playlist.episodeList.size} 集"
+
 private fun openPlayback(
     context: android.content.Context,
     animeName: String,
     detail: AnimeDetailPageData,
     playlist: AnimePlayList,
+    playlistIndex: Int,
     episodeIndex: Int,
     sourceId: String
 ) {
@@ -1725,19 +1929,17 @@ private fun openPlayback(
             coverUrl = detail.imageUrl,
             playIndex = episodeIndex,
             playlist = playlist.episodeList,
-            sourceId = sourceId
+            sourceId = sourceId,
+            playlists = detail.playLists,
+            playlistIndex = playlistIndex
         )
     )
 }
 
-private data class PlayListWrapper(
-    val id: Int,
-    val playlist: AnimePlayList
-)
-
 private data class DetailPageRowFocusRequesters(
     val hero: FocusRequester,
-    val order: FocusRequester?,
-    val playlists: List<FocusRequester>,
+    val line: FocusRequester,
+    val order: FocusRequester,
+    val playlist: FocusRequester,
     val related: FocusRequester?
 )

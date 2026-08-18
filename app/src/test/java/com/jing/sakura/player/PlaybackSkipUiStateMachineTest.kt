@@ -24,6 +24,7 @@ class PlaybackSkipUiStateMachineTest {
         assertTrue(decision.isVisible)
         assertTrue(decision.shouldRequestInitialFocus)
         assertFalse(decision.shouldStartCountdown)
+        assertTrue(decision.shouldScheduleAutoHide)
     }
 
     @Test
@@ -33,6 +34,7 @@ class PlaybackSkipUiStateMachineTest {
         assertTrue(decision.isVisible)
         assertTrue(decision.shouldRequestInitialFocus)
         assertTrue(decision.shouldStartCountdown)
+        assertFalse(decision.shouldScheduleAutoHide)
         assertEquals(8_000L, PlaybackSkipUiStateMachine.AUTO_NEXT_COUNTDOWN_MS)
     }
 
@@ -96,5 +98,26 @@ class PlaybackSkipUiStateMachineTest {
         assertTrue(decision.isVisible)
         assertFalse(decision.shouldRequestInitialFocus)
         assertFalse(decision.shouldStartCountdown)
+    }
+
+    @Test
+    fun introAutoHidesAfterTimeoutAndAnyRemoteActionRevealsIt() {
+        val state = PlaybackSkipUiStateMachine()
+        state.update(intro)
+
+        assertTrue(state.onTransientActionTimeout())
+        assertFalse(state.update(intro).isVisible)
+        assertTrue(state.revealTransientAction())
+        assertTrue(state.update(intro).isVisible)
+    }
+
+    @Test
+    fun nextEpisodeChoiceNeverUsesTransientAutoHide() {
+        val state = PlaybackSkipUiStateMachine()
+        state.update(outro)
+
+        assertFalse(state.onTransientActionTimeout())
+        assertFalse(state.revealTransientAction())
+        assertTrue(state.update(outro).isVisible)
     }
 }

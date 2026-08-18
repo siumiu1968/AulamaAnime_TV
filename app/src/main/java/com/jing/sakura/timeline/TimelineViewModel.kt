@@ -133,7 +133,9 @@ class TimelineViewModel(
                     coverUrl = detail.imageUrl.ifBlank { anime.imageUrl },
                     playIndex = 0,
                     playlist = playList.episodeList,
-                    sourceId = anime.sourceId
+                    sourceId = anime.sourceId,
+                    playlists = detail.playLists,
+                    playlistIndex = detail.playLists.indexOf(playList)
                 )
                 publishPreview(
                     generation,

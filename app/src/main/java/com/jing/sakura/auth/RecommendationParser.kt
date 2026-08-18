@@ -4,6 +4,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.jing.sakura.data.AnimeData
+import com.jing.sakura.data.AnimePageData
 import com.jing.sakura.repo.CycaniSource
 import java.net.URLDecoder
 
@@ -12,6 +13,24 @@ object RecommendationParser {
         val root = JsonParser.parseString(body).asJsonObject
         val recommendations = root.getAsJsonArray("recommendations") ?: return emptyList()
         return parseItems(recommendations)
+    }
+
+    /**
+     * Parses only the website search result list. Related titles and personal
+     * recommendations are deliberately ignored because the TV search screen
+     * has a compact, result-only layout.
+     */
+    fun parseSearchPage(body: String, requestedPage: Int): AnimePageData {
+        val root = JsonParser.parseString(body).asJsonObject
+        val items = parseItems(root.getAsJsonArray("items") ?: emptyList())
+        return AnimePageData(
+            page = requestedPage.coerceAtLeast(1),
+            hasNextPage = root.get("hasNextPage")
+                ?.takeUnless(JsonElement::isJsonNull)
+                ?.asBoolean
+                ?: false,
+            animeList = items
+        )
     }
 
     internal fun parseItems(items: Iterable<JsonElement>): List<AnimeData> =

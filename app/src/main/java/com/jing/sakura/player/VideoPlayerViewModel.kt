@@ -38,6 +38,8 @@ class VideoPlayerViewModel(
     private val TAG = VideoPlayerViewModel::class.java.simpleName
 
     private var _playList = emptyList<AnimePlayListEpisode>()
+    private val playbackPlaylists = anime.playlists
+    private var currentPlaylistIndex = anime.playlistIndex
 
     private var _saveHistoryJob: Job? = null
 
@@ -109,8 +111,12 @@ class VideoPlayerViewModel(
 
     fun init() {
         viewModelScope.launch {
-            this@VideoPlayerViewModel._playList = anime.playlist
-            _playIndex.emit(anime.playIndex)
+            val initialPlaylist = playbackPlaylists.getOrNull(anime.playlistIndex)
+                ?.episodeList
+                ?.takeIf { it.isNotEmpty() }
+            this@VideoPlayerViewModel._playList = initialPlaylist ?: anime.playlist
+            if (initialPlaylist == null) currentPlaylistIndex = -1
+            _playIndex.emit(anime.playIndex.coerceIn(_playList.indices))
         }
     }
 
@@ -134,10 +140,7 @@ class VideoPlayerViewModel(
                     sourceId = anime.sourceId
                 )
                 val remoteResumeMs = pendingRemoteResumeMs
-                    .takeIf {
-                        it >= 0L &&
-                            episode.episodeId == anime.playlist.getOrNull(anime.playIndex)?.episodeId
-                    }
+                    .takeIf { it >= 0L }
                 if (remoteResumeMs != null) {
                     pendingRemoteResumeMs = NavigateToPlayerArg.NO_REMOTE_RESUME_POSITION
                 }
@@ -219,6 +222,46 @@ class VideoPlayerViewModel(
             _playIndex.emit(index)
         }
     }
+
+    internal fun sourceFallbackCandidates(
+        excludedPlaylistIndexes: Set<Int> = emptySet()
+    ): List<PlaybackSourceFallback> {
+        val episode = _playList.getOrNull(_playIndex.value) ?: return emptyList()
+        return PlaybackSourceFallbackPolicy.candidates(
+            playlists = playbackPlaylists,
+            currentPlaylistIndex = currentPlaylistIndex,
+            currentEpisode = episode,
+            excludedPlaylistIndexes = excludedPlaylistIndexes
+        )
+    }
+
+    internal fun switchToSourceFallback(
+        fallback: PlaybackSourceFallback,
+        resumePositionMs: Long
+    ): Boolean {
+        val targetPlaylist = playbackPlaylists.getOrNull(fallback.playlistIndex) ?: return false
+        val targetEpisode = targetPlaylist.episodeList.getOrNull(fallback.episodeIndex) ?: return false
+        val previousIndex = _playIndex.value
+        pendingRemoteResumeMs = resumePositionMs.coerceAtLeast(0L)
+        _playList = targetPlaylist.episodeList
+        currentPlaylistIndex = fallback.playlistIndex
+        viewModelScope.launch {
+            if (previousIndex == fallback.episodeIndex) {
+                _playerSubTitle.emit(targetEpisode.episode)
+                _playbackSegments.emit(null)
+                fetchVideoUrl(targetEpisode)
+                fetchPlaybackSegments(targetEpisode, fallback.episodeIndex)
+            } else {
+                _playIndex.emit(fallback.episodeIndex)
+            }
+        }
+        return true
+    }
+
+    internal fun currentPlaylistIndex(): Int = currentPlaylistIndex
+
+    internal fun currentEpisodeLabel(): String =
+        _playList.getOrNull(_playIndex.value)?.episode.orEmpty()
 
     fun startSaveHistory() {
         _saveHistoryJob?.cancel()

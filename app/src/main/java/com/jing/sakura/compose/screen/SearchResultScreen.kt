@@ -58,6 +58,7 @@ import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.LoadingOverlay
 import com.jing.sakura.compose.common.VideoCard
 import com.jing.sakura.compose.common.aulamaTvBackground
+import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.rememberArtworkAccent
 import com.jing.sakura.compose.common.rememberPosterImageRequest
 import com.jing.sakura.compose.common.rememberReducedMotion
@@ -117,9 +118,9 @@ fun SearchResultScreen(viewModel: SearchResultViewModel) {
                 AulamaPageHeader(
                     title = searchResultTitle(viewModel.keyword),
                     subtitle = if (pagingItems.itemCount > 0) {
-                        "${pagingItems.itemCount} 套作品"
+                        localizedText("${pagingItems.itemCount} 套作品 · 網站模糊搜尋")
                     } else {
-                        "搜尋動畫作品"
+                        localizedText("可輸入別名、繁簡名稱或日文原名")
                     },
                     modifier = Modifier.fillMaxWidth()
                 )

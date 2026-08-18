@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.paging.LoadState
+import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
@@ -78,6 +79,7 @@ import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.aulamaTvBackground
 import com.jing.sakura.compose.common.SpeechToTextParser
 import com.jing.sakura.compose.common.customClick
+import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.safelyRequestFocus
 import com.jing.sakura.http.WebServerContext
 import com.jing.sakura.http.WebsocketOperation
@@ -98,6 +100,9 @@ fun SearchScreen(viewModel: SearchViewModel) {
 
     val context = LocalContext.current
     val historyFocusRequester = remember { FocusRequester() }
+    val searchHistory = viewModel.searchHistoryPager.collectAsLazyPagingItems()
+    val hasSearchHistory = searchHistory.loadState.refresh is LoadState.NotLoading &&
+        searchHistory.itemCount > 0
     val onSearch = { keyword: String ->
         if (keyword.isNotBlank()) {
             keyword.trim().let {
@@ -113,11 +118,11 @@ fun SearchScreen(viewModel: SearchViewModel) {
     ) {
         AulamaPageHeader(
             title = stringResource(R.string.button_search),
-            subtitle = "用語音、遙控器或手機快速找到作品"
+            subtitle = localizedText("支援模糊字詞、別名、繁簡名稱及日文原名")
         )
         InputKeywordRow(
             onSearch = onSearch,
-            historyFocusRequester = historyFocusRequester
+            historyFocusRequester = historyFocusRequester.takeIf { hasSearchHistory }
         )
 
         Row(
@@ -125,24 +130,75 @@ fun SearchScreen(viewModel: SearchViewModel) {
                 .fillMaxWidth()
                 .weight(1f)
                 .padding(horizontal = 36.dp, vertical = 18.dp),
-            horizontalArrangement = spacedBy(32.dp)
+            horizontalArrangement = spacedBy(22.dp)
         ) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(AulamaCardShape)
+                    .background(AulamaTvColors.Surface)
+                    .border(1.dp, AulamaTvColors.Outline, AulamaCardShape)
+                    .padding(horizontal = 18.dp, vertical = 12.dp)
+            ) {
+                AulamaSectionHeader(
+                    title = stringResource(R.string.search_history),
+                    modifier = Modifier.padding(horizontal = 0.dp),
+                    accent = AulamaTvColors.Amber,
+                    contentPadding = PaddingValues(vertical = 6.dp)
+                )
+                Text(
+                    text = localizedText("按 OK 再搜尋 · 長按可刪除"),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = AulamaTvColors.TextSecondary,
+                    modifier = Modifier.padding(
+                        start = SearchSectionContentInset,
+                        bottom = 8.dp
+                    )
+                )
+                if (hasSearchHistory) {
+                    SearchHistoryColumn(
+                        pagingItems = searchHistory,
+                        viewModel = viewModel,
+                        firstItemFocusRequester = historyFocusRequester,
+                        onKeywordClick = onSearch
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = localizedText("暫時未有搜尋記錄"),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = AulamaTvColors.TextSecondary
+                        )
+                    }
+                }
+            }
+
             val serverUrl = WebServerContext.serverUrl.collectAsState().value
             if (serverUrl.isNotEmpty()) {
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .width(300.dp),
+                        .width(270.dp)
+                        .clip(AulamaCardShape)
+                        .background(AulamaTvColors.Surface)
+                        .border(1.dp, AulamaTvColors.Outline, AulamaCardShape)
+                        .padding(horizontal = 18.dp, vertical = 12.dp),
                     verticalArrangement = spacedBy(8.dp)
                 ) {
                     AulamaSectionHeader(
                         title = stringResource(R.string.search_mobile_input),
                         modifier = Modifier.padding(horizontal = 0.dp),
                         accent = AulamaTvColors.Pink,
-                        contentPadding = PaddingValues(vertical = 8.dp)
+                        contentPadding = PaddingValues(vertical = 6.dp)
                     )
                     Text(
-                        text = "掃描後可用手機輸入搜尋內容",
+                        text = localizedText("掃描後可用手機輸入搜尋內容"),
                         style = MaterialTheme.typography.bodyMedium,
                         color = AulamaTvColors.TextSecondary,
                         modifier = Modifier.padding(start = SearchSectionContentInset)
@@ -173,48 +229,15 @@ fun SearchScreen(viewModel: SearchViewModel) {
                         contentDescription = stringResource(R.string.search_mobile_input),
                         modifier = Modifier
                             .padding(start = SearchSectionContentInset, top = 6.dp)
-                            .size(218.dp)
+                            .size(184.dp)
                             .background(androidx.compose.ui.graphics.Color.White, AulamaCardShape)
                             .border(1.dp, AulamaTvColors.Outline, AulamaCardShape)
                             .padding(10.dp)
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .fillMaxHeight()
-                        .background(AulamaTvColors.Outline)
-                )
             }
-
-            val searchHistory = viewModel.searchHistoryPager.collectAsLazyPagingItems()
-
-            if (searchHistory.loadState.refresh is LoadState.NotLoading && searchHistory.itemCount > 0) {
-                Column(
-                    Modifier
-                        .fillMaxHeight()
-                        .width(420.dp)
-                ) {
-                    AulamaSectionHeader(
-                        title = stringResource(R.string.search_history),
-                        modifier = Modifier.padding(horizontal = 0.dp),
-                        accent = AulamaTvColors.Amber,
-                        contentPadding = PaddingValues(vertical = 8.dp)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    SearchHistoryColumn(
-                        viewModel = viewModel,
-                        firstItemFocusRequester = historyFocusRequester,
-                        onKeywordClick = onSearch
-                    )
-
-                }
-            }
-
         }
-
     }
-
 }
 
 
@@ -225,7 +248,7 @@ fun SearchScreen(viewModel: SearchViewModel) {
 @Composable
 fun InputKeywordRow(
     onSearch: (String) -> Unit,
-    historyFocusRequester: FocusRequester
+    historyFocusRequester: FocusRequester?
 ) {
     val speechFocusRequester = remember {
         FocusRequester()
@@ -267,6 +290,9 @@ fun InputKeywordRow(
     val searchButtonFocusRequester = remember {
         FocusRequester()
     }
+    val inputFocusRequester = remember {
+        FocusRequester()
+    }
     val sttState by speechToTextParser.state.collectAsState()
     Row(
         Modifier
@@ -290,7 +316,10 @@ fun InputKeywordRow(
             },
             modifier = Modifier
                 .focusRequester(speechFocusRequester)
-                .focusProperties { down = historyFocusRequester },
+                .focusProperties {
+                    right = inputFocusRequester
+                    historyFocusRequester?.let { down = it }
+                },
             accent = if (sttState.isSpeaking) AulamaTvColors.Pink else AulamaTvColors.Cyan
         )
         Spacer(modifier = Modifier.width(20.dp))
@@ -300,7 +329,12 @@ fun InputKeywordRow(
             onSubmit = { onSearch(inputKeyword.trim()) },
             modifier = Modifier
                 .weight(1f)
-                .focusProperties { down = historyFocusRequester },
+                .focusRequester(inputFocusRequester)
+                .focusProperties {
+                    left = speechFocusRequester
+                    right = searchButtonFocusRequester
+                    historyFocusRequester?.let { down = it }
+                },
             downFocusRequester = historyFocusRequester,
             placeholder = {
                 if (sttState.isSpeaking) {
@@ -321,7 +355,10 @@ fun InputKeywordRow(
             enabled = inputKeyword.isNotBlank(),
             modifier = Modifier
                 .focusRequester(searchButtonFocusRequester)
-                .focusProperties { down = historyFocusRequester },
+                .focusProperties {
+                    left = inputFocusRequester
+                    historyFocusRequester?.let { down = it }
+                },
             accent = AulamaTvColors.Green
         )
     }
@@ -332,14 +369,12 @@ fun InputKeywordRow(
             if (text.isNotEmpty()) {
                 inputKeyword = text
                 searchButtonFocusRequester.safelyRequestFocus()
-            } else {
-                delay(200)
-                speechFocusRequester.safelyRequestFocus()
             }
         }
     }
-    LaunchedEffect(Unit){
-        speechFocusRequester.safelyRequestFocus()
+    LaunchedEffect(Unit) {
+        delay(140)
+        inputFocusRequester.safelyRequestFocus("search-keyword-input")
     }
     LaunchedEffect(sttState.isSpeaking) {
         if (sttState.isSpeaking) {
@@ -351,11 +386,11 @@ fun InputKeywordRow(
 
 @Composable
 fun SearchHistoryColumn(
+    pagingItems: LazyPagingItems<SearchHistoryEntity>,
     viewModel: SearchViewModel,
     firstItemFocusRequester: FocusRequester,
     onKeywordClick: (keyword: String) -> Unit = {}
 ) {
-    val pagingItems = viewModel.searchHistoryPager.collectAsLazyPagingItems()
     if (pagingItems.loadState.refresh !is LoadState.NotLoading || pagingItems.itemCount == 0) {
         return
     }
@@ -470,31 +505,42 @@ private fun KeywordSurface(
             .clip(AulamaCardShape)
             .background(
                 if (focused) androidx.compose.ui.graphics.Color(0xFF173A40)
-                else androidx.compose.ui.graphics.Color.Transparent
+                else AulamaTvColors.SurfaceRaised
             )
             .then(
                 if (focused) {
                     Modifier.border(2.dp, AulamaTvColors.FocusBorder, AulamaCardShape)
                 } else {
-                    Modifier
+                    Modifier.border(1.dp, AulamaTvColors.Outline, AulamaCardShape)
                 }
             )
             .focusable()
     ) {
-        var textModifier = Modifier.padding(
-            horizontal = SearchSectionContentInset,
-            vertical = 8.dp
-        )
-        if (focused) {
-            textModifier = textModifier.basicMarquee()
+        Row(
+            modifier = Modifier.padding(
+                horizontal = SearchSectionContentInset,
+                vertical = 8.dp
+            ),
+            horizontalArrangement = spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = null,
+                tint = if (focused) AulamaTvColors.Cyan else AulamaTvColors.TextSecondary,
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleMedium,
+                color = AulamaTvColors.TextPrimary,
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (focused) Modifier.basicMarquee() else Modifier),
+                maxLines = 1,
+                overflow = if (focused) TextOverflow.Clip else TextOverflow.Ellipsis
+            )
         }
-        Text(
-            text = text,
-            style = MaterialTheme.typography.titleMedium,
-            modifier = textModifier,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 

@@ -9,6 +9,39 @@ import org.junit.Test
 
 class CycaniWebPlaybackPolicyTest {
     @Test
+    fun webPlaybackFailureDoesNotFallBackToTheLegacySourcePath() {
+        assertEquals(
+            CycaniPlaybackResolutionPath.WEB_SECTION,
+            CycaniPlaybackResolutionPolicy.select(
+                directUrl = "",
+                webSectionId = "51500",
+                hasWebRequest = true
+            )
+        )
+        assertEquals(
+            CycaniPlaybackResolutionPath.WEB_MATCH,
+            CycaniPlaybackResolutionPolicy.select(
+                directUrl = "",
+                webSectionId = "",
+                hasWebRequest = true
+            )
+        )
+        assertEquals(
+            CycaniPlaybackResolutionPath.UNAVAILABLE,
+            CycaniPlaybackResolutionPolicy.select("", "", false)
+        )
+    }
+
+    @Test
+    fun blocksOnlyTheRetiredOldPcEndpoint() {
+        assertTrue(isRetiredCycaniOldPcUrl("https://vhub.babel.gold/oldpc?url=signed"))
+        assertTrue(isRetiredCycaniOldPcUrl("https://VHub.Babel.Gold/oldpc/"))
+        assertFalse(isRetiredCycaniOldPcUrl("https://vhub.babel.gold/hls/video.m3u8"))
+        assertFalse(isRetiredCycaniOldPcUrl("https://vhub.babel.gold/oldpc-safe"))
+        assertFalse(isRetiredCycaniOldPcUrl("https://vhub-babel.gold/oldpc"))
+    }
+
+    @Test
     fun requiresExactlyOneTitleAndYearMatch() {
         val match = CycaniWebPlaybackPolicy.uniqueTitleYearMatch(
             expectedTitle = "轉生就是劍",

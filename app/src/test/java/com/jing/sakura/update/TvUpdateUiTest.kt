@@ -22,6 +22,23 @@ class TvUpdateUiTest {
     }
 
     @Test
+    fun downloadWithNoProgressTimesOutInsteadOfStayingAtZeroForever() {
+        val tracker = TvDownloadStallTracker(initialTimeMs = 1_000L, timeoutMs = 90_000L)
+
+        assertFalse(tracker.hasStalled(downloadedBytes = 0L, nowMs = 90_999L))
+        assertTrue(tracker.hasStalled(downloadedBytes = 0L, nowMs = 91_000L))
+    }
+
+    @Test
+    fun downloadProgressRestartsTheStallWindow() {
+        val tracker = TvDownloadStallTracker(initialTimeMs = 1_000L, timeoutMs = 90_000L)
+
+        assertFalse(tracker.hasStalled(downloadedBytes = 1_024L, nowMs = 80_000L))
+        assertFalse(tracker.hasStalled(downloadedBytes = 1_024L, nowMs = 169_999L))
+        assertTrue(tracker.hasStalled(downloadedBytes = 1_024L, nowMs = 170_000L))
+    }
+
+    @Test
     fun turnsMarkdownIntoDisplayItemsWithoutRawMarkers() {
         val items = parseTvReleaseNotes(
             """

@@ -24,6 +24,7 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
     private val onPlayPauseAction: (PlayPauseAction) -> Boolean = { false },
     private val updateProgress: () -> Unit,
     private val chooseEpisode: () -> Unit,
+    private val switchSourceFallback: () -> Unit,
     private val playPreviousEpisode: () -> Unit,
     private val playNextEpisode: () -> Unit,
     private val open4kModePicker: () -> Unit
@@ -47,6 +48,12 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
         context.getString(Tv4kMode.OFF.labelRes),
         null,
         ContextCompat.getDrawable(context, R.drawable.ic_player_4k_off)
+    )
+    private val sourceFallbackAction = Action(
+        ACTION_SOURCE_FALLBACK,
+        context.getString(R.string.player_switch_source),
+        null,
+        ContextCompat.getDrawable(context, R.drawable.play_list)
     )
 
     override fun onCreatePrimaryActions(primaryActionsAdapter: ArrayObjectAdapter) {
@@ -76,6 +83,7 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
             fastForwardAction -> seekBy(SEEK_INCREMENT_MS)
             nextAction -> playNextEpisode()
             episodeListAction -> chooseEpisode()
+            sourceFallbackAction -> switchSourceFallback()
             fast4kAction -> open4kModePicker()
             is PlayPauseAction -> if (!onPlayPauseAction(action)) {
                 super.onActionClicked(action)
@@ -147,9 +155,17 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
         }
     }
 
+    fun showSourceFallbackAction(visible: Boolean) {
+        val adapter = secondaryActionsAdapter ?: return
+        val index = adapter.indexOf(sourceFallbackAction)
+        if (visible && index < 0) adapter.add(0, sourceFallbackAction)
+        if (!visible && index >= 0) adapter.remove(sourceFallbackAction)
+    }
+
     companion object {
         private const val ACTION_EPISODE_LIST = 10L
         private const val ACTION_FAST_4K = 11L
+        private const val ACTION_SOURCE_FALLBACK = 12L
         private const val SEEK_INCREMENT_MS = 10_000L
     }
 }

@@ -34,6 +34,7 @@ import com.jing.sakura.update.TvUpdateDownloadState
 import com.jing.sakura.update.TvUpdateManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
@@ -63,14 +64,26 @@ class MainActivity : ComponentActivity() {
         setAulamaTvContent {
             val downloadState = updateManager.downloadState.collectAsState().value
             val homePageData = viewModel.homePageData.collectAsState().value
-            val welcomeRandomSeed = remember { System.nanoTime().toInt() }
-            val welcomeAnime = remember(homePageData, welcomeRandomSeed) {
-                val rows = (homePageData as? Resource.Success)
-                    ?.data
+            val authState = authViewModel.state.collectAsState().value
+            val welcomeRefreshSeed = remember {
+                mutableStateOf(welcomeContentSeed(System.currentTimeMillis()))
+            }
+            val welcomeAnime = remember(homePageData, welcomeRefreshSeed.value) {
+                val pageData = (homePageData as? Resource.Success)?.data
+                    ?: viewModel.lastHomePageData
+                val rows = pageData
                     ?.seriesList
                     .orEmpty()
                     .map { it.value }
-                welcomeBackdropAnime(rows = rows, randomSeed = welcomeRandomSeed)
+                welcomeBackdropAnime(rows = rows, randomSeed = welcomeRefreshSeed.value)
+            }
+            LaunchedEffect(authState is AuthUiState.Welcome) {
+                if (authState !is AuthUiState.Welcome) return@LaunchedEffect
+                while (true) {
+                    delay(WELCOME_CONTENT_REFRESH_INTERVAL_MS)
+                    welcomeRefreshSeed.value = welcomeContentSeed(System.currentTimeMillis())
+                    viewModel.loadData(silent = true)
+                }
             }
             LaunchedEffect(downloadState) {
                 if (downloadState is TvUpdateDownloadState.Installing) {
@@ -86,10 +99,19 @@ class MainActivity : ComponentActivity() {
                     androidx.tv.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
                     androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface
                 ) {
-                    when (val authState = authViewModel.state.collectAsState().value) {
+                    when (authState) {
                         is AuthUiState.Authenticated -> HomeScreen(
                             viewModel = viewModel,
                             account = authState.account,
+                            onLogin = authViewModel::startLogin,
+                            onLogout = authViewModel::logout,
+                            isCheckingForUpdate = isCheckingForUpdate.value,
+                            onCheckForUpdate = ::checkForUpdateManually
+                        )
+                        AuthUiState.Guest -> HomeScreen(
+                            viewModel = viewModel,
+                            account = null,
+                            onLogin = authViewModel::startLogin,
                             onLogout = authViewModel::logout,
                             isCheckingForUpdate = isCheckingForUpdate.value,
                             onCheckForUpdate = ::checkForUpdateManually
@@ -97,6 +119,7 @@ class MainActivity : ComponentActivity() {
                         else -> DeviceLoginScreen(
                             state = authState,
                             onLogin = authViewModel::startLogin,
+                            onGuest = authViewModel::continueAsGuest,
                             onCancel = authViewModel::cancelLogin,
                             onRetry = authViewModel::retryLogin,
                             welcomeAnime = welcomeAnime

@@ -133,4 +133,27 @@ class HomeUxPolicyTest {
                 it.imageUrl.removePrefix("item-").removeSuffix(".jpg").toInt() <= 7
         })
     }
+
+    @Test
+    fun welcomeBackdropSamplesAcrossRecentRowsAndRefreshesEverySixHours() {
+        fun anime(row: Int, item: Int) = AnimeData(
+            id = "$row-$item",
+            url = "https://example.test/$row/$item",
+            title = "$row-$item",
+            imageUrl = "$row-$item.jpg",
+            sourceId = "test"
+        )
+        val selected = welcomeBackdropAnime(
+            rows = (0..8).map { row -> (0..5).map { item -> anime(row, item) } },
+            randomSeed = 7,
+            maxItems = 8,
+            candidateLimit = 8
+        )
+
+        assertEquals((0..7).map { "$it-0" }.toSet(), selected.map(AnimeData::id).toSet())
+        assertEquals(welcomeContentSeed(0L), welcomeContentSeed(WELCOME_CONTENT_REFRESH_INTERVAL_MS - 1))
+        assertTrue(
+            welcomeContentSeed(0L) != welcomeContentSeed(WELCOME_CONTENT_REFRESH_INTERVAL_MS)
+        )
+    }
 }

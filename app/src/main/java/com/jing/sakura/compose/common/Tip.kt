@@ -121,7 +121,7 @@ fun Loading(text: String = "") {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             AulamaAnimeBrandMark(
-                height = 64.dp,
+                height = 76.dp,
                 modifier = Modifier.graphicsLayer {
                     val scale = if (reducedMotion) 1f else logoScale
                     scaleX = scale

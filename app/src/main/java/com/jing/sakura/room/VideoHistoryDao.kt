@@ -26,6 +26,24 @@ interface VideoHistoryDao {
     )
     fun queryHistory(): PagingSource<Int, VideoHistoryEntity>
 
+    @Query(
+        """
+        select v.*
+        from video_history v
+        inner join (
+            select animeId, sourceId, max(updateTime) updateTime
+            from video_history
+            group by animeId, sourceId
+        ) latest
+            on latest.animeId = v.animeId
+            and latest.sourceId = v.sourceId
+            and latest.updateTime = v.updateTime
+        order by v.updateTime desc
+        limit :limit
+        """
+    )
+    fun queryRecentHistory(limit: Int): List<VideoHistoryEntity>
+
     @Query("select * from video_history where animeId = :animeId and sourceId = :sourceId order by updateTime desc limit 1")
     fun queryLastHistoryOfAnimeId(animeId: String, sourceId: String): VideoHistoryEntity?
 

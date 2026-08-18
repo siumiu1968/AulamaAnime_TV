@@ -15,6 +15,8 @@ import coil.ImageLoaderFactory
 import coil.memory.MemoryCache
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.AuthViewModel
+import com.jing.sakura.auth.GuestLibraryStore
+import com.jing.sakura.auth.GuestModeStorage
 import com.jing.sakura.auth.PlaybackHistorySyncQueue
 import com.jing.sakura.auth.PlaybackHistorySyncScheduler
 import com.jing.sakura.auth.SecureAuthStorage
@@ -26,8 +28,9 @@ import com.jing.sakura.history.HistoryViewModel
 import com.jing.sakura.home.CategoryViewModel
 import com.jing.sakura.home.HomeViewModel
 import com.jing.sakura.http.WebServerContext
-import com.jing.sakura.player.VideoPlayerViewModel
+import com.jing.sakura.player.MislabelledHlsMediaInterceptor
 import com.jing.sakura.player.PlaybackActivity
+import com.jing.sakura.player.VideoPlayerViewModel
 import com.jing.sakura.remote.RemotePlaybackCoordinator
 import com.jing.sakura.repo.WebPageRepository
 import com.jing.sakura.room.SakuraDatabase
@@ -104,8 +107,20 @@ class SakuraApplication : Application(), ImageLoaderFactory {
             androidLogger()
             modules(httpModule(), roomModule(), viewModelModule())
         }.koin
-        PlaybackHistorySyncScheduler.enqueue(this)
-        SearchHistorySyncScheduler.enqueue(this)
+        applicationKoin.get<AulamaAuthRepository>().session.value?.account?.email?.let { accountKey ->
+            if (applicationKoin.get<PlaybackHistorySyncQueue>()
+                    .pendingForAccount(accountKey)
+                    .isNotEmpty()
+            ) {
+                PlaybackHistorySyncScheduler.enqueue(this)
+            }
+            if (applicationKoin.get<SearchHistorySyncQueue>()
+                    .pendingForAccount(accountKey)
+                    .isNotEmpty()
+            ) {
+                SearchHistorySyncScheduler.enqueue(this)
+            }
+        }
         registerActivityLifecycleCallbacks(remotePlaybackCallbacks)
     }
 
@@ -149,6 +164,7 @@ class SakuraApplication : Application(), ImageLoaderFactory {
         single(qualifier(KoinOkHttpClient.DATA)) { provideOkHttpClient() }
         single(qualifier(KoinOkHttpClient.MEDIA)) {
             basicOkhttpClient()
+                .addNetworkInterceptor(MislabelledHlsMediaInterceptor)
                 .apply {
                     if (BuildConfig.DEBUG) {
                         addNetworkInterceptor(
@@ -161,6 +177,8 @@ class SakuraApplication : Application(), ImageLoaderFactory {
         }
         single(qualifier(KoinOkHttpClient.AULAMA)) { provideAulamaOkHttpClient() }
         single { SecureAuthStorage(get()) }
+        single { GuestModeStorage(get()) }
+        single { GuestLibraryStore(get()) }
         single { AulamaAuthRepository(get(qualifier(KoinOkHttpClient.AULAMA)), get()) }
         single { PlaybackHistorySyncQueue(get()) }
         single { SearchHistorySyncQueue(get()) }
@@ -199,7 +217,9 @@ class SakuraApplication : Application(), ImageLoaderFactory {
     }
 
     private fun viewModelModule() = module {
-        viewModel { holder -> DetailPageViewModel(holder.get(), get(), get(), get(), holder.get()) }
+        viewModel { holder ->
+            DetailPageViewModel(holder.get(), get(), get(), get(), get(), holder.get())
+        }
         viewModel { holder -> VideoPlayerViewModel(holder.get(), get(), get(), get(), get()) }
         viewModelOf(::HomeViewModel)
         viewModelOf(::AuthViewModel)

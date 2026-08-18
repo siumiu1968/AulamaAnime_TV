@@ -32,4 +32,37 @@ class RecommendationParserTest {
         assertEquals("奇幻、冒險", items.single().tags)
         assertEquals(CycaniSource.SOURCE_ID, items.single().sourceId)
     }
+
+    @Test
+    fun parsesWebsiteSearchResultsWithoutAddingRecommendationSections() {
+        val page = RecommendationParser.parseSearchPage(
+            """
+            {
+              "ok": true,
+              "total": 1,
+              "identifiedAnimeId": "12756",
+              "items": [
+                {
+                  "id": "12756",
+                  "title": "無職轉生 第三季 ～到了異世界就拿出真本事～",
+                  "poster": "/anime/api/image?url=https%3A%2F%2Fimg.example.com%2Fmushoku.jpg",
+                  "currentEpisode": "08 · 週日23:05後",
+                  "year": "2026"
+                }
+              ],
+              "related": [{"id": "other", "title": "相關作品"}],
+              "recommendations": [{"id": "personal", "title": "為你推薦"}]
+            }
+            """.trimIndent(),
+            requestedPage = 1
+        )
+
+        assertEquals(1, page.page)
+        assertEquals(false, page.hasNextPage)
+        assertEquals(listOf("12756"), page.animeList.map { it.id })
+        assertEquals(
+            "無職轉生 第三季 ～到了異世界就拿出真本事～",
+            page.animeList.single().title
+        )
+    }
 }

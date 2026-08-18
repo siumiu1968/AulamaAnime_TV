@@ -6,6 +6,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jing.sakura.SakuraApplication
 import com.jing.sakura.auth.AulamaAuthRepository
+import com.jing.sakura.auth.GuestLibraryStore
+import com.jing.sakura.auth.toAnimeData
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimeDetailPageData
 import com.jing.sakura.data.AnimePlayListEpisode
@@ -17,12 +19,14 @@ import com.jing.sakura.repo.AnimationSource
 import com.jing.sakura.repo.CycaniSource
 import com.jing.sakura.repo.WebPageRepository
 import com.jing.sakura.room.VideoHistoryDao
+import com.jing.sakura.room.VideoHistoryEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -33,7 +37,8 @@ import java.util.concurrent.atomic.AtomicLong
 class HomeViewModel(
     private val repository: WebPageRepository,
     private val authRepository: AulamaAuthRepository,
-    private val videoHistoryDao: VideoHistoryDao
+    private val videoHistoryDao: VideoHistoryDao,
+    private val guestLibraryStore: GuestLibraryStore
 ) : ViewModel() {
 
     private val _homePageData = MutableStateFlow<Resource<HomePageData>>(Resource.Loading)
@@ -104,9 +109,11 @@ class HomeViewModel(
     init {
         loadData(false)
         viewModelScope.launch(Dispatchers.IO) {
-            authRepository.session.collectLatest { session ->
+            combine(authRepository.session, guestLibraryStore.favorites) { session, favorites ->
+                session to favorites
+            }.collectLatest { (session, favorites) ->
                 if (session == null) {
-                    clearSyncedContent()
+                    loadGuestContent(favorites)
                 } else {
                     loadSyncedContent()
                 }
@@ -185,8 +192,13 @@ class HomeViewModel(
     fun getAllSources(): List<AnimationSource> = repository.animationSources
 
     fun refreshSyncedContent() {
-        if (authRepository.session.value == null) return
-        viewModelScope.launch(Dispatchers.IO) { loadSyncedContent() }
+        viewModelScope.launch(Dispatchers.IO) {
+            if (authRepository.session.value == null) {
+                loadGuestContent(guestLibraryStore.favorites.value)
+            } else {
+                loadSyncedContent()
+            }
+        }
     }
 
     fun prefetchHeroDescriptions(items: List<AnimeData>) {
@@ -308,7 +320,9 @@ class HomeViewModel(
                     coverUrl = detail.imageUrl.ifBlank { anime.imageUrl },
                     playIndex = selection.playIndex,
                     playlist = selection.playlist,
-                    sourceId = anime.sourceId
+                    sourceId = anime.sourceId,
+                    playlists = detail.playLists,
+                    playlistIndex = selection.playlistIndex
                 )
                 publishHeroPreview(
                     generation,
@@ -384,6 +398,7 @@ class HomeViewModel(
             ?: detail.playLists.firstOrNull { it.episodeList.isNotEmpty() }
             ?: throw PreviewPreparationException("未有可播放集數")
         return PreviewEpisodeSelection(
+            playlistIndex = detail.playLists.indexOf(defaultPlaylist),
             playlist = defaultPlaylist.episodeList,
             playIndex = 0,
             episode = defaultPlaylist.episodeList.first(),
@@ -398,10 +413,11 @@ class HomeViewModel(
         positionMs: Long?
     ): PreviewEpisodeSelection? {
         if (!episodeId.isNullOrBlank()) {
-            detail.playLists.forEach { playlist ->
+            detail.playLists.forEachIndexed { playlistIndex, playlist ->
                 val playIndex = playlist.episodeList.indexOfFirst { it.episodeId == episodeId }
                 if (playIndex >= 0) {
                     return PreviewEpisodeSelection(
+                        playlistIndex = playlistIndex,
                         playlist = playlist.episodeList,
                         playIndex = playIndex,
                         episode = playlist.episodeList[playIndex],
@@ -420,6 +436,7 @@ class HomeViewModel(
             ?.coerceIn(0, fallbackPlaylist.episodeList.lastIndex)
             ?: return null
         return PreviewEpisodeSelection(
+            playlistIndex = detail.playLists.indexOf(fallbackPlaylist),
             playlist = fallbackPlaylist.episodeList,
             playIndex = fallbackIndex,
             episode = fallbackPlaylist.episodeList[fallbackIndex],
@@ -464,6 +481,21 @@ class HomeViewModel(
             .onFailure { Log.e("tv-library-sync", "載入帳戶收藏及紀錄失敗", it) }
     }
 
+    private fun loadGuestContent(favorites: List<com.jing.sakura.auth.FavoritePayload>) {
+        replaceRemoteHeroPreviewHistory(emptyList())
+        _recommendations.value = emptyList()
+        _todayUpdates.value = emptyList()
+        _theaterItems.value = emptyList()
+        val recent = videoHistoryDao.queryRecentHistory(GUEST_CONTINUE_WATCHING_LIMIT)
+            .map(VideoHistoryEntity::toLocalAnimeData)
+        _syncedRows.value = buildList {
+            if (recent.isNotEmpty()) add(NamedValue("繼續觀看", recent))
+            favorites.map { it.toAnimeData() }
+                .takeIf(List<AnimeData>::isNotEmpty)
+                ?.let { add(NamedValue("我的收藏", it)) }
+        }
+    }
+
     private fun clearSyncedContent() {
         replaceRemoteHeroPreviewHistory(emptyList())
         _recommendations.value = emptyList()
@@ -473,6 +505,7 @@ class HomeViewModel(
     }
 
     private data class PreviewEpisodeSelection(
+        val playlistIndex: Int,
         val playlist: List<AnimePlayListEpisode>,
         val playIndex: Int,
         val episode: AnimePlayListEpisode,
@@ -493,6 +526,16 @@ class HomeViewModel(
 
     private companion object {
         const val HERO_DESCRIPTION_PREFETCH_LIMIT = 12
+        const val GUEST_CONTINUE_WATCHING_LIMIT = 24
     }
 
 }
+
+private fun VideoHistoryEntity.toLocalAnimeData(): AnimeData = AnimeData(
+    id = animeId,
+    url = "",
+    title = animeName,
+    currentEpisode = lastEpisodeName,
+    imageUrl = coverUrl,
+    sourceId = sourceId
+)

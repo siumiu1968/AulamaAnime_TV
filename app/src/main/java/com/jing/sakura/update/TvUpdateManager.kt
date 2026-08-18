@@ -8,6 +8,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.Settings
 import com.jing.sakura.BuildConfig
 import kotlinx.coroutines.CoroutineScope
@@ -69,6 +70,23 @@ internal data class TvDownloadSnapshot(
         }
 }
 
+internal class TvDownloadStallTracker(
+    initialTimeMs: Long,
+    private val timeoutMs: Long
+) {
+    private var highestDownloadedBytes = 0L
+    private var lastProgressTimeMs = initialTimeMs
+
+    fun hasStalled(downloadedBytes: Long, nowMs: Long): Boolean {
+        if (downloadedBytes > highestDownloadedBytes) {
+            highestDownloadedBytes = downloadedBytes
+            lastProgressTimeMs = nowMs
+            return false
+        }
+        return nowMs - lastProgressTimeMs >= timeoutMs
+    }
+}
+
 class TvUpdateManager(private val activity: Activity) {
     private val downloadManager = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
     private val preferences = activity.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -80,14 +98,7 @@ class TvUpdateManager(private val activity: Activity) {
         .followSslRedirects(true)
         .retryOnConnectionFailure(false)
         .build()
-    private val checker = TvUpdateChecker(
-        client = client,
-        primary = TvUpdateEndpoint(PRIMARY_UPDATE_URL, TvUpdateSourceFormat.AULAMA_MANIFEST),
-        fallback = TvUpdateEndpoint(FALLBACK_UPDATE_URL, TvUpdateSourceFormat.GITHUB_RELEASE),
-        currentVersionCode = BuildConfig.VERSION_CODE,
-        currentVersionName = BuildConfig.VERSION_NAME,
-        userAgent = "Aulama-Anime-TV/${BuildConfig.VERSION_NAME}"
-    )
+    private val channelPreferences = TvUpdateChannelPreferences.get(activity)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _downloadState = MutableStateFlow<TvUpdateDownloadState>(TvUpdateDownloadState.Idle)
     val downloadState: StateFlow<TvUpdateDownloadState> = _downloadState.asStateFlow()
@@ -101,7 +112,16 @@ class TvUpdateManager(private val activity: Activity) {
         }
 
     suspend fun checkForUpdateDetailed(): TvUpdateCheckResult = withContext(Dispatchers.IO) {
-        checker.checkForUpdateDetailed()
+        val channel = channelPreferences.channel.value
+        val route = tvUpdateRoute(channel)
+        TvUpdateChecker(
+            client = client,
+            primary = route.primary,
+            fallback = route.fallback,
+            currentVersionCode = BuildConfig.VERSION_CODE,
+            currentVersionName = BuildConfig.VERSION_NAME,
+            userAgent = "Aulama-Anime-TV/${BuildConfig.VERSION_NAME} (${channel.storageValue})"
+        ).checkForUpdateDetailed()
     }
 
     fun download(update: TvUpdate): Long {
@@ -212,6 +232,10 @@ class TvUpdateManager(private val activity: Activity) {
         monitorJob?.cancel()
         monitoredDownloadId = downloadId
         monitorJob = scope.launch {
+            val stallTracker = TvDownloadStallTracker(
+                initialTimeMs = SystemClock.elapsedRealtime(),
+                timeoutMs = DOWNLOAD_STALL_TIMEOUT_MS
+            )
             while (isActive) {
                 val snapshot = querySnapshot(downloadId)
                 if (snapshot == null) {
@@ -223,6 +247,19 @@ class TvUpdateManager(private val activity: Activity) {
                     DownloadManager.STATUS_PENDING,
                     DownloadManager.STATUS_RUNNING,
                     DownloadManager.STATUS_PAUSED -> {
+                        if (
+                            stallTracker.hasStalled(
+                                downloadedBytes = snapshot.downloadedBytes,
+                                nowMs = SystemClock.elapsedRealtime()
+                            )
+                        ) {
+                            downloadManager.remove(downloadId)
+                            clearPendingDownload(downloadId)
+                            _downloadState.value = TvUpdateDownloadState.Failed(
+                                "下載超過 90 秒冇進度，請檢查網絡後重新下載"
+                            )
+                            break
+                        }
                         _downloadState.value = TvUpdateDownloadState.Downloading(
                             downloadedBytes = snapshot.downloadedBytes,
                             totalBytes = snapshot.totalBytes,
@@ -322,14 +359,12 @@ class TvUpdateManager(private val activity: Activity) {
     }
 
     companion object {
-        private const val PRIMARY_UPDATE_URL = "https://aulama.org/anime/tv-update.json"
-        private const val FALLBACK_UPDATE_URL =
-            "https://api.github.com/repos/siumiu1968/AulamaAnime_TV/releases/latest"
         private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
         private const val PREFERENCES = "tv_update"
         private const val PENDING_DOWNLOAD_ID = "pending_download_id"
         private const val PENDING_DOWNLOAD_SHA256 = "pending_download_sha256"
         private const val DOWNLOAD_POLL_INTERVAL_MS = 500L
+        private const val DOWNLOAD_STALL_TIMEOUT_MS = 90_000L
         private val RESUMABLE_DOWNLOAD_STATUSES = setOf(
             DownloadManager.STATUS_PENDING,
             DownloadManager.STATUS_RUNNING,
@@ -339,6 +374,25 @@ class TvUpdateManager(private val activity: Activity) {
     }
 
     private var monitoredDownloadId: Long = -1L
+}
+
+internal data class TvUpdateRoute(
+    val primary: TvUpdateEndpoint,
+    val fallback: TvUpdateEndpoint
+)
+
+internal fun tvUpdateRoute(channel: TvUpdateChannel): TvUpdateRoute {
+    val primaryUrl = when (channel) {
+        TvUpdateChannel.Stable -> "https://aulama.org/anime/tv-update.json"
+        TvUpdateChannel.Preview -> "https://aulama.org/anime/tv-update-beta.json"
+    }
+    return TvUpdateRoute(
+        primary = TvUpdateEndpoint(primaryUrl, TvUpdateSourceFormat.AULAMA_MANIFEST),
+        fallback = TvUpdateEndpoint(
+            "https://api.github.com/repos/siumiu1968/AulamaAnime_TV/releases/latest",
+            TvUpdateSourceFormat.GITHUB_RELEASE
+        )
+    )
 }
 
 internal fun sha256Hex(input: InputStream): String {

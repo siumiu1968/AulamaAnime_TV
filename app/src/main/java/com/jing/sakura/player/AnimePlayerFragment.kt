@@ -92,6 +92,13 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var last4kDowngradeAtMs = 0L
     private var handledEndedEpisodeIndex = -1
     private var nearEndAutoAdvanceSuppressed = false
+    private var pendingSourceFallback: PlaybackSourceFallback? = null
+    private val failedPlaylistIndexes = mutableSetOf<Int>()
+    private var fallbackEpisodeLabel = ""
+
+    private val hideTransientSkipRunnable = Runnable {
+        if (skipUiState.onTransientActionTimeout()) hideSkipUi()
+    }
 
     private val hideHeaderRunnable = Runnable {
         playerHeader?.animate()
@@ -194,11 +201,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
             }
             progressBarManager.hide()
             viewModel.stopSaveHistory()
-            playerHeaderEpisode?.text = getString(R.string.player_retry_hint)
-            showPlayerHeader()
-            requireContext().showLongToast(
-                getString(R.string.player_load_error_template, error.errorCodeName)
-            )
+            showPlaybackFailure(error.errorCodeName)
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -309,16 +312,13 @@ class AnimePlayerFragment : VideoSupportFragment() {
         when (resource) {
             is Resource.Loading -> {
                 progressBarManager.show()
+                glue?.showSourceFallbackAction(false)
                 playerHeaderEpisode?.text = getString(R.string.player_loading_episode)
                 showPlayerHeader()
             }
             is Resource.Error -> {
                 progressBarManager.hide()
-                playerHeaderEpisode?.text = getString(R.string.player_retry_hint)
-                showPlayerHeader()
-                requireContext().showLongToast(
-                    getString(R.string.player_load_error_template, resource.message)
-                )
+                showPlaybackFailure(resource.message)
             }
             is Resource.Success -> loadEpisode(resource.data)
         }
@@ -330,6 +330,12 @@ class AnimePlayerFragment : VideoSupportFragment() {
         handledEndedEpisodeIndex = -1
         nearEndAutoAdvanceSuppressed = false
         clearSkipState()
+        glue?.showSourceFallbackAction(false)
+        pendingSourceFallback = null
+        if (fallbackEpisodeLabel != payload.episode.episode) {
+            fallbackEpisodeLabel = payload.episode.episode
+            failedPlaylistIndexes.clear()
+        }
 
         val dataSourceFactory = OkHttpDataSource.Factory { request ->
             okHttpClient.newCall(request)
@@ -428,6 +434,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
                 renderSkipSegment(localPlayer.currentPosition.coerceAtLeast(0L))
             },
             chooseEpisode = ::openEpisodeChooser,
+            switchSourceFallback = ::confirmSourceFallback,
             playPreviousEpisode = viewModel::playPreviousEpisodeIfExists,
             playNextEpisode = ::advanceToNextEpisode,
             open4kModePicker = ::open4kModePicker
@@ -604,9 +611,46 @@ class AnimePlayerFragment : VideoSupportFragment() {
         }.showNow(parentFragmentManager, TAG_EPISODE_CHOOSER)
     }
 
+    private fun showPlaybackFailure(message: String) {
+        val episodeLabel = viewModel.currentEpisodeLabel()
+        if (fallbackEpisodeLabel != episodeLabel) {
+            fallbackEpisodeLabel = episodeLabel
+            failedPlaylistIndexes.clear()
+        }
+        failedPlaylistIndexes += viewModel.currentPlaylistIndex()
+        val fallback = viewModel.sourceFallbackCandidates(failedPlaylistIndexes).firstOrNull()
+        pendingSourceFallback = fallback
+        glue?.showSourceFallbackAction(fallback != null)
+        playerHeaderEpisode?.text = fallback?.let {
+            getString(
+                R.string.player_source_fallback_hint,
+                it.sourceName.ifBlank { getString(R.string.player_switch_source) }
+            )
+        } ?: getString(R.string.player_retry_hint)
+        showPlayerHeader()
+        glue?.host?.showControlsOverlay(true)
+        requireContext().showLongToast(
+            getString(R.string.player_load_error_template, message)
+        )
+    }
+
+    private fun confirmSourceFallback() {
+        val fallback = pendingSourceFallback ?: return
+        val resumePositionMs = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        snapshotPlaybackPosition()
+        pendingSourceFallback = null
+        glue?.showSourceFallbackAction(false)
+        if (viewModel.switchToSourceFallback(fallback, resumePositionMs)) {
+            progressBarManager.show()
+            playerHeaderEpisode?.text = getString(R.string.player_loading_episode)
+            showPlayerHeader()
+        }
+    }
+
     fun handlePlaybackKeyEvent(event: KeyEvent): Boolean {
         updateControlsAutoHideFor(event)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            wakeTransientSkipForRemoteInteraction()
             cancelAutoNextForRemoteInteraction()
             if (!isCenterKey(event.keyCode)) showPlayerHeader()
         }
@@ -890,6 +934,25 @@ class AnimePlayerFragment : VideoSupportFragment() {
         }
     }
 
+    private fun wakeTransientSkipForRemoteInteraction() {
+        if (!skipUiState.revealTransientAction()) return
+        renderSkipSegment(player?.currentPosition?.coerceAtLeast(0L) ?: 0L)
+        scheduleTransientSkipAutoHide()
+    }
+
+    private fun scheduleTransientSkipAutoHide() {
+        val root = view ?: return
+        root.removeCallbacks(hideTransientSkipRunnable)
+        root.postDelayed(
+            hideTransientSkipRunnable,
+            PlaybackSkipUiStateMachine.TRANSIENT_SKIP_VISIBLE_MS
+        )
+    }
+
+    private fun cancelTransientSkipAutoHide() {
+        view?.removeCallbacks(hideTransientSkipRunnable)
+    }
+
     private fun animateSkipActionFocus(target: View, hasFocus: Boolean) {
         target.isSelected = hasFocus
         target.animate().cancel()
@@ -993,9 +1056,11 @@ class AnimePlayerFragment : VideoSupportFragment() {
             }
             if (player?.isPlaying != true) button.pauseCountdown()
         }
+        if (decision.shouldScheduleAutoHide) scheduleTransientSkipAutoHide()
     }
 
     private fun hideSkipUi() {
+        cancelTransientSkipAutoHide()
         cancelScheduledSkipUiExit()
         val shouldRestoreTransport = skipSegmentButton?.hasFocus() == true ||
             continueOutroButton?.hasFocus() == true
@@ -1021,6 +1086,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun clearSkipState() {
+        cancelTransientSkipAutoHide()
         cancelScheduledSkipUiExit()
         skipUiState.reset()
         activePlaybackSkip = null

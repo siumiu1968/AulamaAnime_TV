@@ -11,11 +11,13 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 class AuthViewModel(
-    private val repository: AulamaAuthRepository
+    private val repository: AulamaAuthRepository,
+    private val guestModeStorage: GuestModeStorage
 ) : ViewModel() {
     private val _state = MutableStateFlow<AuthUiState>(AuthUiState.Checking)
     val state: StateFlow<AuthUiState> = _state
     private var loginJob: Job? = null
+    private var returnToGuestAfterLogin = false
 
     init {
         viewModelScope.launch {
@@ -29,6 +31,7 @@ class AuthViewModel(
     }
 
     fun startLogin() {
+        returnToGuestAfterLogin = _state.value is AuthUiState.Guest || guestModeStorage.isEnabled()
         beginLogin()
     }
 
@@ -39,13 +42,27 @@ class AuthViewModel(
     fun cancelLogin() {
         loginJob?.cancel()
         loginJob = null
-        _state.value = AuthUiState.Welcome
+        _state.value = if (returnToGuestAfterLogin && guestModeStorage.isEnabled()) {
+            AuthUiState.Guest
+        } else {
+            AuthUiState.Welcome
+        }
+    }
+
+    fun continueAsGuest() {
+        loginJob?.cancel()
+        loginJob = null
+        returnToGuestAfterLogin = false
+        guestModeStorage.setEnabled(true)
+        _state.value = AuthUiState.Guest
     }
 
     fun logout() {
         loginJob?.cancel()
         loginJob = viewModelScope.launch {
             _state.value = AuthUiState.Checking
+            guestModeStorage.setEnabled(false)
+            returnToGuestAfterLogin = false
             repository.logout()
             _state.value = AuthUiState.Welcome
         }
@@ -57,31 +74,37 @@ class AuthViewModel(
             val session = repository.session.value
             if (session == null || session.isExpired()) {
                 repository.clearSession()
-                showWelcomeAfterBrandMoment(startedAtMs)
+                showEntryAfterBrandMoment(startedAtMs)
                 return@launch
             }
             when (val validation = repository.validateAccount(session)) {
                 is AccountValidationResult.Valid -> {
+                    guestModeStorage.setEnabled(false)
                     _state.value = AuthUiState.Authenticated(validation.account)
                 }
                 AccountValidationResult.Unauthorized -> {
                     repository.clearSession()
-                    showWelcomeAfterBrandMoment(startedAtMs)
+                    showEntryAfterBrandMoment(startedAtMs)
                 }
                 AccountValidationResult.Unavailable -> {
+                    guestModeStorage.setEnabled(false)
                     _state.value = AuthUiState.Authenticated(session.account)
                 }
             }
         }
     }
 
-    private suspend fun showWelcomeAfterBrandMoment(startedAtMs: Long) {
+    private suspend fun showEntryAfterBrandMoment(startedAtMs: Long) {
         val remainingMs = AuthEntryPolicy.remainingBrandDisplayMs(
             startedAtMs = startedAtMs,
             nowMs = System.currentTimeMillis()
         )
         if (remainingMs > 0L) delay(remainingMs)
-        _state.value = AuthUiState.Welcome
+        _state.value = if (guestModeStorage.isEnabled()) {
+            AuthUiState.Guest
+        } else {
+            AuthUiState.Welcome
+        }
     }
 
     private fun beginLogin() {
@@ -146,6 +169,8 @@ class AuthViewModel(
                 }
                 is DeviceTokenPollResult.Authorized -> {
                     repository.authorize(result, now)
+                    guestModeStorage.setEnabled(false)
+                    returnToGuestAfterLogin = false
                     _state.value = AuthUiState.Authenticated(result.account)
                     return
                 }

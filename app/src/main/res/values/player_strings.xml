@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="player_episode_picker_title">選擇集數</string>
+    <string name="player_switch_source">切換線路</string>
+    <string name="player_source_fallback_hint">目前線路播放失敗，可切換至 %1$s</string>
     <string name="player_4k_picker_title">畫質增強</string>
     <string name="player_4k_mode_off">畫質・關閉</string>
     <string name="player_4k_mode_resource_saver">畫質・省資源</string>

@@ -4,4 +4,4 @@ data class AnimePlayList(
     val name:String,
     val episodeList:List<AnimePlayListEpisode>,
     val defaultPlayList: Boolean = false
-)
+) : java.io.Serializable

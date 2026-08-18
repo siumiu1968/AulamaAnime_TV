@@ -142,7 +142,9 @@ object RemotePlaybackCoordinator {
             resumePositionMs = command.currentTimeSeconds
                 ?.times(1_000.0)
                 ?.roundToLong()
-                ?: NavigateToPlayerArg.NO_REMOTE_RESUME_POSITION
+                ?: NavigateToPlayerArg.NO_REMOTE_RESUME_POSITION,
+            playlists = detail.playLists,
+            playlistIndex = playlistIndex
         )
     }
 

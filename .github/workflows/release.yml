@@ -44,10 +44,16 @@ jobs:
           grep -qi 'f75ce15910009cf9735dfb2d32fbc586c01f52d0cacb73d51f1e2801a33b6dce' /tmp/apk-signature.txt
           mv "$APK" "aulama-anime-tv-${{ github.ref_name }}.apk"
       - name: Release
+        shell: bash
         run: |
+          RELEASE_FLAGS=()
+          if [[ "${{ github.ref_name }}" =~ -(alpha|beta|rc)(\.|-|$) ]]; then
+            RELEASE_FLAGS+=(--prerelease)
+          fi
           gh release create "${{ github.ref_name }}" \
             "aulama-anime-tv-${{ github.ref_name }}.apk" \
             --title "Aulama Anime TV ${{ github.ref_name }}" \
-            --generate-notes
+            --generate-notes \
+            "${RELEASE_FLAGS[@]}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

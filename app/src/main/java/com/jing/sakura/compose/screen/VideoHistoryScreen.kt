@@ -95,6 +95,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 @Composable
 fun VideoHistoryScreen(viewModel: HistoryViewModel) {
     val library by viewModel.library.collectAsState()
+    val guestMode by viewModel.guestMode.collectAsState()
     val localHistory = viewModel.pager.collectAsLazyPagingItems()
     val localHistoryItems = localHistory.itemSnapshotList.items
     val localHistoryByAnime = remember(localHistoryItems) {
@@ -129,7 +130,10 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
     )
 
     val showInitialLoading = loading && !hasContent
-    LoadingOverlay(visible = showInitialLoading, text = "同步片庫")
+    LoadingOverlay(
+        visible = showInitialLoading,
+        text = if (guestMode) "載入本機片庫" else "同步片庫"
+    )
     if (showInitialLoading) {
         return
     }
@@ -152,7 +156,11 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
             item(key = "library-header") {
                 AulamaPageHeader(
                     title = "我的片庫",
-                    subtitle = "雲端觀看紀錄與收藏"
+                    subtitle = if (guestMode) {
+                        "本機觀看紀錄與收藏 · 登入後可跨裝置同步"
+                    } else {
+                        "雲端觀看紀錄與收藏"
+                    }
                 ) {
                     LibraryRefreshButton(
                         modifier = if (hasContent) {

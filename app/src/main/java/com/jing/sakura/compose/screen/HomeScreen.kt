@@ -27,6 +27,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -35,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
@@ -53,6 +55,7 @@ import androidx.compose.material.icons.filled.ChangeCircle
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
@@ -70,12 +73,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -152,6 +159,8 @@ import com.jing.sakura.home.shouldResumeHeroRotation
 import com.jing.sakura.home.shouldStartPreview
 import com.jing.sakura.search.SearchActivity
 import com.jing.sakura.timeline.UpdateTimelineActivity
+import com.jing.sakura.update.TvUpdateChannel
+import com.jing.sakura.update.TvUpdateChannelPreferences
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
@@ -167,9 +176,10 @@ import kotlin.random.Random
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
-    account: AulamaAccount,
+    account: AulamaAccount?,
     isCheckingForUpdate: Boolean,
     onCheckForUpdate: () -> Unit,
+    onLogin: () -> Unit,
     onLogout: () -> Unit
 ) {
     val context = LocalContext.current
@@ -177,6 +187,8 @@ fun HomeScreen(
     val language by languagePreferences.language.collectAsState()
     val previewPreferences = remember(context) { TvPreviewPreferences.get(context) }
     val previewEnabled by previewPreferences.previewEnabled.collectAsState()
+    val updateChannelPreferences = remember(context) { TvUpdateChannelPreferences.get(context) }
+    val updateChannel by updateChannelPreferences.channel.collectAsState()
     val homePageDataResource = viewModel.homePageData.collectAsState().value
     val recommendations = viewModel.recommendations.collectAsState().value
     val syncedRows = viewModel.syncedRows.collectAsState().value
@@ -348,7 +360,14 @@ fun HomeScreen(
         }
     }
     val extractedHeroAccent = rememberArtworkAccent(hero?.imageUrl.orEmpty())
-    val heroAccent = extractedHeroAccent
+    val heroAccent by animateColorAsState(
+        targetValue = extractedHeroAccent,
+        animationSpec = tween(
+            durationMillis = if (reducedMotion) 0 else 620,
+            easing = FastOutSlowInEasing
+        ),
+        label = "home-hero-accent"
+    )
     val topHomeFocus = remember { FocusRequester() }
     val heroActionFocus = remember { FocusRequester() }
     val heroHeight by animateDpAsState(
@@ -826,12 +845,18 @@ fun HomeScreen(
             account = account,
             language = language,
             previewEnabled = previewEnabled,
+            updateChannel = updateChannel,
             isCheckingForUpdate = isCheckingForUpdate,
             currentVersion = com.jing.sakura.BuildConfig.VERSION_NAME,
             onLanguageChange = languagePreferences::setLanguage,
             onPreviewEnabledChange = previewPreferences::setPreviewEnabled,
+            onUpdateChannelChange = updateChannelPreferences::setChannel,
             onCheckForUpdate = onCheckForUpdate,
             onDismiss = { showAccountDialog = false },
+            onLogin = {
+                showAccountDialog = false
+                onLogin()
+            },
             onLogout = {
                 showAccountDialog = false
                 onLogout()
@@ -860,18 +885,11 @@ private fun CinematicBackdrop(
     }
     var readyBackdrop by remember { mutableStateOf<HomeBackdropState?>(null) }
     val currentTargetKey by rememberUpdatedState(targetBackdrop?.key)
-    val animatedAccent by animateColorAsState(
-        targetValue = accent,
-        animationSpec = tween(
-            durationMillis = if (reducedMotion) 0 else 360,
-            easing = FastOutSlowInEasing
-        ),
-        label = "home-backdrop-accent"
-    )
+    val transitionDurationMillis = if (reducedMotion) 0 else 620
     val artworkAlpha = when {
         previewActive -> 0f
-        revealArtwork -> 0.92f
-        else -> 0.76f
+        revealArtwork -> 0.96f
+        else -> 0.92f
     }
     Box(modifier = Modifier.fillMaxSize()) {
         targetBackdrop
@@ -886,7 +904,9 @@ private fun CinematicBackdrop(
                     model = pendingRequest,
                     contentDescription = null,
                     onSuccess = {
-                        if (currentTargetKey == pending.key) readyBackdrop = pending
+                        if (currentTargetKey == pending.key) {
+                            readyBackdrop = pending
+                        }
                     },
                     modifier = Modifier
                         .size(1.dp)
@@ -898,13 +918,13 @@ private fun CinematicBackdrop(
             transitionSpec = {
                 fadeIn(
                     tween(
-                        durationMillis = if (reducedMotion) 0 else 420,
+                        durationMillis = transitionDurationMillis,
                         easing = FastOutSlowInEasing
                     )
                 ).togetherWith(
                     fadeOut(
                         tween(
-                            durationMillis = if (reducedMotion) 0 else 300,
+                            durationMillis = transitionDurationMillis,
                             easing = FastOutSlowInEasing
                         )
                     )
@@ -918,31 +938,81 @@ private fun CinematicBackdrop(
                 widthPx = 960,
                 heightPx = 1360
             )
-            AsyncImage(
-                model = backdropRequest,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                alignment = Alignment.TopEnd,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        alpha = artworkAlpha
-                        scaleX = 1.42f
-                        scaleY = 1.42f
-                        transformOrigin = TransformOrigin(1f, 0f)
-                    }
-            )
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val artworkWidth = minOf(maxWidth * 0.52f, maxHeight * (2f / 3f))
+                val artworkModifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .fillMaxHeight()
+                    .width(artworkWidth)
+                    .aspectRatio(2f / 3f, matchHeightConstraintsFirst = true)
+
+                // The alpha feather is local to the poster, not the full screen.
+                // This removes the hard edge without a full-height RenderEffect,
+                // which is too expensive on older Android TV hardware.
+                AsyncImage(
+                    model = backdropRequest,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    alignment = Alignment.TopEnd,
+                    modifier = artworkModifier
+                        .graphicsLayer {
+                            alpha = artworkAlpha
+                            compositingStrategy = CompositingStrategy.Offscreen
+                        }
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    colorStops = arrayOf(
+                                        0f to Color.Transparent,
+                                        0.025f to Color.Black.copy(alpha = 0.06f),
+                                        0.05f to Color.Black.copy(alpha = 0.22f),
+                                        0.08f to Color.Black.copy(alpha = 0.58f),
+                                        0.115f to Color.Black.copy(alpha = 0.86f),
+                                        0.15f to Color.Black,
+                                        1f to Color.Black
+                                    )
+                                ),
+                                blendMode = BlendMode.DstIn
+                            )
+                        }
+                )
+            }
         }
     }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(animatedAccent.copy(alpha = 0.20f), Color.Transparent),
-                    radius = 820f
+            .drawBehind {
+                // A broad low-opacity wash carries the poster palette into the
+                // copy area without the hard edge or GPU cost of live blur.
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        colorStops = arrayOf(
+                            0f to Color.Transparent,
+                            0.18f to accent.copy(alpha = 0.012f),
+                            0.38f to accent.copy(alpha = 0.032f),
+                            0.58f to accent.copy(alpha = 0.065f),
+                            0.76f to accent.copy(alpha = 0.095f),
+                            0.90f to accent.copy(alpha = 0.065f),
+                            1f to accent.copy(alpha = 0.02f)
+                        )
+                    )
                 )
-            )
+                drawRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            accent.copy(alpha = 0.12f),
+                            accent.copy(alpha = 0.092f),
+                            accent.copy(alpha = 0.058f),
+                            accent.copy(alpha = 0.026f),
+                            Color.Transparent
+                        ),
+                        center = Offset(size.width * 0.76f, size.height * 0.46f),
+                        radius = size.width * 0.80f
+                    )
+                )
+            }
     )
     Box(
         modifier = Modifier
@@ -957,12 +1027,13 @@ private fun CinematicBackdrop(
                     } else {
                         arrayOf(
                             0f to AulamaTvColors.Background,
-                            0.42f to AulamaTvColors.Background,
-                            0.52f to AulamaTvColors.Background.copy(alpha = 0.96f),
-                            0.60f to AulamaTvColors.Background.copy(alpha = 0.76f),
-                            0.69f to AulamaTvColors.Background.copy(alpha = 0.42f),
-                            0.78f to AulamaTvColors.Background.copy(alpha = 0.14f),
-                            0.88f to AulamaTvColors.Background.copy(alpha = 0.03f),
+                            0.46f to AulamaTvColors.Background,
+                            0.51f to AulamaTvColors.Background.copy(alpha = 0.94f),
+                            0.57f to AulamaTvColors.Background.copy(alpha = 0.68f),
+                            0.63f to AulamaTvColors.Background.copy(alpha = 0.34f),
+                            0.69f to AulamaTvColors.Background.copy(alpha = 0.12f),
+                            0.74f to AulamaTvColors.Background.copy(alpha = 0.03f),
+                            0.78f to Color.Transparent,
                             1f to Color.Transparent
                         )
                     }
@@ -972,7 +1043,7 @@ private fun CinematicBackdrop(
                 Brush.verticalGradient(
                     colorStops = arrayOf(
                         0f to AulamaTvColors.Background.copy(
-                            alpha = if (previewActive) 0.18f else 0.32f
+                            alpha = if (previewActive) 0.18f else 0.16f
                         ),
                         0.58f to Color.Transparent,
                         1f to AulamaTvColors.Background.copy(
@@ -1649,7 +1720,7 @@ private fun HomeTopBar(
     chromeAlpha: Float,
     refreshing: Boolean,
     reducedMotion: Boolean,
-    account: AulamaAccount,
+    account: AulamaAccount?,
     homeFocusRequester: FocusRequester,
     onAnyItemFocused: () -> Unit,
     showSource: Boolean,
@@ -1675,15 +1746,6 @@ private fun HomeTopBar(
         modifier = modifier
             .fillMaxWidth()
             .height(72.dp)
-            .background(
-                Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0f to AulamaTvColors.Background.copy(alpha = chromeAlpha),
-                        0.82f to AulamaTvColors.Background.copy(alpha = chromeAlpha),
-                        1f to Color.Transparent
-                    )
-                )
-            )
             .padding(horizontal = 34.dp, vertical = 8.dp)
     ) {
         Row(
@@ -1691,17 +1753,16 @@ private fun HomeTopBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier.width(170.dp),
+                modifier = Modifier.width(98.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
                 AulamaAnimeBrandMark(height = 40.dp)
             }
+            Spacer(Modifier.width(16.dp))
 
             Row(
                 modifier = Modifier
-                    .weight(1f)
                     .graphicsLayer { alpha = chromeAlpha },
-                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 navItems.forEachIndexed { index, item ->
@@ -1717,11 +1778,13 @@ private fun HomeTopBar(
                 }
             }
 
+            Spacer(Modifier.weight(1f))
+
             Row(
                 modifier = Modifier
-                    .width(220.dp)
+                    .width(148.dp)
                     .graphicsLayer { alpha = chromeAlpha },
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TopIconButton(
@@ -1793,7 +1856,7 @@ private fun TopNavButton(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun TopAccountButton(
-    account: AulamaAccount,
+    account: AulamaAccount?,
     onClick: () -> Unit,
     onFocused: () -> Unit
 ) {
@@ -1816,7 +1879,15 @@ private fun TopAccountButton(
             focusedBorder = Border(BorderStroke(2.dp, AulamaTvColors.FocusBorder))
         )
     ) {
-        AulamaAccountAvatar(account = account, modifier = Modifier.size(38.dp))
+        if (account != null) {
+            AulamaAccountAvatar(account = account, modifier = Modifier.size(38.dp))
+        } else {
+            Icon(
+                imageVector = Icons.Default.Person,
+                contentDescription = localizedText("遊客模式"),
+                modifier = Modifier.size(23.dp)
+            )
+        }
     }
 }
 

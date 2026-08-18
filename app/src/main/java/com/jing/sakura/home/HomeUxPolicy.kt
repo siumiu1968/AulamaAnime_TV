@@ -6,6 +6,8 @@ import kotlin.random.Random
 internal const val HERO_ROTATION_INTERVAL_MS = 8_000L
 internal const val HERO_MANUAL_RESUME_DELAY_MS = 12_000L
 internal const val HOME_ROW_LOOP_MIN_ITEMS = 6
+internal const val WELCOME_CONTENT_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1_000L
+private const val WELCOME_RECENT_ROW_LIMIT = 8
 
 internal fun nextHeroIndex(currentIndex: Int, delta: Int, itemCount: Int): Int {
     if (itemCount <= 0) return 0
@@ -86,22 +88,34 @@ internal fun homePosterPrefetchUrls(
 internal fun welcomeBackdropAnime(
     rows: List<List<AnimeData>>,
     randomSeed: Int,
-    maxItems: Int = 5,
-    candidateLimit: Int = 24
+    maxItems: Int = 6,
+    candidateLimit: Int = 40
 ): List<AnimeData> {
     if (maxItems <= 0 || candidateLimit <= 0) return emptyList()
     val candidates = ArrayList<AnimeData>(candidateLimit)
     val seenImageUrls = HashSet<String>(candidateLimit)
-    rowLoop@ for (row in rows) {
-        for (anime in row) {
-            val imageUrl = anime.imageUrl.trim()
-            if (imageUrl.isBlank() || !seenImageUrls.add(imageUrl)) continue
-            candidates += anime.copy(imageUrl = imageUrl)
-            if (candidates.size >= candidateLimit) break@rowLoop
+
+    fun collectRoundRobin(sourceRows: List<List<AnimeData>>) {
+        val maxRowSize = sourceRows.maxOfOrNull(List<AnimeData>::size) ?: return
+        for (itemIndex in 0 until maxRowSize) {
+            for (row in sourceRows) {
+                val anime = row.getOrNull(itemIndex) ?: continue
+                val imageUrl = anime.imageUrl.trim()
+                if (imageUrl.isBlank() || !seenImageUrls.add(imageUrl)) continue
+                candidates += anime.copy(imageUrl = imageUrl)
+                if (candidates.size >= candidateLimit) return
+            }
         }
     }
+
+    val populatedRows = rows.filter(List<AnimeData>::isNotEmpty)
+    collectRoundRobin(populatedRows.take(WELCOME_RECENT_ROW_LIMIT))
+    if (candidates.size < candidateLimit) collectRoundRobin(populatedRows)
     candidates.shuffle(Random(randomSeed))
     return candidates.take(maxItems)
 }
+
+internal fun welcomeContentSeed(nowMillis: Long): Int =
+    (nowMillis / WELCOME_CONTENT_REFRESH_INTERVAL_MS).hashCode()
 
 private fun Int.floorMod(divisor: Int): Int = ((this % divisor) + divisor) % divisor

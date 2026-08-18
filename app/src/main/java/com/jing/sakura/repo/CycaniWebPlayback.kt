@@ -14,6 +14,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import java.util.Locale
 
@@ -308,6 +309,32 @@ internal data class CycaniWebArtworkIndex(
     val byTitleYear: Map<String, String>,
     val byTitle: Map<String, String>
 )
+
+internal enum class CycaniPlaybackResolutionPath {
+    WEB_SECTION,
+    WEB_MATCH,
+    DIRECT,
+    UNAVAILABLE
+}
+
+internal object CycaniPlaybackResolutionPolicy {
+    fun select(
+        directUrl: String,
+        webSectionId: String,
+        hasWebRequest: Boolean
+    ): CycaniPlaybackResolutionPath = when {
+        webSectionId.isNotBlank() -> CycaniPlaybackResolutionPath.WEB_SECTION
+        hasWebRequest -> CycaniPlaybackResolutionPath.WEB_MATCH
+        directUrl.isNotBlank() -> CycaniPlaybackResolutionPath.DIRECT
+        else -> CycaniPlaybackResolutionPath.UNAVAILABLE
+    }
+}
+
+internal fun isRetiredCycaniOldPcUrl(value: String): Boolean {
+    val url = value.trim().toHttpUrlOrNull() ?: return false
+    return url.host.equals("vhub.babel.gold", ignoreCase = true) &&
+        url.encodedPath.trimEnd('/') == "/oldpc"
+}
 
 internal object CycaniWebPlaybackPolicy {
     fun buildArtworkIndex(candidates: List<JsonObject>): CycaniWebArtworkIndex {
