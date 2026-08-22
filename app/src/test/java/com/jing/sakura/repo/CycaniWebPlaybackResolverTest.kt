@@ -74,6 +74,49 @@ class CycaniWebPlaybackResolverTest {
         assertEquals(0, server.requestCount)
     }
 
+    @Test
+    fun vhubHlsUsesTheManifestBridgeForTheSameSection() = runBlocking {
+        var bridgedSectionId = ""
+        resolver = CycaniWebPlaybackResolver(
+            client = OkHttpClient(),
+            apiBaseUrl = server.url("/api/").toString(),
+            authenticatedPlayUrlResolver = {
+                "https://vhub.babel.gold/hls/episode-19/index.m3u8?token=signed"
+            },
+            manifestBridgeUrlResolver = { sectionId ->
+                bridgedSectionId = sectionId
+                "https://aulama.org/anime/api/cycani/sections/$sectionId/manifest.m3u8"
+            }
+        )
+
+        val url = resolver.resolveSection("51796")
+
+        assertEquals("51796", bridgedSectionId)
+        assertEquals(
+            "https://aulama.org/anime/api/cycani/sections/51796/manifest.m3u8",
+            url
+        )
+    }
+
+    @Test
+    fun nonVhubMediaRemainsDirect() = runBlocking {
+        resolver = CycaniWebPlaybackResolver(
+            client = OkHttpClient(),
+            apiBaseUrl = server.url("/api/").toString(),
+            authenticatedPlayUrlResolver = {
+                "https://media.example/episode-19.m3u8?token=signed"
+            },
+            manifestBridgeUrlResolver = {
+                "https://aulama.org/anime/api/cycani/sections/$it/manifest.m3u8"
+            }
+        )
+
+        assertEquals(
+            "https://media.example/episode-19.m3u8?token=signed",
+            resolver.resolveSection("51796")
+        )
+    }
+
     private fun enqueue(body: String) {
         server.enqueue(
             MockResponse()

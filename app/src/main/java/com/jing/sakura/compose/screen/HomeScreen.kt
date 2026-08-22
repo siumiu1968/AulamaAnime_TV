@@ -518,7 +518,7 @@ fun HomeScreen(
             focusedHero = event.video
         }
     }
-    LaunchedEffect(hero?.id) {
+    LaunchedEffect(hero?.sourceId, hero?.id) {
         val selected = hero ?: return@LaunchedEffect
         viewModel.loadHeroDescription(selected)
     }
@@ -563,6 +563,7 @@ fun HomeScreen(
         }
     }
     LaunchedEffect(
+        hero?.sourceId,
         hero?.id,
         focusedRowIndex,
         interactionEvents,

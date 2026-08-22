@@ -342,40 +342,41 @@ class HomeViewModel(
         _heroPreviewState.value = HeroPreviewState.Loading(requestKey)
         heroPreviewJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                val detail = repository.fetchDetailPage(anime.id, anime.sourceId)
-                val selection = selectPreviewEpisode(detail, anime.id, anime.sourceId)
-                val response = repository.fetchVideoUrl(
-                    episodeId = selection.episode.episodeId,
-                    sourceId = anime.sourceId,
-                    animeId = anime.id
-                )
-                val video = when (response) {
-                    is Resource.Success -> response.data
-                    is Resource.Error -> throw PreviewPreparationException(response.message)
-                    is Resource.Loading -> throw PreviewPreparationException("預覽影片尚未準備好")
+                val spec = preparePreviewWithRetry {
+                    val detail = repository.fetchDetailPage(anime.id, anime.sourceId)
+                    val selection = selectPreviewEpisode(detail, anime.id, anime.sourceId)
+                    val response = repository.fetchVideoUrl(
+                        episodeId = selection.episode.episodeId,
+                        sourceId = anime.sourceId,
+                        animeId = anime.id
+                    )
+                    val video = when (response) {
+                        is Resource.Success -> response.data
+                        is Resource.Error -> throw PreviewPreparationException(response.message)
+                        is Resource.Loading -> throw PreviewPreparationException("預覽影片尚未準備好")
+                    }
+                    val playerArg = NavigateToPlayerArg(
+                        animeName = detail.animeName.ifBlank { anime.title },
+                        animeId = anime.id,
+                        coverUrl = detail.imageUrl.ifBlank { anime.imageUrl },
+                        playIndex = selection.playIndex,
+                        playlist = selection.playlist,
+                        sourceId = anime.sourceId,
+                        playlists = detail.playLists,
+                        playlistIndex = selection.playlistIndex
+                    )
+                    HeroPreviewSpec(
+                        key = "$requestKey:${selection.episode.episodeId}:$generation",
+                        url = video.url,
+                        headers = video.headers,
+                        startPositionMs = selection.startPositionMs,
+                        posterUrl = playerArg.coverUrl,
+                        navigateToPlayerArg = playerArg
+                    )
                 }
-                val playerArg = NavigateToPlayerArg(
-                    animeName = detail.animeName.ifBlank { anime.title },
-                    animeId = anime.id,
-                    coverUrl = detail.imageUrl.ifBlank { anime.imageUrl },
-                    playIndex = selection.playIndex,
-                    playlist = selection.playlist,
-                    sourceId = anime.sourceId,
-                    playlists = detail.playLists,
-                    playlistIndex = selection.playlistIndex
-                )
                 publishHeroPreview(
                     generation,
-                    HeroPreviewState.Ready(
-                        HeroPreviewSpec(
-                            key = "$requestKey:${selection.episode.episodeId}:$generation",
-                            url = video.url,
-                            headers = video.headers,
-                            startPositionMs = selection.startPositionMs,
-                            posterUrl = playerArg.coverUrl,
-                            navigateToPlayerArg = playerArg
-                        )
-                    )
+                    HeroPreviewState.Ready(spec)
                 )
             } catch (exception: Exception) {
                 if (exception is CancellationException) throw exception

@@ -37,6 +37,7 @@ import coil.compose.AsyncImage
 import com.jing.sakura.R
 import com.jing.sakura.SakuraApplication
 import com.jing.sakura.home.HeroPreviewSpec
+import com.jing.sakura.home.shouldRetryPreviewLoad
 import okhttp3.OkHttpClient
 import org.koin.androidx.compose.get
 import org.koin.core.qualifier.qualifier
@@ -132,6 +133,8 @@ private class HeroPreviewController(
     private var loadedKey: String? = null
     private var started = false
     private var firstFrameDispatched = false
+    private var playbackRetryCount = 0
+    private var loadGeneration = 0L
 
     private val playerListener = object : Player.Listener {
         override fun onRenderedFirstFrame() {
@@ -147,6 +150,25 @@ private class HeroPreviewController(
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            val failedKey = loadedKey
+            val retrySpec = pendingSpec
+            if (shouldRetryPreviewLoad(
+                    failedKey = failedKey,
+                    currentKey = retrySpec?.key,
+                    retryCount = playbackRetryCount
+                )
+            ) {
+                playbackRetryCount += 1
+                loadedKey = null
+                firstFrameDispatched = false
+                val retryGeneration = loadGeneration
+                playerView?.postDelayed({
+                    if (started && loadGeneration == retryGeneration && pendingSpec?.key == failedKey) {
+                        retrySpec?.let { loadIfNeeded(it, resetRetryCount = false) }
+                    }
+                }, PLAYBACK_RETRY_DELAY_MS)
+                return
+            }
             onError(error.message ?: error.errorCodeName)
         }
     }
@@ -193,6 +215,8 @@ private class HeroPreviewController(
         started = false
         loadedKey = null
         firstFrameDispatched = false
+        playbackRetryCount = 0
+        loadGeneration += 1
         val currentPlayer = player ?: return
         player = null
         playerView?.player = null
@@ -236,10 +260,14 @@ private class HeroPreviewController(
             .also { player = it }
     }
 
-    private fun loadIfNeeded(spec: HeroPreviewSpec) {
+    private fun loadIfNeeded(spec: HeroPreviewSpec, resetRetryCount: Boolean = true) {
         if (loadedKey == spec.key) return
         loadedKey = spec.key
         firstFrameDispatched = false
+        if (resetRetryCount) {
+            playbackRetryCount = 0
+            loadGeneration += 1
+        }
         val dataSourceFactory = OkHttpDataSource.Factory { request ->
             okHttpClient.newCall(request)
         }.apply {
@@ -269,5 +297,6 @@ private class HeroPreviewController(
         const val MAX_BUFFER_MS = 5_000
         const val BUFFER_FOR_PLAYBACK_MS = 400
         const val BUFFER_AFTER_REBUFFER_MS = 800
+        const val PLAYBACK_RETRY_DELAY_MS = 450L
     }
 }

@@ -16,16 +16,31 @@ class PlaybackSkipUiStateMachineTest {
         targetMs = 90_000L,
         advancesEpisode = true
     )
+    private val skipOutro = ActivePlaybackSkip(
+        type = ActivePlaybackSkip.Type.OUTRO,
+        targetMs = 90_000L,
+        advancesEpisode = false
+    )
 
     @Test
-    fun naturalIntroEntryShowsForFiveSecondsWithoutTakingTransportFocus() {
+    fun naturalIntroEntryFocusesSkipActionForFiveSeconds() {
         val decision = PlaybackSkipUiStateMachine().update(intro)
 
         assertTrue(decision.isVisible)
-        assertFalse(decision.shouldRequestInitialFocus)
+        assertTrue(decision.shouldRequestInitialFocus)
         assertFalse(decision.shouldStartCountdown)
         assertTrue(decision.shouldScheduleAutoHide)
         assertEquals(5_000L, PlaybackSkipUiStateMachine.TRANSIENT_SKIP_VISIBLE_MS)
+    }
+
+    @Test
+    fun naturalNonAdvancingOutroEntryFocusesSkipActionWithoutCountdown() {
+        val decision = PlaybackSkipUiStateMachine().update(skipOutro)
+
+        assertTrue(decision.isVisible)
+        assertTrue(decision.shouldRequestInitialFocus)
+        assertFalse(decision.shouldStartCountdown)
+        assertTrue(decision.shouldScheduleAutoHide)
     }
 
     @Test

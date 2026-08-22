@@ -1069,7 +1069,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
         val active = PlaybackSkipPolicy.activeSkip(
             viewModel.playbackSegments.value,
             positionMs,
-            viewModel.hasNextEpisode()
+            viewModel.hasNextEpisode(),
+            durationMs
         )
         if (active == null) {
             scheduleSkipUiExit()

@@ -6,6 +6,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.AulamaPlaybackProvider
+import com.jing.sakura.auth.buildCycaniManifestBridgeUrl
 import com.jing.sakura.auth.parseCycaniPlaybackUrl
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimeDetailPageData
@@ -53,6 +54,11 @@ class CycaniSource(
                         null
                     }
                     ?: error("Cycani playback URL is unavailable")
+            },
+            manifestBridgeUrlResolver = { sectionId ->
+                authRepository?.cycaniManifestBridgeUrl(sectionId)
+                    ?: buildCycaniManifestBridgeUrl(AULAMA_API_BASE_URL, sectionId)
+                    ?: ""
             }
         )
     }
@@ -231,7 +237,9 @@ class CycaniSource(
         )
         val playbackProviders = async {
             try {
-                authRepository?.fetchPlaybackProviders(animeId).orEmpty()
+                retryPlaybackProvidersOnce(PLAYBACK_PROVIDER_RETRY_DELAY_MS) {
+                    authRepository?.fetchPlaybackProviders(animeId).orEmpty()
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
@@ -1028,6 +1036,7 @@ class CycaniSource(
         private const val TIMELINE_REQUEST_CONCURRENCY = 2
         private const val TIMELINE_REQUEST_ATTEMPTS = 2
         private const val TIMELINE_RETRY_DELAY_MS = 320L
+        private const val PLAYBACK_PROVIDER_RETRY_DELAY_MS = 300L
         private const val WEB_BASE_URL = "https://www.cycani.org/"
         private const val CACHED_SYNOPSIS_TIMEOUT_MS = 6_000L
         private const val TIMELINE_SYNOPSIS_TIMEOUT_MS = 4_000L
@@ -1041,6 +1050,18 @@ class CycaniSource(
 
 internal fun shouldUseDirectCycaniPlayUrlFallback(hasAuthRepository: Boolean): Boolean =
     !hasAuthRepository
+
+internal suspend fun <T> retryPlaybackProvidersOnce(
+    retryDelayMs: Long,
+    request: suspend () -> T
+): T = try {
+    request()
+} catch (error: CancellationException) {
+    throw error
+} catch (_: Exception) {
+    delay(retryDelayMs.coerceAtLeast(0L))
+    request()
+}
 
 internal fun usesAuthenticatedAulamaDetail(animeId: String): Boolean =
     animeId.startsWith("gg:", ignoreCase = true)

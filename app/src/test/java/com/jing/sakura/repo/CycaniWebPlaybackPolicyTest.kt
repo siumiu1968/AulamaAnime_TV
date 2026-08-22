@@ -109,6 +109,39 @@ class CycaniWebPlaybackPolicyTest {
     }
 
     @Test
+    fun bridgesOnlyHttpsVhubHlsManifests() {
+        val bridge = "https://aulama.org/anime/api/cycani/sections/51796/manifest.m3u8"
+        assertEquals(
+            bridge,
+            CycaniWebPlaybackPolicy.selectMainSectionPlaybackUrl(
+                "https://vhub.babel.gold/hls/episode-19/index.m3u8?token=signed",
+                bridge
+            )
+        )
+        assertEquals(
+            "https://media.example/episode-19.m3u8",
+            CycaniWebPlaybackPolicy.selectMainSectionPlaybackUrl(
+                "https://media.example/episode-19.m3u8",
+                bridge
+            )
+        )
+        assertEquals(
+            "https://vhub.babel.gold/video/episode-19.mp4",
+            CycaniWebPlaybackPolicy.selectMainSectionPlaybackUrl(
+                "https://vhub.babel.gold/video/episode-19.mp4",
+                bridge
+            )
+        )
+        assertEquals(
+            "http://vhub.babel.gold/hls/episode-19.m3u8",
+            CycaniWebPlaybackPolicy.selectMainSectionPlaybackUrl(
+                "http://vhub.babel.gold/hls/episode-19.m3u8",
+                bridge
+            )
+        )
+    }
+
+    @Test
     fun updatesLegacyArtworkFromTheCurrentWebCatalogue() {
         val index = CycaniWebPlaybackPolicy.buildArtworkIndex(rows(
             """[

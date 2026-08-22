@@ -123,8 +123,7 @@ internal class PlaybackSkipUiStateMachine {
             isVisible = visible,
             shouldStartCountdown = changed && visible && next.advancesEpisode && !countdownCancelled
                 && !currentEnteredThroughSeek,
-            shouldRequestInitialFocus = changed && visible && next.advancesEpisode &&
-                !currentEnteredThroughSeek,
+            shouldRequestInitialFocus = changed && visible && !currentEnteredThroughSeek,
             shouldScheduleAutoHide = changed && visible && !next.advancesEpisode
         )
     }

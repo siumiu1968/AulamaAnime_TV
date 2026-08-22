@@ -38,6 +38,49 @@ class PlaybackSkipPolicyTest {
     }
 
     @Test
+    fun manualOutroAtActualFileEndAdvancesEvenWhenBackendActionIsMissing() {
+        val segments = PlaybackSegments(
+            outroStartMs = 1_320_000L,
+            outroEndMs = 1_439_000L,
+            outroAction = "skip"
+        )
+
+        assertTrue(
+            PlaybackSkipPolicy.activeSkip(
+                segments = segments,
+                positionMs = 1_350_000L,
+                hasNextEpisode = true,
+                durationMs = 1_440_000L
+            )?.advancesEpisode == true
+        )
+        assertFalse(
+            PlaybackSkipPolicy.activeSkip(
+                segments = segments,
+                positionMs = 1_350_000L,
+                hasNextEpisode = false,
+                durationMs = 1_440_000L
+            )?.advancesEpisode == true
+        )
+    }
+
+    @Test
+    fun postCreditOutroOutsideTerminalToleranceStillUsesSkipAction() {
+        val active = PlaybackSkipPolicy.activeSkip(
+            segments = PlaybackSegments(
+                outroStartMs = 1_320_000L,
+                outroEndMs = 1_438_499L,
+                outroAction = "skip"
+            ),
+            positionMs = 1_350_000L,
+            hasNextEpisode = true,
+            durationMs = 1_440_000L
+        )
+
+        assertFalse(active?.advancesEpisode == true)
+        assertEquals(1_438_499L, active?.targetMs)
+    }
+
+    @Test
     fun finalSecondAdvancesOnlyWhenNextEpisodeExists() {
         assertTrue(PlaybackSkipPolicy.shouldAutoAdvanceAtEnd(99_000L, 100_000L, true))
         assertFalse(PlaybackSkipPolicy.shouldAutoAdvanceAtEnd(98_999L, 100_000L, true))

@@ -98,4 +98,28 @@ class PreviewSessionPolicyTest {
             )
         )
     }
+
+    @Test
+    fun timelinePreviewRejectsAReadyVideoFromThePreviousSelection() {
+        assertFalse(
+            isPreviewPlaybackActive(
+                previewEnabled = true,
+                isScreenResumed = true,
+                hasFocusedContent = true,
+                previewArmed = true,
+                firstFrameReady = true,
+                readyAnimeId = "old-anime",
+                readySourceId = "source-a",
+                focusedAnimeId = "new-anime",
+                focusedSourceId = "source-a"
+            )
+        )
+    }
+
+    @Test
+    fun previewLoadRetriesOnlyTheCurrentRequestOnce() {
+        assertTrue(shouldRetryPreviewLoad("preview-a", "preview-a", retryCount = 0))
+        assertFalse(shouldRetryPreviewLoad("preview-a", "preview-a", retryCount = 1))
+        assertFalse(shouldRetryPreviewLoad("preview-a", "preview-b", retryCount = 0))
+    }
 }

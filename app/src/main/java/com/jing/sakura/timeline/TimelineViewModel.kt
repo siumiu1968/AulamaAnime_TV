@@ -10,6 +10,7 @@ import com.jing.sakura.data.Resource
 import com.jing.sakura.data.UpdateTimeLine
 import com.jing.sakura.home.HeroPreviewSpec
 import com.jing.sakura.home.HeroPreviewState
+import com.jing.sakura.home.preparePreviewWithRetry
 import com.jing.sakura.player.NavigateToPlayerArg
 import com.jing.sakura.repo.CycaniSource
 import com.jing.sakura.repo.WebPageRepository
@@ -107,48 +108,49 @@ class TimelineViewModel(
         _previewState.value = HeroPreviewState.Loading(requestKey)
         previewJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                val detail = repository.fetchDetailPage(anime.id, anime.sourceId)
-                val playList = detail.playLists
-                    .getOrNull(detail.defaultPlayListIndex)
-                    ?.takeIf { it.episodeList.isNotEmpty() }
-                    ?: detail.playLists.firstOrNull {
-                        it.defaultPlayList && it.episodeList.isNotEmpty()
+                val spec = preparePreviewWithRetry {
+                    val detail = repository.fetchDetailPage(anime.id, anime.sourceId)
+                    val playList = detail.playLists
+                        .getOrNull(detail.defaultPlayListIndex)
+                        ?.takeIf { it.episodeList.isNotEmpty() }
+                        ?: detail.playLists.firstOrNull {
+                            it.defaultPlayList && it.episodeList.isNotEmpty()
+                        }
+                        ?: detail.playLists.firstOrNull { it.episodeList.isNotEmpty() }
+                        ?: error("未有可預覽集數")
+                    val episode = playList.episodeList.first()
+                    val response = repository.fetchVideoUrl(
+                        episodeId = episode.episodeId,
+                        sourceId = anime.sourceId,
+                        animeId = anime.id
+                    )
+                    val video = when (response) {
+                        is Resource.Success -> response.data
+                        is Resource.Error -> error(response.message)
+                        is Resource.Loading -> error("預覽影片尚未準備好")
                     }
-                    ?: detail.playLists.firstOrNull { it.episodeList.isNotEmpty() }
-                    ?: error("未有可預覽集數")
-                val episode = playList.episodeList.first()
-                val response = repository.fetchVideoUrl(
-                    episodeId = episode.episodeId,
-                    sourceId = anime.sourceId,
-                    animeId = anime.id
-                )
-                val video = when (response) {
-                    is Resource.Success -> response.data
-                    is Resource.Error -> error(response.message)
-                    is Resource.Loading -> error("預覽影片尚未準備好")
+                    val playerArg = NavigateToPlayerArg(
+                        animeName = detail.animeName.ifBlank { anime.title },
+                        animeId = anime.id,
+                        coverUrl = detail.imageUrl.ifBlank { anime.imageUrl },
+                        playIndex = 0,
+                        playlist = playList.episodeList,
+                        sourceId = anime.sourceId,
+                        playlists = detail.playLists,
+                        playlistIndex = detail.playLists.indexOf(playList)
+                    )
+                    HeroPreviewSpec(
+                        key = "$requestKey:${episode.episodeId}:$generation",
+                        url = video.url,
+                        headers = video.headers,
+                        startPositionMs = 0L,
+                        posterUrl = playerArg.coverUrl,
+                        navigateToPlayerArg = playerArg
+                    )
                 }
-                val playerArg = NavigateToPlayerArg(
-                    animeName = detail.animeName.ifBlank { anime.title },
-                    animeId = anime.id,
-                    coverUrl = detail.imageUrl.ifBlank { anime.imageUrl },
-                    playIndex = 0,
-                    playlist = playList.episodeList,
-                    sourceId = anime.sourceId,
-                    playlists = detail.playLists,
-                    playlistIndex = detail.playLists.indexOf(playList)
-                )
                 publishPreview(
                     generation,
-                    HeroPreviewState.Ready(
-                        HeroPreviewSpec(
-                            key = "$requestKey:${episode.episodeId}:$generation",
-                            url = video.url,
-                            headers = video.headers,
-                            startPositionMs = 0L,
-                            posterUrl = playerArg.coverUrl,
-                            navigateToPlayerArg = playerArg
-                        )
-                    )
+                    HeroPreviewState.Ready(spec)
                 )
             } catch (exception: Exception) {
                 if (exception is CancellationException) throw exception

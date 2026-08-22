@@ -100,6 +100,7 @@ import com.jing.sakura.data.Resource
 import com.jing.sakura.data.UpdateTimeLine
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.home.HeroPreviewState
+import com.jing.sakura.home.isPreviewPlaybackActive
 import com.jing.sakura.home.previewCardAlpha
 import com.jing.sakura.home.shouldStartPreview
 import com.jing.sakura.timeline.TimelineViewModel
@@ -205,7 +206,17 @@ fun TimeLine(
         label = "timeline-accent"
     )
     val readyPreview = (previewState as? HeroPreviewState.Ready)?.spec
-    val previewActive = previewEnabled && previewArmed && previewFirstFrameReady && readyPreview != null
+    val previewActive = isPreviewPlaybackActive(
+        previewEnabled = previewEnabled,
+        isScreenResumed = isScreenResumed,
+        hasFocusedContent = rowHasFocus,
+        previewArmed = previewArmed,
+        firstFrameReady = previewFirstFrameReady,
+        readyAnimeId = readyPreview?.navigateToPlayerArg?.animeId,
+        readySourceId = readyPreview?.navigateToPlayerArg?.sourceId,
+        focusedAnimeId = highlightedAnime?.id,
+        focusedSourceId = highlightedAnime?.sourceId
+    )
     val chromeAlpha by animateFloatAsState(
         targetValue = if (previewActive) 0.28f else 1f,
         animationSpec = tween(320, easing = FastOutSlowInEasing),

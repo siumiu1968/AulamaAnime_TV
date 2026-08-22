@@ -29,7 +29,8 @@ import java.util.Locale
 internal class CycaniWebPlaybackResolver(
     private val client: OkHttpClient,
     private val apiBaseUrl: String = WEB_API_BASE,
-    private val authenticatedPlayUrlResolver: suspend (String) -> String
+    private val authenticatedPlayUrlResolver: suspend (String) -> String,
+    private val manifestBridgeUrlResolver: (String) -> String = { "" }
 ) {
     private val artworkMutex = Mutex()
     @Volatile private var artworkIndex: CycaniWebArtworkIndex? = null
@@ -92,11 +93,18 @@ internal class CycaniWebPlaybackResolver(
     /** Resolves one Web section at the moment it is selected for playback. */
     suspend fun resolveSection(sectionId: String): String {
         require(sectionId.matches(Regex("\\d{1,12}"))) { "Cycani Web section ID is invalid" }
-        val url = authenticatedPlayUrlResolver(sectionId)
-        if (!CycaniWebPlaybackPolicy.isTrustedPlaybackUrl(url)) {
+        val directUrl = authenticatedPlayUrlResolver(sectionId)
+        if (!CycaniWebPlaybackPolicy.isTrustedPlaybackUrl(directUrl)) {
             error("Cycani Web returned an invalid playback URL")
         }
-        return url
+        val selectedUrl = CycaniWebPlaybackPolicy.selectMainSectionPlaybackUrl(
+            directUrl = directUrl,
+            manifestBridgeUrl = manifestBridgeUrlResolver(sectionId)
+        )
+        if (!CycaniWebPlaybackPolicy.isTrustedPlaybackUrl(selectedUrl)) {
+            error("Cycani Web returned an invalid manifest bridge URL")
+        }
+        return selectedUrl
     }
 
     suspend fun resolve(request: CycaniWebEpisodeRequest): String {
@@ -357,6 +365,18 @@ internal fun isRetiredCycaniOldPcUrl(value: String): Boolean {
 }
 
 internal object CycaniWebPlaybackPolicy {
+    fun selectMainSectionPlaybackUrl(
+        directUrl: String,
+        manifestBridgeUrl: String
+    ): String {
+        val direct = directUrl.trim()
+        val url = direct.toHttpUrlOrNull()
+        val requiresManifestBridge = url?.isHttps == true &&
+            url.host.equals("vhub.babel.gold", ignoreCase = true) &&
+            url.encodedPath.endsWith(".m3u8", ignoreCase = true)
+        return if (requiresManifestBridge) manifestBridgeUrl.trim() else direct
+    }
+
     fun buildArtworkIndex(candidates: List<JsonObject>): CycaniWebArtworkIndex {
         val titleYearCandidates = mutableMapOf<String, MutableMap<String, String>>()
         val titleCandidates = mutableMapOf<String, MutableMap<String, String>>()

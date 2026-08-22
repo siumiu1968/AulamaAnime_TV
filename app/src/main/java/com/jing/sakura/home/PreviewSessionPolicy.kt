@@ -21,15 +21,46 @@ internal fun isHomePreviewPlaybackActive(
     readySourceId: String?,
     focusedAnimeId: String?,
     focusedSourceId: String?
+): Boolean = isPreviewPlaybackActive(
+    previewEnabled = previewEnabled,
+    isScreenResumed = isScreenResumed,
+    hasFocusedContent = hasFocusedRow,
+    previewArmed = previewArmed,
+    firstFrameReady = firstFrameReady,
+    readyAnimeId = readyAnimeId,
+    readySourceId = readySourceId,
+    focusedAnimeId = focusedAnimeId,
+    focusedSourceId = focusedSourceId
+)
+
+internal fun isPreviewPlaybackActive(
+    previewEnabled: Boolean,
+    isScreenResumed: Boolean,
+    hasFocusedContent: Boolean,
+    previewArmed: Boolean,
+    firstFrameReady: Boolean,
+    readyAnimeId: String?,
+    readySourceId: String?,
+    focusedAnimeId: String?,
+    focusedSourceId: String?
 ): Boolean = previewEnabled &&
     isScreenResumed &&
-    hasFocusedRow &&
+    hasFocusedContent &&
     previewArmed &&
     firstFrameReady &&
     !readyAnimeId.isNullOrBlank() &&
     !readySourceId.isNullOrBlank() &&
     readyAnimeId == focusedAnimeId &&
     readySourceId == focusedSourceId
+
+internal fun shouldRetryPreviewLoad(
+    failedKey: String?,
+    currentKey: String?,
+    retryCount: Int,
+    maxRetryCount: Int = 1
+): Boolean = !failedKey.isNullOrBlank() &&
+    failedKey == currentKey &&
+    retryCount < maxRetryCount
 
 internal fun previewCardAlpha(
     rowFocused: Boolean,

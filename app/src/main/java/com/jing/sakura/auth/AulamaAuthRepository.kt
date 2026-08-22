@@ -383,6 +383,10 @@ class AulamaAuthRepository(
         }
     }
 
+    internal fun cycaniManifestBridgeUrl(sectionId: String): String? {
+        return buildCycaniManifestBridgeUrl(API_BASE, sectionId)
+    }
+
     suspend fun fetchFavorites(): List<AnimeData> =
         authenticatedBody("/favorites")
             ?.let(TvLibraryParser::parseFavorites)
@@ -720,3 +724,14 @@ internal fun parseCycaniPlaybackUrl(body: String): String? = runCatching {
         ?.asString
         ?: root.get("url")?.takeUnless { it.isJsonNull }?.asString
 }.getOrNull()?.trim()?.takeIf(String::isNotBlank)
+
+internal fun buildCycaniManifestBridgeUrl(apiBase: String, sectionId: String): String? {
+    if (!sectionId.matches(Regex("\\d{1,12}"))) return null
+    return apiBase.toHttpUrl().newBuilder()
+        .addPathSegment("cycani")
+        .addPathSegment("sections")
+        .addPathSegment(sectionId)
+        .addPathSegment("manifest.m3u8")
+        .build()
+        .toString()
+}

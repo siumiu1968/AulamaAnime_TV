@@ -6,6 +6,20 @@ import org.junit.Test
 
 class AulamaCycaniPlaybackTest {
     @Test
+    fun buildsNumericManifestBridgeUrlWithoutEmbeddingTheDirectManifest() {
+        assertEquals(
+            "https://aulama.org/anime/api/cycani/sections/51796/manifest.m3u8",
+            buildCycaniManifestBridgeUrl("https://aulama.org/anime/api", "51796")
+        )
+        assertNull(
+            buildCycaniManifestBridgeUrl(
+                "https://aulama.org/anime/api",
+                "https://vhub.babel.gold/episode-19.m3u8"
+            )
+        )
+    }
+
+    @Test
     fun parsesDirectUrlResponse() {
         assertEquals(
             "https://cdn.example/episode.m3u8",
