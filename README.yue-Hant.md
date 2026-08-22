@@ -1,6 +1,3 @@
-<!-- Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 -->
-<!-- Hallmark · macrostructure: product-evidence-flow · brand: Aulama dark cinema · chrome: real screenshots only · honest: pass -->
-
 # Aulama Anime TV — Android TV / Google TV 動漫 App
 
 [繁體中文](./README.md) · **廣東話** · [简体中文](./README.zh-CN.md)
@@ -13,30 +10,38 @@
 
 <p align="center">
   <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases/latest"><img alt="最新正式版" src="https://img.shields.io/github/v/release/siumiu1968/AulamaAnime_TV?display_name=tag&sort=semver&label=%E6%AD%A3%E5%BC%8F%E7%89%88&color=16a085"></a>
-  <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases"><img alt="搶先版 3.1.0 Beta 2" src="https://img.shields.io/badge/%E6%90%B6%E5%85%88%E7%89%88-3.1.0--beta.2-e85d9e"></a>
+  <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.2.0-beta.1"><img alt="搶先版 3.2.0 Beta 1" src="https://img.shields.io/badge/%E6%90%B6%E5%85%88%E7%89%88-3.2.0--beta.1-e85d9e"></a>
   <img alt="支援 Android 5.0 或以上" src="https://img.shields.io/badge/Android-5.0%2B-3DDC84?logo=android&logoColor=white">
   <img alt="GitHub 累計下載次數" src="https://img.shields.io/github/downloads/siumiu1968/AulamaAnime_TV/total?label=%E7%B4%AF%E8%A8%88%E4%B8%8B%E8%BC%89&color=4f8ad9">
 </p>
 
-**Aulama Anime TV** 由 Android TV／Google TV 嘅遙控器操作、客廳觀看距離同橫向大螢幕出發。搵作品、揀集數、切換主線路或後備線路、續播同跳過片頭片尾，都可以用 D-pad 完成。
+**Aulama Anime TV** 由 Android TV／Google TV 嘅遙控器操作、客廳觀看距離同橫向大螢幕出發。搵作品、揀集數、切換多條播放線路、續播同跳過片頭片尾，都可以用 D-pad 完成。
 
 > **跳過片頭同片尾，好似 Netflix 咁直覺。** Aulama Anime TV 獨家整合片頭同片尾時間資料，適當時候會顯示一鍵跳過按鈕；長按遙控器 **OK／確認鍵** 可以暫時用 **2×** 播放，放開就會即時回復正常速度。
 
 > 如果 Aulama Anime TV 令你用電視追番更方便，歡迎喺 GitHub 按下 **Star**。你嘅支持可以幫更多用戶搵到呢個專案，亦係繼續改善嘅動力。
 
-[下載正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest)　·　[下載搶先版](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.1.0-beta.2)　·　[查看全部版本](https://github.com/siumiu1968/AulamaAnime_TV/releases)
+[下載正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest)　·　[下載搶先版](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.2.0-beta.1)　·　[查看全部版本](https://github.com/siumiu1968/AulamaAnime_TV/releases)
 
 ## 實際畫面
 
-以下全部係 Android TV 模擬器／實機介面截圖，冇重新繪製假裝置框。
+以下全部係 Android TV 實機介面截圖，冇重新繪製假裝置框。
 
-![Aulama Anime TV 首頁，顯示精選動畫、完整海報、今日更新與遙控器導覽](./docs/screenshots/home.png)
-
-| 模糊搜尋 | 作品詳情與選集 |
+| 首頁精選推介 | 首頁今日更新 |
 | --- | --- |
-| ![搜尋頁支援關鍵字、別名、繁簡名稱同日文原名](./docs/screenshots/search.png) | ![作品詳情頁顯示作品資料、播放線路同集數](./docs/screenshots/detail.png) |
+| ![首頁精選推介同遙控器焦點](./docs/screenshots/home-featured.webp) | ![首頁今日更新作品列](./docs/screenshots/home-updates.webp) |
 
-![用戶卡片可切換介面語言、自動播放預覽、更新通道，同埋登入同步資料](./docs/screenshots/account.png)
+| 發現片庫 | 時間表 |
+| --- | --- |
+| ![發現頁嘅劇場番組同篩選入口](./docs/screenshots/discover.webp) | ![時間表嘅每日播出作品](./docs/screenshots/timeline.webp) |
+
+| 我的片庫 | 作品詳情同選集 |
+| --- | --- |
+| ![我的片庫顯示繼續觀看同收藏](./docs/screenshots/library.webp) | ![作品詳情頁顯示簡介、播放線路同集數](./docs/screenshots/detail.webp) |
+
+| 相關動漫預覽 | 播放器控制列 |
+| --- | --- |
+| ![詳情頁嘅相關動漫焦點預覽](./docs/screenshots/related-anime.webp) | ![播放器嘅進度、集數同播放控制](./docs/screenshots/player.webp) |
 
 ## 有咩特別
 
@@ -54,7 +59,7 @@
 
 ### 播得順
 
-- 主線路、後備 A、後備 B 可以喺詳情頁揀選；播放失敗時會提示可用後備線路。
+- 詳情頁會按作品顯示多條可用播放線路；播放失敗時可以切換其他線路。
 - 支援 HLS、播放進度、續播、下一集，同可用來源自動回退。
 - 已排除已停用嘅白底黑字舊播放來源。
 
@@ -81,7 +86,7 @@
 | 通道 | 適合邊類用戶 | 下載 |
 | --- | --- | --- |
 | 正式版 `3.1.0` | 想要完成測試、變動較少嘅版本 | [下載最新正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest) |
-| 搶先版 `3.1.0-beta.2` | 願意提早試新功能同回報問題 | [下載 Beta 2](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.1.0-beta.2) |
+| 搶先版 `3.2.0-beta.1` | 願意提早試新功能同回報問題 | [下載 Beta 1](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.2.0-beta.1) |
 
 支援 **Android TV、Google TV、Android 電視盒子**，最低為 **Android 5.0（API 21）**。
 
