@@ -4,6 +4,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Request
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 
 class RegionAccessPolicyTest {
     @Test
@@ -90,5 +95,38 @@ class RegionAccessPolicyTest {
         assertEquals(20 * 60_000L, regionAccessPollDelayMs(2, blocked = false))
         assertEquals(30 * 60_000L, regionAccessPollDelayMs(3, blocked = false))
         assertEquals(30_000L, regionAccessPollDelayMs(99, blocked = true))
+    }
+
+    @Test
+    fun forcedProbeDoesNotReuseAnActiveHttp2Route() {
+        MockWebServer().use { server ->
+            server.protocols = listOf(Protocol.H2_PRIOR_KNOWLEDGE)
+            server.enqueue(MockResponse().setBody("first"))
+            server.enqueue(MockResponse().setBody("second"))
+            val sharedClient = OkHttpClient.Builder()
+                .protocols(listOf(Protocol.H2_PRIOR_KNOWLEDGE))
+                .build()
+            val activeResponse = sharedClient.newCall(
+                Request.Builder().url(server.url("/active")).build()
+            ).execute()
+
+            try {
+                freshRegionRouteClient(sharedClient)
+                    .newCall(Request.Builder().url(server.url("/region-probe")).build())
+                    .execute()
+                    .close()
+
+                assertEquals(0, server.takeRequest().sequenceNumber)
+                assertEquals(0, server.takeRequest().sequenceNumber)
+            } finally {
+                activeResponse.close()
+            }
+        }
+    }
+
+    @Test
+    fun staleRouteCannotRestoreARegionBlockAfterTransportReplacement() {
+        assertTrue(isCurrentRegionRouteGeneration(responseGeneration = 2L, currentGeneration = 2L))
+        assertFalse(isCurrentRegionRouteGeneration(responseGeneration = 1L, currentGeneration = 2L))
     }
 }

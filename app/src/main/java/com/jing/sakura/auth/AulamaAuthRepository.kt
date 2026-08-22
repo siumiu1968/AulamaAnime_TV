@@ -17,7 +17,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -26,15 +30,25 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.util.Calendar
 
 class AulamaAuthRepository(
-    private val client: OkHttpClient,
+    initialClient: OkHttpClient,
     private val storage: SecureAuthStorage
 ) {
+    private data class RegionRouteTransport(
+        val client: OkHttpClient,
+        val generation: Long
+    )
+
+    private data class RegionRouteTag(val generation: Long)
+
     private val _session = MutableStateFlow(
         storage.loadSession()?.takeUnless(AuthSession::isExpired)
     )
     val session: StateFlow<AuthSession?> = _session
     private val _regionBlock = MutableStateFlow<RegionBlockState?>(null)
     val regionBlock: StateFlow<RegionBlockState?> = _regionBlock
+    private val regionProbeMutex = Mutex()
+    @Volatile
+    private var regionRouteTransport = RegionRouteTransport(initialClient, generation = 0L)
 
     suspend fun requestDeviceCode(nowEpochMs: Long = System.currentTimeMillis()): DeviceCodeRequestResult {
         val body = JsonObject().apply {
@@ -112,28 +126,42 @@ class AulamaAuthRepository(
         AccountValidationResult.Unavailable
     }
 
-    suspend fun probeRegionAccess(): RegionAccessProbeResult = try {
-        val request = Request.Builder()
-            .url("$API_BASE/region-probe")
-            .header("Accept", "application/json")
-            .get()
-            .build()
-        executeResponseOnIo(request) { response, responseBody ->
-            val result = classifyRegionAccessProbe(
-                responseCode = response.code,
-                markerHeader = response.header(REGION_BLOCK_HEADER),
-                responseBody = responseBody
-            )
-            if (result == RegionAccessProbeResult.Blocked) {
-                recordRegionBlock(response, responseBody)
+    suspend fun probeRegionAccess(
+        forceFreshConnection: Boolean = false
+    ): RegionAccessProbeResult = regionProbeMutex.withLock {
+        try {
+            val request = Request.Builder()
+                .url("$API_BASE/region-probe")
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            withContext(Dispatchers.IO) {
+                val transport = if (forceFreshConnection) {
+                    replaceRegionRouteTransport()
+                } else {
+                    regionRouteTransport
+                }
+                transport.client
+                    .executeWithCoroutine(request.taggedFor(transport))
+                    .use { response ->
+                        val responseBody = response.body?.string().orEmpty()
+                        val result = classifyRegionAccessProbe(
+                            responseCode = response.code,
+                            markerHeader = response.header(REGION_BLOCK_HEADER),
+                            responseBody = responseBody
+                        )
+                        if (result == RegionAccessProbeResult.Blocked) {
+                            recordRegionBlock(response, responseBody)
+                        }
+                        _regionBlock.value = regionBlockAfterProbe(_regionBlock.value, result)
+                        result
+                    }
             }
-            _regionBlock.value = regionBlockAfterProbe(_regionBlock.value, result)
-            result
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            RegionAccessProbeResult.Unavailable
         }
-    } catch (error: CancellationException) {
-        throw error
-    } catch (_: Exception) {
-        RegionAccessProbeResult.Unavailable
     }
 
     suspend fun fetchRecommendations(): List<AnimeData> {
@@ -528,8 +556,11 @@ class AulamaAuthRepository(
         try {
             if (existing != null) {
                 val request = authenticatedRequest("$API_BASE/device/session", existing).delete().build()
+                val transport = regionRouteTransport
                 withContext(Dispatchers.IO) {
-                    runCatching { client.executeWithCoroutine(request).close() }
+                    runCatching {
+                        transport.client.executeWithCoroutine(request.taggedFor(transport)).close()
+                    }
                 }
             }
         } finally {
@@ -608,16 +639,47 @@ class AulamaAuthRepository(
     private suspend fun <T> executeResponseOnIo(
         request: Request,
         handler: (okhttp3.Response, String) -> T
-    ): T = withContext(Dispatchers.IO) {
-        client.executeWithCoroutine(request).use { response ->
-            handler(response, response.body?.string().orEmpty())
+    ): T {
+        val transport = regionRouteTransport
+        return withContext(Dispatchers.IO) {
+            transport.client.executeWithCoroutine(request.taggedFor(transport)).use { response ->
+                handler(response, response.body?.string().orEmpty())
+            }
         }
+    }
+
+    private fun Request.taggedFor(transport: RegionRouteTransport): Request = newBuilder()
+        .tag(RegionRouteTag::class.java, RegionRouteTag(transport.generation))
+        .build()
+
+    private fun replaceRegionRouteTransport(): RegionRouteTransport {
+        val previous = regionRouteTransport
+        val replacement = RegionRouteTransport(
+            client = freshRegionRouteClient(previous.client),
+            generation = previous.generation + 1L
+        )
+        regionRouteTransport = replacement
+        previous.client.dispatcher.cancelAll()
+        previous.client.connectionPool.evictAll()
+        previous.client.dispatcher.executorService.shutdown()
+        return replacement
+    }
+
+    private fun isCurrentRegionRoute(response: okhttp3.Response): Boolean {
+        val responseGeneration = response.request
+            .tag(RegionRouteTag::class.java)
+            ?.generation
+        return isCurrentRegionRouteGeneration(
+            responseGeneration = responseGeneration,
+            currentGeneration = regionRouteTransport.generation
+        )
     }
 
     private fun recordRegionBlock(
         response: okhttp3.Response,
         responseBody: String
     ): Boolean {
+        if (!isCurrentRegionRoute(response)) return false
         val blocked = isRegionBlockedResponse(
             responseCode = response.code,
             markerHeader = response.header(REGION_BLOCK_HEADER),
@@ -639,6 +701,16 @@ class AulamaAuthRepository(
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }
+
+internal fun freshRegionRouteClient(client: OkHttpClient): OkHttpClient = client.newBuilder()
+    .dispatcher(Dispatcher())
+    .connectionPool(ConnectionPool())
+    .build()
+
+internal fun isCurrentRegionRouteGeneration(
+    responseGeneration: Long?,
+    currentGeneration: Long
+): Boolean = responseGeneration == null || responseGeneration == currentGeneration
 
 internal fun parseCycaniPlaybackUrl(body: String): String? = runCatching {
     val root = JsonParser.parseString(body).asJsonObject

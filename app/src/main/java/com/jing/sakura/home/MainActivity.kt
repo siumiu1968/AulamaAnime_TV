@@ -110,7 +110,10 @@ class MainActivity : ComponentActivity() {
                 delay(STARTUP_BACKGROUND_NETWORK_DELAY_MS)
                 var allowedStreak = 0
                 while (true) {
-                    when (authRepository.probeRegionAccess()) {
+                    val probeResult = authRepository.probeRegionAccess(
+                        forceFreshConnection = authRepository.regionBlock.value != null
+                    )
+                    when (probeResult) {
                         RegionAccessProbeResult.Allowed -> allowedStreak += 1
                         RegionAccessProbeResult.Blocked -> allowedStreak = 0
                         RegionAccessProbeResult.Unavailable -> Unit
@@ -168,9 +171,10 @@ class MainActivity : ComponentActivity() {
                                     composeScope.launch {
                                         regionRetrying.value = true
                                         try {
-                                            if (authRepository.probeRegionAccess() ==
-                                                RegionAccessProbeResult.Allowed
-                                            ) {
+                                            val probeResult = authRepository.probeRegionAccess(
+                                                forceFreshConnection = true
+                                            )
+                                            if (probeResult == RegionAccessProbeResult.Allowed) {
                                                 authViewModel.resumeAfterRegionAccess()
                                                 viewModel.loadData(silent = false)
                                             }

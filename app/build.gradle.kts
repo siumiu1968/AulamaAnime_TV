@@ -15,8 +15,8 @@ android {
         applicationId = "com.codex.ciyuanbox.tv"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1033
-        versionName = "3.2.0-beta.1"
+        versionCode = 1034
+        versionName = "3.2.0-beta.2"
 
     }
     packaging {
