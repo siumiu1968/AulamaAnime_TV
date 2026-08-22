@@ -81,9 +81,7 @@ private object ArtworkAccentCache {
 fun rememberArtworkAccent(imageUrl: String, enabled: Boolean = true): Color {
     val context = LocalContext.current
     val fallback = remember(imageUrl) { fallbackArtworkAccent(imageUrl) }
-    var accent by remember(imageUrl) {
-        mutableStateOf(ArtworkAccentCache.get(context, imageUrl) ?: fallback)
-    }
+    var accent by remember(imageUrl) { mutableStateOf(fallback) }
     val animatedAccent by animateColorAsState(
         targetValue = accent,
         animationSpec = tween(durationMillis = 240),
@@ -92,7 +90,9 @@ fun rememberArtworkAccent(imageUrl: String, enabled: Boolean = true): Color {
 
     LaunchedEffect(imageUrl, enabled) {
         if (!enabled || imageUrl.isBlank()) return@LaunchedEffect
-        ArtworkAccentCache.get(context, imageUrl)?.let {
+        withContext(Dispatchers.IO) {
+            ArtworkAccentCache.get(context, imageUrl)
+        }?.let {
             accent = it
             return@LaunchedEffect
         }
@@ -110,7 +110,9 @@ fun rememberArtworkAccent(imageUrl: String, enabled: Boolean = true): Color {
         val extracted = withContext(Dispatchers.Default) {
             runCatching { extractArtworkAccent(drawable.toBitmap()) }.getOrNull()
         } ?: return@LaunchedEffect
-        ArtworkAccentCache.put(context, imageUrl, extracted)
+        withContext(Dispatchers.IO) {
+            ArtworkAccentCache.put(context, imageUrl, extracted)
+        }
         accent = extracted
     }
 

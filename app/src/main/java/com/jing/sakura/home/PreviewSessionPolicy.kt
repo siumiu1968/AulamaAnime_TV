@@ -11,6 +11,26 @@ internal fun shouldStartPreview(
     isScreenResumed &&
     hasFocusedContent
 
+internal fun isHomePreviewPlaybackActive(
+    previewEnabled: Boolean,
+    isScreenResumed: Boolean,
+    hasFocusedRow: Boolean,
+    previewArmed: Boolean,
+    firstFrameReady: Boolean,
+    readyAnimeId: String?,
+    readySourceId: String?,
+    focusedAnimeId: String?,
+    focusedSourceId: String?
+): Boolean = previewEnabled &&
+    isScreenResumed &&
+    hasFocusedRow &&
+    previewArmed &&
+    firstFrameReady &&
+    !readyAnimeId.isNullOrBlank() &&
+    !readySourceId.isNullOrBlank() &&
+    readyAnimeId == focusedAnimeId &&
+    readySourceId == focusedSourceId
+
 internal fun previewCardAlpha(
     rowFocused: Boolean,
     selected: Boolean,

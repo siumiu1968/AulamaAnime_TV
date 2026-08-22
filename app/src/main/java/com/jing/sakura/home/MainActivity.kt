@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -24,9 +25,13 @@ import androidx.tv.material3.MaterialTheme
 import com.jing.sakura.R
 import com.jing.sakura.auth.AuthUiState
 import com.jing.sakura.auth.AuthViewModel
+import com.jing.sakura.auth.AulamaAuthRepository
+import com.jing.sakura.auth.RegionAccessProbeResult
+import com.jing.sakura.auth.regionAccessPollDelayMs
 import com.jing.sakura.compose.screen.DeviceLoginScreen
 import com.jing.sakura.compose.screen.FirstLaunchSupportDialog
 import com.jing.sakura.compose.screen.HomeScreen
+import com.jing.sakura.compose.screen.RegionBlockedScreen
 import com.jing.sakura.compose.theme.setAulamaTvContent
 import com.jing.sakura.data.Resource
 import com.jing.sakura.update.TvUpdate
@@ -37,10 +42,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
 
 class MainActivity : ComponentActivity() {
+    private val authRepository: AulamaAuthRepository by inject()
     private lateinit var updateManager: TvUpdateManager
     private val availableUpdate = mutableStateOf<TvUpdate?>(null)
     private val isCheckingForUpdate = mutableStateOf(false)
@@ -71,6 +78,9 @@ class MainActivity : ComponentActivity() {
             val downloadState = updateManager.downloadState.collectAsState().value
             val homePageData = viewModel.homePageData.collectAsState().value
             val authState = authViewModel.state.collectAsState().value
+            val regionBlock = authRepository.regionBlock.collectAsState().value
+            val regionRetrying = remember { mutableStateOf(false) }
+            val composeScope = rememberCoroutineScope()
             val welcomeRefreshSeed = remember {
                 mutableStateOf(welcomeContentSeed(System.currentTimeMillis()))
             }
@@ -94,6 +104,22 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(downloadState) {
                 if (downloadState is TvUpdateDownloadState.Installing) {
                     availableUpdate.value = null
+                }
+            }
+            LaunchedEffect(Unit) {
+                delay(STARTUP_BACKGROUND_NETWORK_DELAY_MS)
+                var allowedStreak = 0
+                while (true) {
+                    when (authRepository.probeRegionAccess()) {
+                        RegionAccessProbeResult.Allowed -> allowedStreak += 1
+                        RegionAccessProbeResult.Blocked -> allowedStreak = 0
+                        RegionAccessProbeResult.Unavailable -> Unit
+                    }
+                    val blocked = authRepository.regionBlock.value != null
+                    delay(
+                        if (!blocked && allowedStreak == 0) 60_000L
+                        else regionAccessPollDelayMs(allowedStreak, blocked)
+                    )
                 }
             }
             Box(
@@ -133,6 +159,30 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 when {
+                    regionBlock != null -> {
+                        RegionBlockedScreen(
+                            countryCode = regionBlock.countryCode,
+                            retrying = regionRetrying.value,
+                            onRetry = {
+                                if (!regionRetrying.value) {
+                                    composeScope.launch {
+                                        regionRetrying.value = true
+                                        try {
+                                            if (authRepository.probeRegionAccess() ==
+                                                RegionAccessProbeResult.Allowed
+                                            ) {
+                                                authViewModel.resumeAfterRegionAccess()
+                                                viewModel.loadData(silent = false)
+                                            }
+                                        } finally {
+                                            regionRetrying.value = false
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    }
+
                     availableUpdate.value != null -> {
                         val update = checkNotNull(availableUpdate.value)
                         TvUpdateDialog(
@@ -220,6 +270,7 @@ class MainActivity : ComponentActivity() {
         automaticUpdateCheckFinished.value = false
         automaticUpdateCheck = lifecycleScope.launch {
             try {
+                delay(STARTUP_BACKGROUND_NETWORK_DELAY_MS)
                 availableUpdate.value = runCatching { updateManager.checkForUpdate() }.getOrNull()
             } finally {
                 automaticUpdateCheckFinished.value = true
@@ -230,5 +281,9 @@ class MainActivity : ComponentActivity() {
     private fun dismissFirstLaunchSupport() {
         firstLaunchSupportStore.markSeen()
         showFirstLaunchSupport.value = false
+    }
+
+    private companion object {
+        const val STARTUP_BACKGROUND_NETWORK_DELAY_MS = 1_500L
     }
 }

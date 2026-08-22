@@ -102,6 +102,7 @@ class HomeViewModel(
         private set
 
     private var loadDataJob: Pair<String, Job>? = null
+    private val homeLoadGeneration = AtomicLong(0L)
     private var heroPreviewJob: Job? = null
     private var heroPreviewRequestKey: String? = null
     private val heroPreviewGeneration = AtomicLong(0L)
@@ -155,12 +156,6 @@ class HomeViewModel(
     }
 
     fun loadData(silent: Boolean = false, saveLastData: Boolean = true) {
-        val lastValue = _homePageData.value
-        lastHomePageData = if (saveLastData && lastValue is Resource.Success) {
-            lastValue.data
-        } else {
-            null
-        }
         val sourceId = currentSourceId
         val job = loadDataJob
         if (job != null) {
@@ -169,14 +164,57 @@ class HomeViewModel(
             }
             job.second.cancel()
         }
+        val lastValue = _homePageData.value
+        val retainedHomeData = if (saveLastData) {
+            (lastValue.getOrNull() ?: lastHomePageData)
+                ?.takeIf { it.sourceId == sourceId }
+        } else null
+        val hasDisplayDataAtRequestStart = retainedHomeData != null
+        lastHomePageData = retainedHomeData
+        val generation = homeLoadGeneration.incrementAndGet()
         loadDataJob = sourceId to viewModelScope.launch(Dispatchers.IO) {
+            var publishedPartial = false
             try {
                 _homePageData.emit(Resource.Loading(silent = silent))
-                val homeData = repository.fetchHomePage(currentSourceId)
-                _homePageData.emit(Resource.Success(processHomePageData(homeData)))
+                val homeData = repository.fetchHomePageProgressively(sourceId) { partialData ->
+                    if (shouldPublishProgressiveHomePayload(
+                            hasDisplayDataAtRequestStart = hasDisplayDataAtRequestStart,
+                            hasRenderableRows = partialData.seriesList.any { it.value.isNotEmpty() },
+                            requestGeneration = generation,
+                            activeGeneration = homeLoadGeneration.get(),
+                            requestSourceId = sourceId,
+                            currentSourceId = currentSourceId
+                        )
+                    ) {
+                        _homePageData.emit(Resource.Success(processHomePageData(partialData)))
+                        publishedPartial = true
+                    }
+                }
+                if (shouldPublishHomeLoadResult(
+                        requestGeneration = generation,
+                        activeGeneration = homeLoadGeneration.get(),
+                        requestSourceId = sourceId,
+                        currentSourceId = currentSourceId
+                    )
+                ) {
+                    _homePageData.emit(Resource.Success(processHomePageData(homeData)))
+                }
             } catch (ex: Exception) {
                 if (ex is CancellationException) {
                     throw ex
+                }
+                if (!shouldPublishHomeLoadResult(
+                        requestGeneration = generation,
+                        activeGeneration = homeLoadGeneration.get(),
+                        requestSourceId = sourceId,
+                        currentSourceId = currentSourceId
+                    )
+                ) {
+                    return@launch
+                }
+                if (publishedPartial) {
+                    Log.w("homepage", "完整首頁資料載入失敗，保留已載入時間表", ex)
+                    return@launch
                 }
                 lastHomePageData = null
                 Log.e("homepage", "请求数据失败", ex)
@@ -184,7 +222,9 @@ class HomeViewModel(
                 val message = "請求資料失敗：" + ex.message
                 _homePageData.emit(Resource.Error(message))
             } finally {
-                loadDataJob = null
+                if (homeLoadGeneration.get() == generation) {
+                    loadDataJob = null
+                }
             }
         }
     }
@@ -481,11 +521,10 @@ class HomeViewModel(
             .onFailure { Log.e("tv-library-sync", "載入帳戶收藏及紀錄失敗", it) }
     }
 
-    private fun loadGuestContent(favorites: List<com.jing.sakura.auth.FavoritePayload>) {
+    private suspend fun loadGuestContent(favorites: List<com.jing.sakura.auth.FavoritePayload>) {
         replaceRemoteHeroPreviewHistory(emptyList())
         _recommendations.value = emptyList()
         _todayUpdates.value = emptyList()
-        _theaterItems.value = emptyList()
         val recent = videoHistoryDao.queryRecentHistory(GUEST_CONTINUE_WATCHING_LIMIT)
             .map(VideoHistoryEntity::toLocalAnimeData)
         _syncedRows.value = buildList {
@@ -494,6 +533,9 @@ class HomeViewModel(
                 .takeIf(List<AnimeData>::isNotEmpty)
                 ?.let { add(NamedValue("我的收藏", it)) }
         }
+        runCatching { authRepository.fetchPublicTheaterItems() }
+            .onSuccess { _theaterItems.value = it }
+            .onFailure { Log.e("tv-theater-sync", "載入公開劇場版目錄失敗", it) }
     }
 
     private fun clearSyncedContent() {

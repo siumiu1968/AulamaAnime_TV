@@ -9,6 +9,39 @@ internal const val HOME_ROW_LOOP_MIN_ITEMS = 6
 internal const val WELCOME_CONTENT_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1_000L
 private const val WELCOME_RECENT_ROW_LIMIT = 8
 
+internal fun shouldBlockForInitialHomeLoad(
+    isLoading: Boolean,
+    hasDisplayData: Boolean
+): Boolean = isLoading && !hasDisplayData
+
+internal fun shouldSkipHomeContentEntrance(
+    reducedMotion: Boolean,
+    contentEntranceVersion: Int
+): Boolean = reducedMotion || contentEntranceVersion == 0
+
+internal fun shouldPublishHomeLoadResult(
+    requestGeneration: Long,
+    activeGeneration: Long,
+    requestSourceId: String,
+    currentSourceId: String
+): Boolean = requestGeneration == activeGeneration && requestSourceId == currentSourceId
+
+internal fun shouldPublishProgressiveHomePayload(
+    hasDisplayDataAtRequestStart: Boolean,
+    hasRenderableRows: Boolean,
+    requestGeneration: Long,
+    activeGeneration: Long,
+    requestSourceId: String,
+    currentSourceId: String
+): Boolean = !hasDisplayDataAtRequestStart &&
+    hasRenderableRows &&
+    shouldPublishHomeLoadResult(
+        requestGeneration = requestGeneration,
+        activeGeneration = activeGeneration,
+        requestSourceId = requestSourceId,
+        currentSourceId = currentSourceId
+    )
+
 internal fun nextHeroIndex(currentIndex: Int, delta: Int, itemCount: Int): Int {
     if (itemCount <= 0) return 0
     return (currentIndex + delta).floorMod(itemCount)
@@ -26,6 +59,30 @@ internal fun restoredHomeRowSelection(savedIndex: Int?, itemCount: Int): Int {
 
 internal fun homeRowShouldLoop(itemCount: Int): Boolean =
     itemCount >= HOME_ROW_LOOP_MIN_ITEMS
+
+internal fun homeRowVirtualItemKey(
+    virtualIndex: Int,
+    sourceId: String,
+    animeId: String
+): String = "$virtualIndex:$sourceId:$animeId"
+
+internal fun shouldPublishFocusedHomeCard(
+    eventRowIndex: Int,
+    focusedRowIndex: Int?
+): Boolean = eventRowIndex == focusedRowIndex
+
+internal data class HomeRowFocusBehavior(
+    val notifySelection: Boolean,
+    val dimAfterDelay: Boolean
+)
+
+internal fun homeRowFocusBehavior(
+    rowFocused: Boolean,
+    previewEnabled: Boolean
+): HomeRowFocusBehavior = HomeRowFocusBehavior(
+    notifySelection = rowFocused,
+    dimAfterDelay = rowFocused && previewEnabled
+)
 
 internal fun moveFiniteHomeRowSelection(
     currentIndex: Int,

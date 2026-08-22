@@ -49,6 +49,9 @@ fun VideoCard(
     isFocusable: Boolean = true,
     externallyFocused: Boolean = false,
     showFocusFrame: Boolean = true,
+    focusAccent: Color? = null,
+    posterWidthPx: Int = 420,
+    posterHeightPx: Int = 600,
     onKeyEvent: ((KeyEvent) -> Boolean)? = null,
     onLongClick: (() -> Unit)? = null,
     onFocused: (() -> Unit)? = null,
@@ -63,28 +66,49 @@ fun VideoCard(
     val focused = internallyFocused || externallyFocused
     val focusFrameActive = focused && showFocusFrame
     var focusSettled by remember { mutableStateOf(false) }
-    val posterRequest = rememberPosterImageRequest(imageUrl = imageUrl)
-    val artworkAccent = rememberArtworkAccent(imageUrl, enabled = focusSettled)
+    var focusedAccent by remember(imageUrl) { mutableStateOf<Color?>(null) }
+    val posterRequest = rememberPosterImageRequest(
+        imageUrl = imageUrl,
+        widthPx = posterWidthPx,
+        heightPx = posterHeightPx
+    )
+    val extractedArtworkAccent = rememberArtworkAccent(
+        imageUrl,
+        enabled = focusSettled && focusAccent == null
+    )
+    val artworkAccent = focusAccent ?: if (focused) {
+        focusedAccent ?: extractedArtworkAccent
+    } else {
+        extractedArtworkAccent
+    }
     val cardScale = if (focusFrameActive) focusScale else 1f
     LaunchedEffect(focused) {
         focusSettled = false
         if (focused) {
+            focusedAccent = focusAccent ?: extractedArtworkAccent
             onFocused?.invoke()
             delay(220)
             focusSettled = true
+        } else {
+            focusedAccent = null
         }
     }
-    Box(
-        modifier = modifier
-            .graphicsLayer {
+    val focusLayerModifier = if (focusFrameActive) {
+        Modifier.graphicsLayer {
                 scaleX = cardScale
                 scaleY = cardScale
-                shadowElevation = if (focusFrameActive && focusSettled) 8.dp.toPx() else 0f
+                shadowElevation = if (focusFrameActive) 8.dp.toPx() else 0f
                 shape = AulamaCardShape
                 clip = false
                 ambientShadowColor = artworkAccent.copy(alpha = 0.54f)
                 spotShadowColor = artworkAccent.copy(alpha = 0.82f)
             }
+    } else {
+        Modifier
+    }
+    Box(
+        modifier = modifier
+            .then(focusLayerModifier)
             .onFocusChanged {
                 internallyFocused = it.isFocused || it.hasFocus
             }

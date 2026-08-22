@@ -45,3 +45,9 @@ interface AnimationSource {
         val headers: Map<String, String> = emptyMap()
     )
 }
+
+interface ProgressiveHomePageSource {
+    suspend fun fetchHomePageDataProgressively(
+        onPartial: suspend (HomePageData) -> Unit
+    ): HomePageData
+}

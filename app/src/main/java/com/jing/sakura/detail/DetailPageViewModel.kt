@@ -1,6 +1,7 @@
 package com.jing.sakura.detail
 
 import android.util.Log
+import androidx.annotation.MainThread
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jing.sakura.auth.AulamaAuthRepository
@@ -10,7 +11,12 @@ import com.jing.sakura.auth.TvHistoryItem
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimeDetailPageData
 import com.jing.sakura.data.Resource
+import com.jing.sakura.home.HeroPreviewSpec
+import com.jing.sakura.home.HeroPreviewState
+import com.jing.sakura.player.NavigateToPlayerArg
 import com.jing.sakura.player.PlaybackCompletionPolicy
+import com.jing.sakura.repo.selectNonJapaneseSynopsis
+import com.jing.sakura.repo.shouldFetchSynopsisEnrichment
 import com.jing.sakura.repo.WebPageRepository
 import com.jing.sakura.room.VideoHistoryDao
 import com.jing.sakura.room.VideoHistoryEntity
@@ -23,6 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Collections
 
 class DetailPageViewModel constructor(
@@ -58,6 +65,12 @@ class DetailPageViewModel constructor(
     val relatedDescriptions: StateFlow<Map<String, String>> = _relatedDescriptions
     private val requestedRelatedDescriptions =
         Collections.synchronizedSet(mutableSetOf<String>())
+
+    private val _relatedPreviewState = MutableStateFlow<HeroPreviewState>(HeroPreviewState.Idle)
+    val relatedPreviewState: StateFlow<HeroPreviewState> = _relatedPreviewState
+    private var relatedPreviewJob: Job? = null
+    private var relatedPreviewRequestKey: String? = null
+    private val relatedPreviewOwnership = DetailRelatedPreviewRequestOwnership()
 
     init {
         loadData()
@@ -137,7 +150,7 @@ class DetailPageViewModel constructor(
     fun loadRelatedDescription(anime: AnimeData) {
         val key = relatedAnimeKey(anime, sourceId)
         if (
-            anime.description.isNotBlank() ||
+            !shouldFetchSynopsisEnrichment(anime.description) ||
             !_relatedDescriptions.value[key].isNullOrBlank() ||
             !requestedRelatedDescriptions.add(key)
         ) {
@@ -146,9 +159,11 @@ class DetailPageViewModel constructor(
 
         viewModelScope.launch(Dispatchers.IO) {
             val relatedSourceId = anime.sourceId.ifBlank { sourceId }
-            val description = runCatching {
-                repository.fetchDetailPage(anime.id, relatedSourceId).description.trim()
-            }.getOrNull().orEmpty()
+            val description = selectNonJapaneseSynopsis(
+                runCatching {
+                    repository.fetchDetailPage(anime.id, relatedSourceId).description
+                }.getOrNull()
+            )
 
             if (description.isNotBlank()) {
                 _relatedDescriptions.value = _relatedDescriptions.value + (key to description)
@@ -156,6 +171,121 @@ class DetailPageViewModel constructor(
                 requestedRelatedDescriptions.remove(key)
             }
         }
+    }
+
+    @MainThread
+    fun prepareRelatedPreview(anime: AnimeData) {
+        val relatedSourceId = anime.sourceId.ifBlank { sourceId }
+        if (anime.id.isBlank() || relatedSourceId.isBlank()) {
+            cancelRelatedPreview()
+            return
+        }
+        val requestKey = "$relatedSourceId:${anime.id}"
+        val currentState = _relatedPreviewState.value
+        if (relatedPreviewRequestKey == requestKey && relatedPreviewJob?.isActive == true) return
+        if (
+            currentState is HeroPreviewState.Ready &&
+            currentState.spec.navigateToPlayerArg.animeId == anime.id &&
+            currentState.spec.navigateToPlayerArg.sourceId == relatedSourceId
+        ) {
+            return
+        }
+
+        val generation = relatedPreviewOwnership.startRequest()
+        relatedPreviewJob?.cancel()
+        relatedPreviewRequestKey = requestKey
+        _relatedPreviewState.value = HeroPreviewState.Loading(requestKey)
+        relatedPreviewJob = viewModelScope.launch {
+            try {
+                val spec = buildRelatedPreviewSpec(
+                    anime = anime,
+                    relatedSourceId = relatedSourceId,
+                    requestKey = requestKey,
+                    generation = generation
+                )
+                publishRelatedPreview(
+                    generation = generation,
+                    state = HeroPreviewState.Ready(spec)
+                )
+            } catch (exception: Exception) {
+                if (exception is CancellationException) throw exception
+                Log.e("related-preview", "準備相關動漫預覽失敗", exception)
+                publishRelatedPreview(
+                    generation = generation,
+                    state = HeroPreviewState.Error(
+                        requestKey = requestKey,
+                        message = exception.message ?: "預覽影片載入失敗"
+                    )
+                )
+            } finally {
+                if (relatedPreviewOwnership.owns(generation)) {
+                    relatedPreviewJob = null
+                    relatedPreviewRequestKey = null
+                }
+            }
+        }
+    }
+
+    @MainThread
+    fun cancelRelatedPreview() {
+        relatedPreviewOwnership.invalidate()
+        relatedPreviewJob?.cancel()
+        relatedPreviewJob = null
+        relatedPreviewRequestKey = null
+        _relatedPreviewState.value = HeroPreviewState.Idle
+    }
+
+    private fun publishRelatedPreview(generation: Long, state: HeroPreviewState) {
+        if (relatedPreviewOwnership.owns(generation)) {
+            _relatedPreviewState.value = state
+        }
+    }
+
+    private suspend fun buildRelatedPreviewSpec(
+        anime: AnimeData,
+        relatedSourceId: String,
+        requestKey: String,
+        generation: Long
+    ): HeroPreviewSpec = withContext(Dispatchers.IO) {
+        val detail = repository.fetchDetailPage(anime.id, relatedSourceId)
+        val playlist = detail.playLists
+            .getOrNull(detail.defaultPlayListIndex)
+            ?.takeIf { it.episodeList.isNotEmpty() }
+            ?: detail.playLists.firstOrNull {
+                it.defaultPlayList && it.episodeList.isNotEmpty()
+            }
+            ?: detail.playLists.firstOrNull { it.episodeList.isNotEmpty() }
+            ?: throw RelatedPreviewPreparationException("未有可播放集數")
+        val playlistIndex = detail.playLists.indexOf(playlist)
+        val episode = playlist.episodeList.first()
+        val response = repository.fetchVideoUrl(
+            episodeId = episode.episodeId,
+            sourceId = relatedSourceId,
+            animeId = anime.id
+        )
+        val video = when (response) {
+            is Resource.Success -> response.data
+            is Resource.Error -> throw RelatedPreviewPreparationException(response.message)
+            is Resource.Loading -> throw RelatedPreviewPreparationException("預覽影片尚未準備好")
+        }
+        val playerArg = NavigateToPlayerArg(
+            animeName = detail.animeName.ifBlank { anime.title },
+            animeId = anime.id,
+            coverUrl = detail.imageUrl.ifBlank { anime.imageUrl },
+            playIndex = 0,
+            playlist = playlist.episodeList,
+            sourceId = relatedSourceId,
+            playlists = detail.playLists,
+            playlistIndex = playlistIndex
+        )
+        HeroPreviewSpec(
+            key = "$requestKey:${episode.episodeId}:$generation",
+            url = video.url,
+            headers = video.headers,
+            startPositionMs = 0L,
+            posterUrl = playerArg.coverUrl,
+            navigateToPlayerArg = playerArg
+        )
     }
 
     fun fetchHistory() {
@@ -310,10 +440,24 @@ class DetailPageViewModel constructor(
             ?.toLong()
             ?: 0L
 
+    private class RelatedPreviewPreparationException(message: String) : Exception(message)
+
     companion object {
         private val RATING_PATTERN = Regex("""\d+(?:\.\d+)?""")
     }
 
+}
+
+internal class DetailRelatedPreviewRequestOwnership {
+    private var generation = 0L
+
+    fun startRequest(): Long = ++generation
+
+    fun invalidate() {
+        generation += 1L
+    }
+
+    fun owns(requestGeneration: Long): Boolean = requestGeneration == generation
 }
 
 data class FavoriteUiState(

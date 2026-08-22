@@ -5,6 +5,7 @@ import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.player.NavigateToPlayerArg
 import com.jing.sakura.repo.WebPageRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -103,7 +104,9 @@ object RemotePlaybackCoordinator {
             is RemotePlaybackCommand.Invalid -> RemoteCommandAckStatus.FAILED
             is RemotePlaybackCommand.OpenAnime -> {
                 val playerArg = getOrNull {
-                    buildPlayerArg(command, webPageRepository)
+                    withContext(Dispatchers.IO) {
+                        buildPlayerArg(command, webPageRepository)
+                    }
                 }
                 if (playerArg != null && runCatching { onOpenAnime(playerArg) }.getOrDefault(false)) {
                     RemoteCommandAckStatus.ACCEPTED
@@ -169,7 +172,7 @@ object RemotePlaybackCoordinator {
         commandId: String,
         status: RemoteCommandAckStatus
     ) {
-        withContext(NonCancellable) {
+        withContext(NonCancellable + Dispatchers.IO) {
             runCatching { repository.acknowledgeRemoteCommand(commandId, status) }
         }
     }

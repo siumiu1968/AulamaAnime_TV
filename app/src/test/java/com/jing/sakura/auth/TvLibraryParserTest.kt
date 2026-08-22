@@ -6,6 +6,37 @@ import org.junit.Test
 
 class TvLibraryParserTest {
     @Test
+    fun mapsAllPublicScheduleDaysAndKeepsLatestStatus() {
+        val payload = TvLibraryParser.parseSchedule(
+            body = """
+                {
+                  "days": [
+                    {"day":1,"items":[{"id":"m1","title":"週一新番","currentEpisode":"07 | 週一23:05後"}]},
+                    {"day":4,"items":[{"id":"t1","title":"上季作品","currentEpisode":"已完結"}]}
+                  ]
+                }
+            """.trimIndent(),
+            currentDayIndex = 2
+        )
+
+        assertEquals(2, payload.current)
+        assertEquals(7, payload.timeline.size)
+        assertEquals("07 | 週一23:05後", payload.timeline[0].second.single().currentEpisode)
+        assertTrue(payload.timeline[1].second.isEmpty())
+        assertEquals("已完結", payload.timeline[3].second.single().currentEpisode)
+    }
+
+    @Test
+    fun mapsPublicTheaterCatalog() {
+        val items = TvLibraryParser.parseTheaterItems(
+            """{"ok":true,"theaterItems":[{"id":"t1","title":"最新劇場版","poster":"t.jpg"}]}"""
+        )
+
+        assertEquals(1, items.size)
+        assertEquals("最新劇場版", items.single().title)
+    }
+
+    @Test
     fun mapsHomeRecommendationsTodayAndTheater() {
         val payload = TvLibraryParser.parseHome(
             body = """
@@ -168,6 +199,45 @@ class TvLibraryParserTest {
         assertEquals("同系列", payload.related.single().title)
         assertEquals("為你推介", payload.recommendations.single().title)
         assertTrue(payload.personalizedRecommendations)
+    }
+
+    @Test
+    fun mapsAuthenticatedGirigiriOnlyDetailForTvPlayback() {
+        val payload = TvLibraryParser.parseAnimeDetail(
+            """
+                {
+                  "ok": true,
+                  "item": {
+                    "id": "gg:GV27102",
+                    "title": "只有 GiriGiri 的動畫",
+                    "summary": "繁體中文簡介",
+                    "poster": "https://img.example/poster.jpg",
+                    "year": "2026",
+                    "episodes": [
+                      {"label":"第01集"},
+                      {"label":"第02集"}
+                    ],
+                    "providerEpisodeCounts": {
+                      "girigiri_cht": 2
+                    },
+                    "playLists": [
+                      {"code":"girigiri_cht","name":"主線路B（繁中）","count":2},
+                      {"code":"girigiri_chs","name":"主線路B（簡中）","count":1}
+                    ],
+                    "info": {"area":"日本","director":"測試導演"}
+                  }
+                }
+            """.trimIndent()
+        )
+
+        assertEquals("gg:GV27102", checkNotNull(payload.catalogItem).id)
+        assertEquals("繁體中文簡介", payload.catalogItem?.description)
+        assertEquals(listOf("第01集", "第02集"), payload.episodeLabels)
+        assertEquals(
+            mapOf("girigiri_cht" to 2, "girigiri_chs" to 1),
+            payload.providerEpisodeCounts
+        )
+        assertEquals(listOf("地區：日本", "導演：測試導演"), payload.infoList)
     }
 
     @Test

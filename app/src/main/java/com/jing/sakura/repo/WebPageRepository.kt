@@ -32,6 +32,18 @@ class WebPageRepository(
     suspend fun fetchHomePage(sourceId: String): HomePageData =
         requireAnimationSource(sourceId).fetchHomePageData()
 
+    suspend fun fetchHomePageProgressively(
+        sourceId: String,
+        onPartial: suspend (HomePageData) -> Unit
+    ): HomePageData {
+        val source = requireAnimationSource(sourceId)
+        return if (source is ProgressiveHomePageSource) {
+            source.fetchHomePageDataProgressively(onPartial)
+        } else {
+            source.fetchHomePageData()
+        }
+    }
+
     suspend fun fetchDetailPage(animeId: String, sourceId: String): AnimeDetailPageData =
         requireAnimationSource(sourceId).fetchDetailPage(animeId)
 

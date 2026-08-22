@@ -51,9 +51,9 @@ class DeviceLoginLayoutPolicyTest {
         val simplified = welcomeCopy(TvLanguage.Simplified)
         val traditional = welcomeCopy(TvLanguage.Traditional)
 
-        assertEquals("让每一段精彩，都在大屏幕绽放。", simplified.slogan)
+        assertEquals("让每一段精彩\n都在大屏幕绽放", simplified.slogan)
         assertEquals("使用 Aulama ID 登录", simplified.loginButton)
-        assertEquals("讓每一段精彩，都在大螢幕綻放。", traditional.slogan)
+        assertEquals("讓每一段精彩\n都在大螢幕綻放", traditional.slogan)
         assertTrue(traditional.message.contains("跨裝置同步"))
     }
 

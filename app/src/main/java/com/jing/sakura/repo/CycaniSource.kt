@@ -5,6 +5,8 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.jing.sakura.auth.AulamaAuthRepository
+import com.jing.sakura.auth.AulamaPlaybackProvider
+import com.jing.sakura.auth.parseCycaniPlaybackUrl
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimeDetailPageData
 import com.jing.sakura.data.AnimePageData
@@ -34,15 +36,23 @@ import org.jsoup.nodes.Element
 class CycaniSource(
     private val okHttpClient: OkHttpClient,
     private val authRepository: AulamaAuthRepository? = null
-) : AnimationSource {
+) : AnimationSource, ProgressiveHomePageSource {
 
     private var navCache: List<NavItem>? = null
     private val webPlaybackResolver by lazy {
         CycaniWebPlaybackResolver(
             client = okHttpClient,
             authenticatedPlayUrlResolver = { sectionId ->
-                authRepository?.fetchCycaniPlaybackUrl(sectionId)
-                    ?: error("Aulama login is required for Cycani playback")
+                val repository = authRepository
+                repository?.fetchCycaniPlaybackUrl(sectionId)
+                    ?: if (shouldUseDirectCycaniPlayUrlFallback(repository != null)) {
+                        okHttpClient.getHtml(
+                            "https://aulama.org/anime/api/cycani/sections/$sectionId/play-url"
+                        ).let(::parseCycaniPlaybackUrl)
+                    } else {
+                        null
+                    }
+                    ?: error("Cycani playback URL is unavailable")
             }
         )
     }
@@ -62,65 +72,142 @@ class CycaniSource(
 
     override fun supportTimeline(): Boolean = true
 
-    override suspend fun fetchHomePageData(): HomePageData {
-        val timelineGroups = fetchUpdateTimeline().timeline.mapNotNull { (name, animeList) ->
-            animeList.takeIf { it.isNotEmpty() }?.let { NamedValue(name, it) }
-        }
+    override suspend fun fetchHomePageData(): HomePageData =
+        fetchHomePageDataProgressively { }
 
-        val groups = runCatching { fetchOfficialHomeGroups() }.getOrDefault(emptyList()).ifEmpty {
-            val navItems = fetchNavItems()
-            val preferredItems = navItems.filter { it.typeId in setOf("20", "21") }
-                .ifEmpty { navItems.take(2) }
-            preferredItems.mapNotNull { navItem ->
-                val page = fetchQueryPage(
-                    page = 1,
-                    params = linkedMapOf<String, String>().apply {
-                        put("type_id", navItem.typeId)
-                        navItem.years.firstOrNull()?.let { put("year", it) }
-                    }
-                )
-                if (page.animeList.isEmpty()) {
-                    null
-                } else {
-                    NamedValue(trad(navItem.typeName), page.animeList)
-                }
+    override suspend fun fetchHomePageDataProgressively(
+        onPartial: suspend (HomePageData) -> Unit
+    ): HomePageData = coroutineScope {
+        val timelineGroups = async {
+            fetchUpdateTimeline().timeline.mapNotNull { (name, animeList) ->
+                animeList.takeIf { it.isNotEmpty() }?.let { NamedValue(name, it) }
             }
         }
-
-        val homeGroups = timelineGroups + groups
+        val catalogGroups = async {
+            try {
+                Result.success(fetchHomeCatalogGroups())
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Result.failure(error)
+            }
+        }
+        val scheduleRows = timelineGroups.await()
+        if (scheduleRows.isNotEmpty()) {
+            onPartial(HomePageData(sourceId = sourceId, seriesList = scheduleRows))
+        }
+        val homeGroups = scheduleRows + catalogGroups.await().getOrThrow()
 
         if (homeGroups.isEmpty()) {
             throw RuntimeException(trad("次元城首页未解析到内容"))
         }
 
-        return HomePageData(sourceId = sourceId, seriesList = refreshArtworkGroups(homeGroups))
+        HomePageData(sourceId = sourceId, seriesList = homeGroups)
     }
 
-    override suspend fun fetchDetailPage(animeId: String): AnimeDetailPageData = try {
-        fetchWebDetailPage(animeId)
-    } catch (error: CancellationException) {
-        throw error
-    } catch (_: Exception) {
-        fetchLegacyDetailPage(animeId)
+    private suspend fun fetchHomeCatalogGroups(): List<NamedValue<List<AnimeData>>> {
+        val officialGroups = try {
+            fetchOfficialHomeGroups()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (officialGroups.isNotEmpty()) return officialGroups
+
+        val navItems = fetchNavItems()
+        val preferredItems = navItems.filter { it.typeId in setOf("20", "21") }
+            .ifEmpty { navItems.take(2) }
+        return preferredItems.mapNotNull { navItem ->
+            val page = fetchQueryPage(
+                page = 1,
+                params = linkedMapOf<String, String>().apply {
+                    put("type_id", navItem.typeId)
+                    navItem.years.firstOrNull()?.let { put("year", it) }
+                }
+            )
+            if (page.animeList.isEmpty()) {
+                null
+            } else {
+                NamedValue(trad(navItem.typeName), page.animeList)
+            }
+        }
+    }
+
+    override suspend fun fetchDetailPage(animeId: String): AnimeDetailPageData {
+        if (usesAuthenticatedAulamaDetail(animeId)) {
+            return fetchAulamaCatalogDetailPage(animeId)
+        }
+        return try {
+            fetchWebDetailPage(animeId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            fetchLegacyDetailPage(animeId)
+        }
+    }
+
+    private suspend fun fetchAulamaCatalogDetailPage(animeId: String): AnimeDetailPageData {
+        val repository = authRepository
+            ?: throw IllegalStateException("暫時未能載入動畫詳情")
+        val detail = repository.fetchTvAnimeDetail(animeId)
+        val item = detail.catalogItem
+            ?: throw IllegalStateException("暫時未能載入動畫詳情")
+        val providers = detail.providerEpisodeCounts.map { (providerId, episodeCount) ->
+            AulamaPlaybackProvider(
+                id = providerId,
+                available = episodeCount > 0,
+                matchedTitle = item.title,
+                episodeCount = episodeCount,
+                lineCount = if (episodeCount > 0) 1 else 0,
+                reason = ""
+            )
+        }
+        val playLists = ExternalPlaybackPlaylistPolicy.playlists(
+            catalogAnimeId = animeId,
+            providers = providers,
+            canonicalEpisodeLabels = detail.episodeLabels
+        ).mapIndexed { index, spec ->
+            AnimePlayList(
+                name = spec.displayName,
+                episodeList = spec.episodes.map { episode ->
+                    AnimePlayListEpisode(
+                        episode = localizeText(episode.label),
+                        episodeId = encodeEpisodePayload(
+                            EpisodePayload(
+                                url = "",
+                                needParse = false,
+                                sourceLine = spec.displayName,
+                                externalProvider = spec.providerId,
+                                externalAnimeId = episode.catalogAnimeId,
+                                externalEpisodeIndex = episode.index
+                            )
+                        )
+                    )
+                },
+                defaultPlayList = index == 0
+            )
+        }
+        if (playLists.isEmpty()) {
+            throw IllegalStateException("此動畫暫時未有可播放線路")
+        }
+        return AnimeDetailPageData(
+            animeId = animeId,
+            animeName = localizeText(item.title),
+            description = selectNonJapaneseSynopsis(localizeText(item.description)),
+            imageUrl = item.imageUrl,
+            defaultPlayListIndex = 0,
+            playLists = playLists,
+            otherAnimeList = detail.related,
+            infoList = buildList {
+                item.year.takeIf(String::isNotBlank)?.let { add("年份：${localizeText(it)}") }
+                item.tags.takeIf(String::isNotBlank)?.let { add("類型：${localizeText(it)}") }
+                addAll(detail.infoList.map(::localizeText))
+            }
+        )
     }
 
     private suspend fun fetchWebDetailPage(animeId: String): AnimeDetailPageData = coroutineScope {
-        val playbackProviders = async {
-            try {
-                authRepository?.fetchPlaybackProviders(animeId).orEmpty()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                emptyList()
-            }
-        }
-        val legacyDetail = apiGetDataObject("$API_BASE_URL/video/info/$animeId")
-        val legacyTitle = legacyDetail.string("vod_name").ifBlank {
-            throw RuntimeException(trad("未找到番劇標題"))
-        }
-        val legacyYear = legacyDetail.string("vod_year").ifBlank {
-            throw RuntimeException(trad("未找到番劇年份"))
-        }
         val cachedSynopsis = async {
             try {
                 withTimeoutOrNull(CACHED_SYNOPSIS_TIMEOUT_MS) {
@@ -132,9 +219,25 @@ class CycaniSource(
                 ""
             }
         }
+        val legacyDetail = apiGetDataObject("$API_BASE_URL/video/info/$animeId")
+        val legacyTitle = legacyDetail.string("vod_name").ifBlank {
+            throw RuntimeException(trad("未找到番劇標題"))
+        }
+        val legacyYear = legacyDetail.string("vod_year").ifBlank {
+            throw RuntimeException(trad("未找到番劇年份"))
+        }
         val detail = webPlaybackResolver.fetchDetail(
             CycaniWebTitleRequest(legacyTitle, legacyYear)
         )
+        val playbackProviders = async {
+            try {
+                authRepository?.fetchPlaybackProviders(animeId).orEmpty()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
         val title = localizeText(detail.title).ifBlank {
             throw RuntimeException(trad("未找到番剧标题"))
         }
@@ -146,7 +249,7 @@ class CycaniSource(
         }
         val mainPlayList = detail.playLists.first().let { playList ->
             AnimePlayList(
-                name = "主線路",
+                name = "主線路A",
                 episodeList = playList.sections.map { section ->
                     AnimePlayListEpisode(
                         episode = localizeText(section.title),
@@ -167,27 +270,24 @@ class CycaniSource(
             )
         }
         val canonicalEpisodes = mainPlayList.episodeList
-        val providersById = playbackProviders.await().associateBy { it.id }
-        val backupPlayLists = listOf("sakura" to "後備 A", "age" to "後備 B")
-            .mapNotNull { (providerId, displayName) ->
-                val provider = providersById[providerId]?.takeIf { it.available }
-                    ?: return@mapNotNull null
-                val episodeCount = provider.episodeCount.takeIf { it > 0 }
-                    ?: canonicalEpisodes.size
+        val externalPlayLists = ExternalPlaybackPlaylistPolicy.playlists(
+            catalogAnimeId = animeId,
+            providers = playbackProviders.await(),
+            canonicalEpisodeLabels = canonicalEpisodes.map(AnimePlayListEpisode::episode)
+        ).map { spec ->
                 AnimePlayList(
-                    name = displayName,
-                    episodeList = (0 until episodeCount).map { episodeIndex ->
+                    name = spec.displayName,
+                    episodeList = spec.episodes.map { episode ->
                         AnimePlayListEpisode(
-                            episode = canonicalEpisodes.getOrNull(episodeIndex)?.episode
-                                ?: "第${episodeIndex + 1}集",
+                            episode = episode.label,
                             episodeId = encodeEpisodePayload(
                                 EpisodePayload(
                                     url = "",
                                     needParse = false,
-                                    sourceLine = displayName,
-                                    externalProvider = providerId,
-                                    externalAnimeId = detail.id,
-                                    externalEpisodeIndex = episodeIndex
+                                    sourceLine = spec.displayName,
+                                    externalProvider = spec.providerId,
+                                    externalAnimeId = episode.catalogAnimeId,
+                                    externalEpisodeIndex = episode.index
                                 )
                             )
                         )
@@ -195,7 +295,7 @@ class CycaniSource(
                     defaultPlayList = false
                 )
             }
-        val playLists = listOf(mainPlayList) + backupPlayLists
+        val playLists = listOf(mainPlayList) + externalPlayLists
         val infoList = buildList {
             addInfo("地區", trad(detail.area))
             addInfo("年份", trad(detail.year))
@@ -204,7 +304,10 @@ class CycaniSource(
             addInfo("導演", detail.director.joinToString("、").let(::localizeText))
             addInfo("編劇", localizeText(detail.writer))
         }
-        val description = cachedSynopsis.await().ifBlank { localizeText(detail.description) }
+        val description = selectNonJapaneseSynopsis(
+            cachedSynopsis.await(),
+            localizeText(detail.description)
+        )
 
         AnimeDetailPageData(
             animeId = animeId,
@@ -308,7 +411,10 @@ class CycaniSource(
             addInfo("編劇", localizeText(detail.string("vod_writer")))
             detail.string("vod_score").takeIf { it.isNotBlank() }?.let { add("評分：${trad(it)}") }
         }
-        val description = cachedSynopsis.await().ifBlank { localizeText(originalDescription) }
+        val description = selectNonJapaneseSynopsis(
+            cachedSynopsis.await(),
+            localizeText(originalDescription)
+        )
 
         AnimeDetailPageData(
             animeId = animeId,
@@ -358,6 +464,17 @@ class CycaniSource(
     }
 
     override suspend fun fetchUpdateTimeline(): UpdateTimeLine = coroutineScope {
+        authRepository?.let { repository ->
+            try {
+                repository.fetchPublicSchedule()
+                    .takeIf { schedule -> schedule.timeline.any { it.second.isNotEmpty() } }
+                    ?.let { return@coroutineScope it }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                // Keep the provider API as a resilient fallback for older servers.
+            }
+        }
         val labels = listOf(
             "週一",
             "週二",
@@ -559,14 +676,11 @@ class CycaniSource(
         page: Int,
         params: LinkedHashMap<String, String>
     ): AnimePageData {
-        val syncedPage = runCatching {
-            authRepository?.fetchCatalogPage(params, page, pageSize)
-        }.getOrNull()
-        if (syncedPage != null) {
+        if (authRepository?.session?.value != null) {
+            val syncedPage = authRepository.fetchCatalogPage(params, page, pageSize)
+                ?: throw IllegalStateException("暫時未能載入最新發現頁內容")
             return syncedPage.copy(
-                animeList = webPlaybackResolver.refreshArtwork(
-                    syncedPage.animeList.filterNot(::isSuppressedAnime)
-                )
+                animeList = syncedPage.animeList.filterNot(::isSuppressedAnime)
             )
         }
 
@@ -592,19 +706,6 @@ class CycaniSource(
             hasNextPage = total > page * pageSize,
             animeList = webPlaybackResolver.refreshArtwork(items)
         )
-    }
-
-    private suspend fun refreshArtworkGroups(
-        groups: List<NamedValue<List<AnimeData>>>
-    ): List<NamedValue<List<AnimeData>>> {
-        if (groups.isEmpty()) return groups
-        val refreshed = webPlaybackResolver.refreshArtwork(groups.flatMap { it.value })
-        var cursor = 0
-        return groups.map { group ->
-            val next = refreshed.slice(cursor until cursor + group.value.size)
-            cursor += group.value.size
-            NamedValue(group.name, next)
-        }
     }
 
     private suspend fun refreshArtworkTimeline(
@@ -864,7 +965,15 @@ class CycaniSource(
                 header("Accept", "application/json")
             }
         ).asJsonObject
-        return if (root.boolean("ok")) root.string("summaryZhHant") else ""
+        return if (root.boolean("ok")) {
+            selectNonJapaneseSynopsis(
+                root.string("summaryZhHant"),
+                root.string("summary"),
+                root.string("summaryOriginal")
+            )
+        } else {
+            ""
+        }
     }
 
     private fun localizeText(text: String): String = trad(text.trim())
@@ -920,7 +1029,7 @@ class CycaniSource(
         private const val TIMELINE_REQUEST_ATTEMPTS = 2
         private const val TIMELINE_RETRY_DELAY_MS = 320L
         private const val WEB_BASE_URL = "https://www.cycani.org/"
-        private const val CACHED_SYNOPSIS_TIMEOUT_MS = 800L
+        private const val CACHED_SYNOPSIS_TIMEOUT_MS = 6_000L
         private const val TIMELINE_SYNOPSIS_TIMEOUT_MS = 4_000L
         private const val PAYLOAD_PREFIX = "cycapi:"
         private const val DESKTOP_USER_AGENT =
@@ -929,3 +1038,9 @@ class CycaniSource(
 
     private fun trad(text: String): String = TraditionalChinese.convert(text)
 }
+
+internal fun shouldUseDirectCycaniPlayUrlFallback(hasAuthRepository: Boolean): Boolean =
+    !hasAuthRepository
+
+internal fun usesAuthenticatedAulamaDetail(animeId: String): Boolean =
+    animeId.startsWith("gg:", ignoreCase = true)

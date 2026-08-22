@@ -123,8 +123,10 @@ fun Response.bodyString(charset: Charset = Charsets.UTF_8): String {
 
 
 class AndroidCookieJar : CookieJar {
-    private val manager = CookieManager.getInstance().apply {
-        setAcceptCookie(true)
+    private val manager by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+        }
     }
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {

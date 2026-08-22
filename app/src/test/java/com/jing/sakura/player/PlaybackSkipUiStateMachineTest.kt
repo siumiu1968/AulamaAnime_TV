@@ -18,13 +18,14 @@ class PlaybackSkipUiStateMachineTest {
     )
 
     @Test
-    fun naturalIntroEntryRequestsInitialFocusWithoutCountdown() {
+    fun naturalIntroEntryShowsForFiveSecondsWithoutTakingTransportFocus() {
         val decision = PlaybackSkipUiStateMachine().update(intro)
 
         assertTrue(decision.isVisible)
-        assertTrue(decision.shouldRequestInitialFocus)
+        assertFalse(decision.shouldRequestInitialFocus)
         assertFalse(decision.shouldStartCountdown)
         assertTrue(decision.shouldScheduleAutoHide)
+        assertEquals(5_000L, PlaybackSkipUiStateMachine.TRANSIENT_SKIP_VISIBLE_MS)
     }
 
     @Test
@@ -101,14 +102,21 @@ class PlaybackSkipUiStateMachineTest {
     }
 
     @Test
-    fun introAutoHidesAfterTimeoutAndAnyRemoteActionRevealsIt() {
+    fun introTransitionsFromVisibleToHiddenToRevealedBeforeControlsShow() {
         val state = PlaybackSkipUiStateMachine()
         state.update(intro)
 
+        assertEquals(PlaybackSkipPromptState.VISIBLE, state.promptState())
         assertTrue(state.onTransientActionTimeout())
+        assertEquals(PlaybackSkipPromptState.HIDDEN, state.promptState())
         assertFalse(state.update(intro).isVisible)
         assertTrue(state.revealTransientAction())
+        assertEquals(PlaybackSkipPromptState.REVEALED, state.promptState())
         assertTrue(state.update(intro).isVisible)
+
+        state.onPlayerControlsShown()
+
+        assertEquals(PlaybackSkipPromptState.VISIBLE, state.promptState())
     }
 
     @Test
@@ -116,8 +124,108 @@ class PlaybackSkipUiStateMachineTest {
         val state = PlaybackSkipUiStateMachine()
         state.update(outro)
 
+        assertEquals(PlaybackSkipPromptState.INACTIVE, state.promptState())
         assertFalse(state.onTransientActionTimeout())
         assertFalse(state.revealTransientAction())
         assertTrue(state.update(outro).isVisible)
+    }
+
+    @Test
+    fun hiddenPromptConsumesFirstDirectionToRevealAndSecondDirectionShowsControls() {
+        val controller = PlaybackSkipPromptKeyController()
+
+        assertEquals(
+            PlaybackSkipPromptKeyAction.REVEAL_PROMPT,
+            controller.onKeyDown(
+                keyId = DIRECTION_KEY,
+                keyKind = PlaybackSkipPromptKeyKind.DIRECTION,
+                promptState = PlaybackSkipPromptState.HIDDEN,
+                playerControlsVisible = false,
+                repeatCount = 0
+            )
+        )
+        assertEquals(
+            PlaybackSkipPromptKeyAction.CONSUME,
+            controller.onKeyUp(DIRECTION_KEY)
+        )
+        assertEquals(
+            PlaybackSkipPromptKeyAction.SHOW_PLAYER_CONTROLS,
+            controller.onKeyDown(
+                keyId = DIRECTION_KEY,
+                keyKind = PlaybackSkipPromptKeyKind.DIRECTION,
+                promptState = PlaybackSkipPromptState.REVEALED,
+                playerControlsVisible = false,
+                repeatCount = 0
+            )
+        )
+        assertEquals(
+            PlaybackSkipPromptKeyAction.CONSUME,
+            controller.onKeyUp(DIRECTION_KEY)
+        )
+    }
+
+    @Test
+    fun hiddenPromptConfirmRevealsOnDownAndSkipsOnUp() {
+        val controller = PlaybackSkipPromptKeyController()
+
+        assertEquals(
+            PlaybackSkipPromptKeyAction.REVEAL_PROMPT,
+            controller.onKeyDown(
+                keyId = CONFIRM_KEY,
+                keyKind = PlaybackSkipPromptKeyKind.CONFIRM,
+                promptState = PlaybackSkipPromptState.HIDDEN,
+                playerControlsVisible = false,
+                repeatCount = 0
+            )
+        )
+        assertEquals(
+            PlaybackSkipPromptKeyAction.ACTIVATE_SKIP,
+            controller.onKeyUp(CONFIRM_KEY)
+        )
+    }
+
+    @Test
+    fun visibleTransientPromptConfirmSkipsWithoutOpeningPlayerControls() {
+        val controller = PlaybackSkipPromptKeyController()
+
+        assertEquals(
+            PlaybackSkipPromptKeyAction.CONSUME,
+            controller.onKeyDown(
+                keyId = CONFIRM_KEY,
+                keyKind = PlaybackSkipPromptKeyKind.CONFIRM,
+                promptState = PlaybackSkipPromptState.VISIBLE,
+                playerControlsVisible = false,
+                repeatCount = 0
+            )
+        )
+        assertEquals(
+            PlaybackSkipPromptKeyAction.ACTIVATE_SKIP,
+            controller.onKeyUp(CONFIRM_KEY)
+        )
+    }
+
+    @Test
+    fun nextEpisodeChoiceKeepsExistingFocusAndKeyRouting() {
+        val controller = PlaybackSkipPromptKeyController()
+
+        assertEquals(
+            PlaybackSkipPromptKeyAction.PASS_THROUGH,
+            controller.onKeyDown(
+                keyId = CONFIRM_KEY,
+                keyKind = PlaybackSkipPromptKeyKind.CONFIRM,
+                promptState = PlaybackSkipPromptState.INACTIVE,
+                playerControlsVisible = false,
+                repeatCount = 0
+            )
+        )
+        assertEquals(
+            PlaybackSkipPromptKeyAction.PASS_THROUGH,
+            controller.onKeyUp(CONFIRM_KEY)
+        )
+    }
+
+    companion object {
+        private const val DIRECTION_KEY = 1
+        private const val CONFIRM_KEY = 2
     }
 }

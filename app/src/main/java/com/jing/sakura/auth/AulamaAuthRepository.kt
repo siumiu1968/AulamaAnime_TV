@@ -7,14 +7,17 @@ import com.google.gson.JsonParser
 import com.jing.sakura.BuildConfig
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimePageData
+import com.jing.sakura.data.UpdateTimeLine
 import com.jing.sakura.extend.executeWithCoroutine
 import com.jing.sakura.repo.isSuppressedAnime
 import com.jing.sakura.remote.RemoteCommandAckStatus
 import com.jing.sakura.remote.RemotePlaybackCommand
 import com.jing.sakura.remote.RemotePlaybackCommandParser
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -30,6 +33,8 @@ class AulamaAuthRepository(
         storage.loadSession()?.takeUnless(AuthSession::isExpired)
     )
     val session: StateFlow<AuthSession?> = _session
+    private val _regionBlock = MutableStateFlow<RegionBlockState?>(null)
+    val regionBlock: StateFlow<RegionBlockState?> = _regionBlock
 
     suspend fun requestDeviceCode(nowEpochMs: Long = System.currentTimeMillis()): DeviceCodeRequestResult {
         val body = JsonObject().apply {
@@ -81,22 +86,55 @@ class AulamaAuthRepository(
         _session.value = session
     }
 
-    suspend fun validateAccount(session: AuthSession): AccountValidationResult = runCatching {
+    suspend fun validateAccount(session: AuthSession): AccountValidationResult = try {
         val request = authenticatedRequest("$API_BASE/device/me", session).get().build()
-        client.executeWithCoroutine(request).use { response ->
+        executeResponseOnIo(request) { response, responseBody ->
             when (response.code) {
                 200 -> {
-                    val account = DeviceAuthParser.parseAccountPayload(response.body?.string().orEmpty())
+                    val account = DeviceAuthParser.parseAccountPayload(responseBody)
                     val updated = session.copy(account = account)
                     storage.saveSession(updated)
                     _session.value = updated
                     AccountValidationResult.Valid(account)
                 }
-                401, 403 -> AccountValidationResult.Unauthorized
+                401 -> AccountValidationResult.Unauthorized
+                403 -> if (recordRegionBlock(response, responseBody)) {
+                    AccountValidationResult.RegionBlocked
+                } else {
+                    AccountValidationResult.Unauthorized
+                }
                 else -> AccountValidationResult.Unavailable
             }
         }
-    }.getOrDefault(AccountValidationResult.Unavailable)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        AccountValidationResult.Unavailable
+    }
+
+    suspend fun probeRegionAccess(): RegionAccessProbeResult = try {
+        val request = Request.Builder()
+            .url("$API_BASE/region-probe")
+            .header("Accept", "application/json")
+            .get()
+            .build()
+        executeResponseOnIo(request) { response, responseBody ->
+            val result = classifyRegionAccessProbe(
+                responseCode = response.code,
+                markerHeader = response.header(REGION_BLOCK_HEADER),
+                responseBody = responseBody
+            )
+            if (result == RegionAccessProbeResult.Blocked) {
+                recordRegionBlock(response, responseBody)
+            }
+            _regionBlock.value = regionBlockAfterProbe(_regionBlock.value, result)
+            result
+        }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        RegionAccessProbeResult.Unavailable
+    }
 
     suspend fun fetchRecommendations(): List<AnimeData> {
         return fetchTvHome().recommendations
@@ -114,6 +152,51 @@ class AulamaAuthRepository(
                 todayUpdates = payload.todayUpdates.filterNot(::isSuppressedAnime),
                 theaterItems = payload.theaterItems.filterNot(::isSuppressedAnime)
             )
+        }
+    }
+
+    suspend fun fetchPublicTheaterItems(): List<AnimeData> {
+        val request = Request.Builder()
+            .url("$API_BASE/catalog/theaters")
+            .header("Accept", "application/json")
+            .get()
+            .build()
+        return executeResponseOnIo(request) { response, responseBody ->
+            if (response.code == 403 && recordRegionBlock(response, responseBody)) {
+                return@executeResponseOnIo emptyList()
+            }
+            if (!response.isSuccessful) {
+                throw IllegalStateException("劇場版目錄請求失敗（${response.code}）")
+            }
+            TvLibraryParser.parseTheaterItems(responseBody)
+                .filterNot(::isSuppressedAnime)
+        }
+    }
+
+    suspend fun fetchPublicSchedule(): UpdateTimeLine {
+        val request = Request.Builder()
+            .url("$API_BASE/schedule")
+            .header("Accept", "application/json")
+            .get()
+            .build()
+        return executeResponseOnIo(request) { response, responseBody ->
+            if (response.code == 403 && recordRegionBlock(response, responseBody)) {
+                throw IllegalStateException("目前網絡區域未能使用時間表")
+            }
+            if (!response.isSuccessful) {
+                throw IllegalStateException("時間表請求失敗（${response.code}）")
+            }
+            val current = Calendar.getInstance().run {
+                val dayOfWeek = get(Calendar.DAY_OF_WEEK)
+                (dayOfWeek + 5) % 7
+            }
+            TvLibraryParser.parseSchedule(responseBody, current).let { payload ->
+                payload.copy(
+                    timeline = payload.timeline.map { (label, items) ->
+                        label to items.filterNot(::isSuppressedAnime)
+                    }
+                )
+            }
         }
     }
 
@@ -156,6 +239,7 @@ class AulamaAuthRepository(
                 filters.forEach { (key, value) ->
                     if (value.isNotBlank()) addQueryParameter(key, value)
                 }
+                addQueryParameter("catalog_mode", "current")
                 addQueryParameter("page", page.coerceAtLeast(1).toString())
                 addQueryParameter("limit", limit.coerceAtLeast(1).toString())
             }
@@ -221,7 +305,11 @@ class AulamaAuthRepository(
         episodeIndex: Int
     ): AulamaPlaybackSource? {
         val normalizedProvider = provider.trim().lowercase()
-        if (animeId.isBlank() || normalizedProvider !in setOf("sakura", "age") || episodeIndex !in 0..4_999) {
+        if (
+            animeId.isBlank() ||
+            normalizedProvider !in setOf("girigiri_cht", "girigiri_chs", "sakura", "age") ||
+            episodeIndex !in 0..4_999
+        ) {
             return null
         }
         val url = API_BASE.toHttpUrl().newBuilder()
@@ -235,8 +323,8 @@ class AulamaAuthRepository(
     }
 
     /**
-     * Resolves only the authenticated playback URL. Video bytes are fetched
-     * directly by the TV player from the returned CDN URL.
+     * Resolves the playback URL for both signed-in and guest sessions. Video
+     * bytes are fetched directly by the TV player from the returned CDN URL.
      */
     suspend fun fetchCycaniPlaybackUrl(sectionId: String): String? {
         if (!sectionId.matches(Regex("\\d{1,12}"))) return null
@@ -246,8 +334,25 @@ class AulamaAuthRepository(
             .addPathSegment(sectionId)
             .addPathSegment("play-url")
             .build()
-        val body = authenticatedBody(url) ?: return null
-        return parseCycaniPlaybackUrl(body)
+        val session = _session.value
+        val request = session
+            ?.let { authenticatedRequest(url.toString(), it) }
+            ?: Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
+        return executeResponseOnIo(request.get().build()) { response, responseBody ->
+            if (response.code == 401 && session != null) {
+                clearSession()
+                return@executeResponseOnIo null
+            }
+            if (response.code == 403 && recordRegionBlock(response, responseBody)) {
+                return@executeResponseOnIo null
+            }
+            if (!response.isSuccessful) {
+                throw IllegalStateException("播放地址請求失敗（${response.code}）")
+            }
+            parseCycaniPlaybackUrl(responseBody)
+        }
     }
 
     suspend fun fetchFavorites(): List<AnimeData> =
@@ -304,11 +409,12 @@ class AulamaAuthRepository(
             addProperty("updatedAt", payload.updatedAt)
         }.toString().toRequestBody(JSON_MEDIA_TYPE)
         val request = authenticatedRequest("$API_BASE/history", session).post(body).build()
-        return client.executeWithCoroutine(request).use { response ->
-            if (response.code == 401 || response.code == 403) {
+        return executeResponseOnIo(request) { response, responseBody ->
+            if (response.code == 401) {
                 clearSession()
-                return@use false
+                return@executeResponseOnIo false
             }
+            if (response.code == 403) recordRegionBlock(response, responseBody)
             response.isSuccessful
         }
     }
@@ -366,11 +472,12 @@ class AulamaAuthRepository(
             addProperty("appVersion", BuildConfig.VERSION_NAME)
         }.toString().toRequestBody(JSON_MEDIA_TYPE)
         val request = authenticatedRequest("$API_BASE/device/heartbeat", session).post(body).build()
-        return client.executeWithCoroutine(request).use { response ->
-            if (response.code == 401 || response.code == 403) {
+        return executeResponseOnIo(request) { response, responseBody ->
+            if (response.code == 401) {
                 clearSession()
-                return@use false
+                return@executeResponseOnIo false
             }
+            if (response.code == 403) recordRegionBlock(response, responseBody)
             response.isSuccessful
         }
     }
@@ -378,15 +485,19 @@ class AulamaAuthRepository(
     suspend fun fetchNextRemoteCommand(): RemotePlaybackCommand? {
         val session = _session.value ?: return null
         val request = authenticatedRequest("$API_BASE/device/commands/next", session).get().build()
-        return client.executeWithCoroutine(request).use { response ->
-            if (response.code == 401 || response.code == 403) {
+        return executeResponseOnIo(request) { response, responseBody ->
+            if (response.code == 401) {
                 clearSession()
-                return@use null
+                return@executeResponseOnIo null
+            }
+            if (response.code == 403) {
+                recordRegionBlock(response, responseBody)
+                return@executeResponseOnIo null
             }
             if (!response.isSuccessful) {
                 throw IllegalStateException("遙控指令請求失敗（${response.code}）")
             }
-            RemotePlaybackCommandParser.parse(response.body?.string().orEmpty())
+            RemotePlaybackCommandParser.parse(responseBody)
         }
     }
 
@@ -402,11 +513,12 @@ class AulamaAuthRepository(
             "$API_BASE/device/commands/$commandId/ack",
             session
         ).post(body).build()
-        return client.executeWithCoroutine(request).use { response ->
-            if (response.code == 401 || response.code == 403) {
+        return executeResponseOnIo(request) { response, responseBody ->
+            if (response.code == 401) {
                 clearSession()
-                return@use false
+                return@executeResponseOnIo false
             }
+            if (response.code == 403) recordRegionBlock(response, responseBody)
             response.isSuccessful || response.code == 409
         }
     }
@@ -416,7 +528,9 @@ class AulamaAuthRepository(
         try {
             if (existing != null) {
                 val request = authenticatedRequest("$API_BASE/device/session", existing).delete().build()
-                runCatching { client.executeWithCoroutine(request).close() }
+                withContext(Dispatchers.IO) {
+                    runCatching { client.executeWithCoroutine(request).close() }
+                }
             }
         } finally {
             clearSession()
@@ -441,47 +555,83 @@ class AulamaAuthRepository(
     private suspend fun authenticatedBody(url: okhttp3.HttpUrl): String? {
         val session = _session.value ?: return null
         val request = authenticatedRequest(url.toString(), session).get().build()
-        return client.executeWithCoroutine(request).use { response ->
-            if (response.code == 401 || response.code == 403) {
+        return executeResponseOnIo(request) { response, responseBody ->
+            if (response.code == 401) {
                 clearSession()
-                return@use null
+                return@executeResponseOnIo null
+            }
+            if (response.code == 403 && recordRegionBlock(response, responseBody)) {
+                return@executeResponseOnIo null
             }
             if (!response.isSuccessful) {
                 throw IllegalStateException("同步請求失敗（${response.code}）")
             }
-            response.body?.string().orEmpty()
+            responseBody
         }
     }
 
     private suspend fun executeAuthenticatedMutation(request: Request): Boolean =
-        client.executeWithCoroutine(request).use { response ->
-            if (response.code == 401 || response.code == 403) {
+        executeResponseOnIo(request) { response, responseBody ->
+            if (response.code == 401) {
                 clearSession()
-                return@use false
+                return@executeResponseOnIo false
             }
+            if (response.code == 403) recordRegionBlock(response, responseBody)
             response.isSuccessful
         }
 
     private suspend fun executeSearchHistoryMutation(request: Request): List<SearchHistorySyncItem>? =
-        client.executeWithCoroutine(request).use { response ->
-            if (response.code == 401 || response.code == 403) {
+        executeResponseOnIo(request) { response, responseBody ->
+            if (response.code == 401) {
                 clearSession()
-                return@use null
+                return@executeResponseOnIo null
+            }
+            if (response.code == 403 && recordRegionBlock(response, responseBody)) {
+                return@executeResponseOnIo null
             }
             if (!response.isSuccessful) {
                 throw IllegalStateException("搜尋紀錄同步失敗（${response.code}）")
             }
-            SearchHistorySyncParser.parse(response.body?.string().orEmpty())
+            SearchHistorySyncParser.parse(responseBody)
         }
 
     private suspend fun <T> execute(request: Request, parser: (Int, String, String?) -> T): T =
-        client.executeWithCoroutine(request).use { response ->
+        executeResponseOnIo(request) { response, responseBody ->
+            if (response.code == 403) recordRegionBlock(response, responseBody)
             parser(
                 response.code,
-                response.body?.string().orEmpty(),
+                responseBody,
                 response.header("Retry-After")
             )
         }
+
+    private suspend fun <T> executeResponseOnIo(
+        request: Request,
+        handler: (okhttp3.Response, String) -> T
+    ): T = withContext(Dispatchers.IO) {
+        client.executeWithCoroutine(request).use { response ->
+            handler(response, response.body?.string().orEmpty())
+        }
+    }
+
+    private fun recordRegionBlock(
+        response: okhttp3.Response,
+        responseBody: String
+    ): Boolean {
+        val blocked = isRegionBlockedResponse(
+            responseCode = response.code,
+            markerHeader = response.header(REGION_BLOCK_HEADER),
+            responseBody = responseBody
+        )
+        if (!blocked) return false
+        _regionBlock.value = RegionBlockState(
+            countryCode = blockedCountryCode(
+                headerValue = response.header(REGION_COUNTRY_HEADER),
+                responseBody = responseBody
+            )
+        )
+        return true
+    }
 
     companion object {
         private const val API_BASE = "https://aulama.org/anime/api"

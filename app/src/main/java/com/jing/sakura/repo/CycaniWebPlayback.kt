@@ -8,11 +8,15 @@ import com.jing.sakura.data.AnimeData
 import com.jing.sakura.extend.TraditionalChinese
 import com.jing.sakura.extend.getHtml
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -171,16 +175,31 @@ internal class CycaniWebPlaybackResolver(
         }
     }
 
-    private suspend fun fetchArtworkIndex(): CycaniWebArtworkIndex = coroutineScope {
-        val firstRoot = get("/videos", artworkPageParameters(1))
-        val firstData = dataObject(firstRoot)
-        val firstRows = dataArray(firstData, "list")
-        val total = firstData.objectOrNull("pager")?.int("total") ?: firstRows.size
-        val pageCount = minOf(MAX_ARTWORK_PAGES, maxOf(1, (total + ARTWORK_PAGE_SIZE - 1) / ARTWORK_PAGE_SIZE))
-        val remaining = (2..pageCount).map { page ->
-            async { dataList(get("/videos", artworkPageParameters(page))) }
-        }.awaitAll()
-        CycaniWebPlaybackPolicy.buildArtworkIndex(firstRows + remaining.flatten())
+    private suspend fun fetchArtworkIndex(): CycaniWebArtworkIndex {
+        val candidates = withContext(Dispatchers.IO) {
+            coroutineScope {
+                val firstRoot = get("/videos", artworkPageParameters(1))
+                val firstData = dataObject(firstRoot)
+                val firstRows = dataArray(firstData, "list")
+                val total = firstData.objectOrNull("pager")?.int("total") ?: firstRows.size
+                val pageCount = minOf(
+                    MAX_ARTWORK_PAGES,
+                    maxOf(1, (total + ARTWORK_PAGE_SIZE - 1) / ARTWORK_PAGE_SIZE)
+                )
+                val requestLimiter = Semaphore(ARTWORK_REQUEST_CONCURRENCY)
+                val remaining = (2..pageCount).map { page ->
+                    async {
+                        requestLimiter.withPermit {
+                            dataList(get("/videos", artworkPageParameters(page)))
+                        }
+                    }
+                }.awaitAll()
+                firstRows + remaining.flatten()
+            }
+        }
+        return withContext(Dispatchers.Default) {
+            CycaniWebPlaybackPolicy.buildArtworkIndex(candidates)
+        }
     }
 
     private fun artworkPageParameters(page: Int): Map<String, String> = mapOf(
@@ -270,7 +289,8 @@ internal class CycaniWebPlaybackResolver(
         const val MAX_SECTION_PAGES = 10
         const val ARTWORK_PAGE_SIZE = 500
         const val MAX_ARTWORK_PAGES = 20
-        const val ARTWORK_CACHE_TTL_MS = 10 * 60 * 1000L
+        const val ARTWORK_REQUEST_CONCURRENCY = 4
+        const val ARTWORK_CACHE_TTL_MS = 6 * 60 * 60 * 1000L
         const val ARTWORK_STALE_RETRY_MS = 60 * 1000L
     }
 }
@@ -340,6 +360,7 @@ internal object CycaniWebPlaybackPolicy {
     fun buildArtworkIndex(candidates: List<JsonObject>): CycaniWebArtworkIndex {
         val titleYearCandidates = mutableMapOf<String, MutableMap<String, String>>()
         val titleCandidates = mutableMapOf<String, MutableMap<String, String>>()
+        val canonicalCache = HashMap<String, String>(candidates.size.coerceAtLeast(16))
         candidates.forEach { candidate ->
             val id = candidate.string("video_id").ifBlank { candidate.string("id") }
             val cover = candidate.string("cover_url").ifBlank { candidate.string("vod_pic") }
@@ -350,7 +371,10 @@ internal object CycaniWebPlaybackPolicy {
                 candidate.string("subtitle"),
                 candidate.string("english_title"),
                 candidate.string("englishTitle")
-            ).map(::canonical).filter(String::isNotBlank).distinct()
+            ).filter(String::isNotBlank)
+                .map { title -> canonicalCache.getOrPut(title) { canonicalRaw(title) } }
+                .filter(String::isNotBlank)
+                .distinct()
             if (id.isBlank() || cover.isBlank()) return@forEach
             titles.forEach { title ->
                 titleCandidates.getOrPut(title, ::linkedMapOf)[id] = cover
@@ -367,12 +391,19 @@ internal object CycaniWebPlaybackPolicy {
     }
 
     fun latestArtwork(title: String, year: String, index: CycaniWebArtworkIndex): String {
-        val canonicalTitle = canonical(title)
-        if (canonicalTitle.isBlank()) return ""
+        val canonicalTitles = canonicalVariants(title)
+        if (canonicalTitles.isEmpty()) return ""
         val normalizedYear = yearOf(year)
-        return normalizedYear.takeIf(String::isNotBlank)
-            ?.let { index.byTitleYear["$it:$canonicalTitle"] }
-            ?: index.byTitle[canonicalTitle].orEmpty()
+        if (normalizedYear.isNotBlank()) {
+            val matches = canonicalTitles.mapNotNull { canonicalTitle ->
+                index.byTitleYear["$normalizedYear:$canonicalTitle"]
+            }.distinct()
+            if (matches.isNotEmpty()) return matches.singleOrNull().orEmpty()
+        }
+        return canonicalTitles.mapNotNull(index.byTitle::get)
+            .distinct()
+            .singleOrNull()
+            .orEmpty()
     }
 
     fun uniqueTitleYearMatch(
@@ -380,41 +411,43 @@ internal object CycaniWebPlaybackPolicy {
         expectedYear: String,
         candidates: List<JsonObject>
     ): CycaniWebMatch? {
-        val title = canonical(expectedTitle)
+        val titles = canonicalVariants(expectedTitle).toSet()
         val year = yearOf(expectedYear)
-        if (title.isBlank() || year.isBlank()) return null
+        if (titles.isEmpty() || year.isBlank()) return null
         val matches = candidates.mapNotNull { candidate ->
             val candidateYear = yearOf(candidate.string("year"))
             val candidateTitles = listOf(
                 candidate.string("title"), candidate.string("name"), candidate.string("subtitle"),
                 candidate.string("english_title"), candidate.string("englishTitle")
-            ).map(::canonical)
+            ).filter(String::isNotBlank).map(::canonicalRaw)
             val id = candidate.string("video_id").ifBlank { candidate.string("id") }
-            if (id.isBlank() || candidateYear != year || title !in candidateTitles) null
+            if (id.isBlank() || candidateYear != year || candidateTitles.none(titles::contains)) null
             else CycaniWebMatch(id, candidate.string("title").ifBlank { candidate.string("name") }, candidateYear)
         }.distinctBy { it.id }
         return matches.singleOrNull()
     }
 
     fun orderSources(rows: List<JsonObject>, requestedSourceLine: String): List<CycaniWebSource> {
-        val expected = canonical(requestedSourceLine)
+        val expected = canonicalVariants(requestedSourceLine).toSet()
         return rows.mapNotNull { row ->
             val code = row.string("code")
             if (!code.matches(Regex("[A-Za-z0-9_.-]{1,80}"))) null
             else CycaniWebSource(code, row.string("title").ifBlank { row.string("name") }.ifBlank { code })
-        }.sortedBy { source -> if (expected.isNotBlank() && canonical(source.title) == expected) 0 else 1 }
+        }.sortedBy { source ->
+            if (expected.isNotEmpty() && canonicalRaw(source.title) in expected) 0 else 1
+        }
     }
 
     fun selectExactEpisode(expectedLabel: String, rows: List<JsonObject>): CycaniWebSection? {
         val expectedNumber = episodeNumber(expectedLabel)
-        val expectedTitle = canonical(expectedLabel)
+        val expectedTitles = canonicalVariants(expectedLabel).toSet()
         val matches = rows.mapNotNull { row ->
             val id = row.string("id")
             val title = row.string("title")
             if (id.isBlank() || title.isBlank()) null else CycaniWebSection(id, title)
         }.filter { section ->
             if (expectedNumber != null) episodeNumber(section.title) == expectedNumber
-            else expectedTitle.isNotBlank() && canonical(section.title) == expectedTitle
+            else expectedTitles.isNotEmpty() && canonicalRaw(section.title) in expectedTitles
         }
         return matches.singleOrNull()
     }
@@ -433,12 +466,20 @@ internal object CycaniWebPlaybackPolicy {
         return headers
     }
 
-    private fun canonical(value: String): String = value.normalizeNfkc()
-        .let(TraditionalChinese::convert)
+    private fun canonicalRaw(value: String): String = value.normalizeNfkc()
         .lowercase(Locale.ROOT)
-        .replace(Regex("[^\\p{L}\\p{N}]"), "")
+        .replace(NON_ALPHANUMERIC, "")
 
-    private fun yearOf(value: String): String = Regex("(?:19|20)\\d{2}").find(value)?.value.orEmpty()
+    private fun canonicalVariants(value: String): List<String> {
+        if (value.isBlank()) return emptyList()
+        return listOf(
+            value,
+            runCatching { ZhConverterUtil.toSimple(value) }.getOrElse { value },
+            TraditionalChinese.convert(value)
+        ).map(::canonicalRaw).filter(String::isNotBlank).distinct()
+    }
+
+    private fun yearOf(value: String): String = YEAR_PATTERN.find(value)?.value.orEmpty()
 
     private fun episodeNumber(value: String): String? = Regex(
         "(?:ep(?:isode)?\\s*[:#._-]?|第\\s*)?0*(\\d+(?:\\.\\d+)?)\\s*(?:集|話|话)?",
@@ -450,4 +491,6 @@ internal object CycaniWebPlaybackPolicy {
 
     private const val TV_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) cyc-desktop/1.0.8 Chrome/128.0.6613.36 Electron/32.0.1 Safari/537.36"
+    private val NON_ALPHANUMERIC = Regex("[^\\p{L}\\p{N}]")
+    private val YEAR_PATTERN = Regex("(?:19|20)\\d{2}")
 }

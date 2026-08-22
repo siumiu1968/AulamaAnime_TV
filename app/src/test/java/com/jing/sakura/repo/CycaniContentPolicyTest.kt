@@ -16,4 +16,11 @@ class CycaniContentPolicyTest {
         assertFalse(isSuppressedAnimeTitle("明日方舟：黎明前奏"))
         assertFalse(isSuppressedAnimeTitle("小林家的龍女僕"))
     }
+
+    @Test
+    fun `suppresses unavailable leviathan chronicle in both scripts only`() {
+        assertTrue(isSuppressedAnimeTitle("利維坦號戰記"))
+        assertTrue(isSuppressedAnimeTitle("利维坦号战记"))
+        assertFalse(isSuppressedAnimeTitle("利維坦"))
+    }
 }

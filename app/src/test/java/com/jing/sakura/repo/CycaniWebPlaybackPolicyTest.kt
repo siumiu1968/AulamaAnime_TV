@@ -9,6 +9,12 @@ import org.junit.Test
 
 class CycaniWebPlaybackPolicyTest {
     @Test
+    fun authenticatedPlaybackFailureNeverRepeatsTheSameDirectEndpoint() {
+        assertFalse(shouldUseDirectCycaniPlayUrlFallback(hasAuthRepository = true))
+        assertTrue(shouldUseDirectCycaniPlayUrlFallback(hasAuthRepository = false))
+    }
+
+    @Test
     fun webPlaybackFailureDoesNotFallBackToTheLegacySourcePath() {
         assertEquals(
             CycaniPlaybackResolutionPath.WEB_SECTION,

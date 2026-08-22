@@ -13,13 +13,10 @@ internal fun interface DiscoverPageLoader {
 
 internal class DiscoverCatalogPagingSource(
     selectedFilters: Map<String, String>,
-    defaultFilters: Map<String, String>,
     private val loader: DiscoverPageLoader
 ) : PagingSource<Int, AnimeData>() {
     private val primaryFilters = selectedFilters.withoutBlankValues()
-    private val fallbackFilters = discoverFallbackFilters(primaryFilters, defaultFilters)
     private val seenAnimeIds = linkedSetOf<String>()
-    private var fallbackActive = false
 
     override fun getRefreshKey(state: PagingState<Int, AnimeData>): Int? = null
 
@@ -27,36 +24,21 @@ internal class DiscoverCatalogPagingSource(
         val page = (params.key ?: FIRST_PAGE).coerceAtLeast(FIRST_PAGE)
         if (params is LoadParams.Refresh) {
             seenAnimeIds.clear()
-            fallbackActive = false
         }
 
-        val activeFilters = if (fallbackActive) fallbackFilters else primaryFilters
-        val activeResult = loadPage(activeFilters, page)
-        val result = when {
-            activeResult != null -> activeResult
-
-            page == FIRST_PAGE && activeFilters != fallbackFilters -> {
-                val fallbackResult = loadPage(fallbackFilters, FIRST_PAGE)
-                    ?: return LoadResult.Error(
-                        IllegalStateException("暫時未能載入發現頁內容")
-                    )
-                fallbackActive = true
-                fallbackResult
-            }
-
-            page > FIRST_PAGE -> {
-                return LoadResult.Page(
-                    data = emptyList(),
-                    prevKey = null,
-                    nextKey = null
-                )
-            }
-
-            else -> {
-                return LoadResult.Error(
-                    IllegalStateException("暫時未能載入發現頁內容")
-                )
-            }
+        val result = try {
+            loader.load(
+                filters = primaryFilters.map { (key, value) ->
+                    NamedValue(name = key, value = value)
+                },
+                page = page
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            return LoadResult.Error(
+                IllegalStateException("暫時未能載入發現頁內容", error)
+            )
         }
 
         val uniqueItems = result.animeList.filter { anime ->
@@ -69,35 +51,8 @@ internal class DiscoverCatalogPagingSource(
         )
     }
 
-    private suspend fun loadPage(
-        filters: Map<String, String>,
-        page: Int
-    ): AnimePageData? = try {
-        loader.load(
-            filters = filters.map { (key, value) -> NamedValue(name = key, value = value) },
-            page = page
-        )
-    } catch (error: CancellationException) {
-        throw error
-    } catch (_: Exception) {
-        null
-    }
-
     private companion object {
         const val FIRST_PAGE = 1
-    }
-}
-
-internal fun discoverFallbackFilters(
-    selectedFilters: Map<String, String>,
-    defaultFilters: Map<String, String>
-): Map<String, String> {
-    val selectedType = selectedFilters[TYPE_FILTER].orEmpty()
-    val defaultType = defaultFilters[TYPE_FILTER].orEmpty()
-    return linkedMapOf<String, String>().apply {
-        (selectedType.ifBlank { defaultType })
-            .takeIf(String::isNotBlank)
-            ?.let { put(TYPE_FILTER, it) }
     }
 }
 

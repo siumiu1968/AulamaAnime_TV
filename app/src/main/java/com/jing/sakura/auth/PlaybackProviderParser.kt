@@ -68,6 +68,12 @@ internal object PlaybackProviderParser {
     private fun com.google.gson.JsonArray?.orEmpty(): List<com.google.gson.JsonElement> =
         this?.toList().orEmpty()
 
-    private val SUPPORTED_PROVIDERS = setOf("cycani", "sakura", "age")
-    private val EXTERNAL_PROVIDERS = setOf("sakura", "age")
+    private val SUPPORTED_PROVIDERS = setOf(
+        "cycani",
+        "girigiri_cht",
+        "girigiri_chs",
+        "sakura",
+        "age"
+    )
+    private val EXTERNAL_PROVIDERS = setOf("girigiri_cht", "girigiri_chs", "sakura", "age")
 }

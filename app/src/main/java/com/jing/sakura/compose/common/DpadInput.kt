@@ -46,8 +46,10 @@ fun rememberDpadRepeatGate(
                         event.nativeKeyEvent.repeatCount > 0 &&
                         lastKeyCode == keyCode &&
                         now - lastHandledAt < minIntervalMs
-                    lastKeyCode = keyCode
-                    lastHandledAt = now
+                    if (!shouldConsume) {
+                        lastKeyCode = keyCode
+                        lastHandledAt = now
+                    }
                     shouldConsume
                 }
             }

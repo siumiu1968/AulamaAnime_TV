@@ -47,6 +47,7 @@ class DetailActivity : ComponentActivity() {
                         viewModel = viewModel,
                         initialTitle = intent.getStringExtra(EXTRA_TITLE).orEmpty(),
                         initialImageUrl = intent.getStringExtra(EXTRA_IMAGE_URL).orEmpty(),
+                        initialDescription = intent.getStringExtra(EXTRA_DESCRIPTION).orEmpty(),
                         initialTags = intent.getStringExtra(EXTRA_TAGS).orEmpty(),
                         initialEpisodeInfo = intent.getStringExtra(EXTRA_EPISODE_INFO).orEmpty(),
                         initialResumeEpisode = intent.getStringExtra(EXTRA_RESUME_EPISODE).orEmpty()
@@ -59,6 +60,7 @@ class DetailActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_IMAGE_URL = "image_url"
+        private const val EXTRA_DESCRIPTION = "description"
         private const val EXTRA_TAGS = "tags"
         private const val EXTRA_EPISODE_INFO = "episode_info"
         private const val EXTRA_RESUME_EPISODE = "resume_episode"
@@ -75,6 +77,7 @@ class DetailActivity : ComponentActivity() {
                 sourceId = sourceId,
                 title = anime.title,
                 imageUrl = anime.imageUrl,
+                description = anime.description,
                 tags = anime.tags,
                 episodeInfo = anime.currentEpisode,
                 resumeEpisode = resumeEpisode
@@ -87,6 +90,7 @@ class DetailActivity : ComponentActivity() {
             sourceId: String,
             title: String = "",
             imageUrl: String = "",
+            description: String = "",
             tags: String = "",
             episodeInfo: String = "",
             resumeEpisode: String = ""
@@ -96,6 +100,7 @@ class DetailActivity : ComponentActivity() {
                 putExtra("source", sourceId)
                 putExtra(EXTRA_TITLE, title)
                 putExtra(EXTRA_IMAGE_URL, imageUrl)
+                putExtra(EXTRA_DESCRIPTION, description)
                 putExtra(EXTRA_TAGS, tags)
                 putExtra(EXTRA_EPISODE_INFO, episodeInfo)
                 putExtra(EXTRA_RESUME_EPISODE, resumeEpisode)

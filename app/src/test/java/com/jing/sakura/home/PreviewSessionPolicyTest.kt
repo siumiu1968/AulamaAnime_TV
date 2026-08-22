@@ -55,4 +55,47 @@ class PreviewSessionPolicyTest {
         assertEquals(0.10f, previewCardAlpha(true, false, true, true, true))
         assertEquals(1f, previewCardAlpha(true, true, true, true, true))
     }
+
+    @Test
+    fun homePreviewOnlyBecomesVisibleForTheFocusedRowSelection() {
+        assertTrue(
+            isHomePreviewPlaybackActive(
+                previewEnabled = true,
+                isScreenResumed = true,
+                hasFocusedRow = true,
+                previewArmed = true,
+                firstFrameReady = true,
+                readyAnimeId = "row-anime",
+                readySourceId = "source-a",
+                focusedAnimeId = "row-anime",
+                focusedSourceId = "source-a"
+            )
+        )
+        assertFalse(
+            isHomePreviewPlaybackActive(
+                previewEnabled = true,
+                isScreenResumed = true,
+                hasFocusedRow = false,
+                previewArmed = true,
+                firstFrameReady = true,
+                readyAnimeId = "row-anime",
+                readySourceId = "source-a",
+                focusedAnimeId = "featured-anime",
+                focusedSourceId = "source-a"
+            )
+        )
+        assertFalse(
+            isHomePreviewPlaybackActive(
+                previewEnabled = true,
+                isScreenResumed = true,
+                hasFocusedRow = true,
+                previewArmed = true,
+                firstFrameReady = true,
+                readyAnimeId = "row-anime",
+                readySourceId = "source-a",
+                focusedAnimeId = "row-anime",
+                focusedSourceId = "source-b"
+            )
+        )
+    }
 }

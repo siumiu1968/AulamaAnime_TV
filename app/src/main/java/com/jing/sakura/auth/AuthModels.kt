@@ -41,6 +41,10 @@ data class TvHistoryItem(
 )
 
 data class TvAnimeDetailPayload(
+    val catalogItem: com.jing.sakura.data.AnimeData? = null,
+    val episodeLabels: List<String> = emptyList(),
+    val providerEpisodeCounts: Map<String, Int> = emptyMap(),
+    val infoList: List<String> = emptyList(),
     val related: List<com.jing.sakura.data.AnimeData> = emptyList(),
     val recommendations: List<com.jing.sakura.data.AnimeData> = emptyList(),
     val personalizedRecommendations: Boolean = false
@@ -173,6 +177,7 @@ sealed interface DeviceTokenPollResult {
 sealed interface AccountValidationResult {
     data class Valid(val account: AulamaAccount) : AccountValidationResult
     data object Unauthorized : AccountValidationResult
+    data object RegionBlocked : AccountValidationResult
     data object Unavailable : AccountValidationResult
 }
 

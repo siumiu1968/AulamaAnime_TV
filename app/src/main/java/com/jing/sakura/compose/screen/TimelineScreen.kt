@@ -85,6 +85,7 @@ import com.jing.sakura.R
 import com.jing.sakura.compose.common.AulamaCardShape
 import com.jing.sakura.compose.common.AulamaAnimeBrandMark
 import com.jing.sakura.compose.common.AulamaTvColors
+import com.jing.sakura.compose.common.CinematicArtworkBackdrop
 import com.jing.sakura.compose.common.AutoMarqueeText
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.HeroPreviewPlayer
@@ -634,7 +635,8 @@ private fun TimelinePosterCard(
     modifier: Modifier = Modifier
 ) {
     val title = localizedText(anime.title)
-    val subtitle = localizedText(anime.currentEpisode)
+    val subtitle = localizedText(timelineDisplayStatus(anime.currentEpisode, anime.year))
+    val completed = subtitle == localizedText("已完結")
     val posterRequest = rememberPosterImageRequest(
         imageUrl = anime.imageUrl,
         widthPx = 420,
@@ -683,10 +685,10 @@ private fun TimelinePosterCard(
                     ),
                     color = Color.White,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
+                        .align(if (completed) Alignment.TopStart else Alignment.TopEnd)
                         .padding(9.dp)
                         .clip(RoundedCornerShape(5.dp))
-                        .background(Color(0xCC080B12))
+                        .background(if (completed) Color(0xE00E8F6A) else Color(0xCC080B12))
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
@@ -714,125 +716,12 @@ private fun TimelineBackdrop(
     accent: Color,
     previewActive: Boolean
 ) {
-    val targetBackdrop = remember(anime?.sourceId, anime?.id, anime?.imageUrl) {
-        anime
-            ?.takeIf { it.imageUrl.isNotBlank() }
-            ?.let {
-                TimelineBackdropState(
-                    key = "${it.sourceId}:${it.id}:${it.imageUrl}",
-                    imageUrl = it.imageUrl
-                )
-            }
-    }
-    var readyBackdrop by remember { mutableStateOf<TimelineBackdropState?>(null) }
-    val currentTargetKey by rememberUpdatedState(targetBackdrop?.key)
-    val artworkAlpha by animateFloatAsState(
-        targetValue = if (previewActive) 0f else 0.76f,
-        animationSpec = tween(360, easing = FastOutSlowInEasing),
-        label = "timeline-artwork-alpha"
+    CinematicArtworkBackdrop(
+        imageUrl = anime?.imageUrl.orEmpty(),
+        imageKey = anime?.let { "${it.sourceId}:${it.id}:${it.imageUrl}" }.orEmpty(),
+        accent = accent,
+        previewActive = previewActive
     )
-    LaunchedEffect(targetBackdrop) {
-        if (targetBackdrop == null) readyBackdrop = null
-    }
-    Box(modifier = Modifier.fillMaxSize()) {
-        targetBackdrop
-            ?.takeIf { it.key != readyBackdrop?.key }
-            ?.let { pending ->
-                AsyncImage(
-                    model = rememberPosterImageRequest(
-                        imageUrl = pending.imageUrl,
-                        widthPx = 960,
-                        heightPx = 1360
-                    ),
-                    contentDescription = null,
-                    onSuccess = {
-                        if (currentTargetKey == pending.key) readyBackdrop = pending
-                    },
-                    modifier = Modifier
-                        .size(1.dp)
-                        .graphicsLayer { alpha = 0f }
-                )
-            }
-        AnimatedContent(
-            targetState = readyBackdrop,
-            transitionSpec = {
-                fadeIn(tween(420, easing = FastOutSlowInEasing))
-                    .togetherWith(fadeOut(tween(300, easing = FastOutSlowInEasing)))
-            },
-            label = "timeline-backdrop"
-        ) { state ->
-            if (state != null) {
-                val request = rememberPosterImageRequest(
-                    imageUrl = state.imageUrl,
-                    widthPx = 960,
-                    heightPx = 1360
-                )
-                AsyncImage(
-                    model = request,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    alignment = Alignment.TopEnd,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            alpha = artworkAlpha
-                            scaleX = 1.42f
-                            scaleY = 1.42f
-                            transformOrigin = TransformOrigin(1f, 0f)
-                        }
-                )
-            }
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            accent.copy(alpha = if (previewActive) 0.05f else 0.20f),
-                            Color.Transparent
-                        ),
-                        radius = 820f
-                    )
-                )
-                .background(
-                    Brush.horizontalGradient(
-                        colorStops = if (previewActive) {
-                            arrayOf(
-                                0f to Color.Transparent,
-                                1f to Color.Transparent
-                            )
-                        } else {
-                            arrayOf(
-                                0f to AulamaTvColors.Background,
-                                0.42f to AulamaTvColors.Background,
-                                0.52f to AulamaTvColors.Background.copy(alpha = 0.96f),
-                                0.60f to AulamaTvColors.Background.copy(alpha = 0.76f),
-                                0.69f to AulamaTvColors.Background.copy(alpha = 0.42f),
-                                0.78f to AulamaTvColors.Background.copy(alpha = 0.14f),
-                                0.88f to AulamaTvColors.Background.copy(alpha = 0.03f),
-                                1f to Color.Transparent
-                            )
-                        }
-                    )
-                )
-                .background(
-                    Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0f to AulamaTvColors.Background.copy(
-                                alpha = if (previewActive) 0.12f else 0.32f
-                            ),
-                            0.58f to Color.Transparent,
-                            1f to if (previewActive) {
-                                AulamaTvColors.Background.copy(alpha = 0.28f)
-                            } else {
-                                AulamaTvColors.Background
-                            }
-                        )
-                    )
-                )
-        )
-    }
 }
 
 @Composable
@@ -860,8 +749,12 @@ private fun TimelineFocusSummary(
             Spacer(Modifier.fillMaxSize())
         } else {
             val title = localizedText(selected.title)
-            val airInfo = remember(dayName, selected.currentEpisode) {
-                listOf(dayName, selected.currentEpisode)
+            val displayStatus = remember(selected.currentEpisode, selected.year) {
+                timelineDisplayStatus(selected.currentEpisode, selected.year)
+            }
+            val completed = displayStatus == "已完結"
+            val airInfo = remember(dayName, displayStatus, completed) {
+                listOf(if (completed) "" else dayName, displayStatus)
                     .map(::cleanTimelineText)
                     .filter(String::isNotBlank)
                     .distinct()
@@ -897,7 +790,9 @@ private fun TimelineFocusSummary(
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = localizedText("播出時間  ·  $airInfo"),
+                    text = localizedText(
+                        if (completed) "播放狀態  ·  $airInfo" else "播出時間  ·  $airInfo"
+                    ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall.copy(
@@ -983,7 +878,7 @@ private fun TimelineDayTab(
         targetValue = when {
             focused -> AulamaTvColors.Background
             selected -> accent
-            else -> AulamaTvColors.TextSecondary
+            else -> Color.White
         },
         animationSpec = tween(durationMillis = 150),
         label = "timeline-day-content"
@@ -1038,8 +933,6 @@ private fun TimelineDayTab(
         }
     }
 }
-
-private data class TimelineBackdropState(val key: String, val imageUrl: String)
 
 private val TimelinePosterShape = RoundedCornerShape(12.dp)
 private val TimelineHtmlTag = Regex("<[^>]+>")

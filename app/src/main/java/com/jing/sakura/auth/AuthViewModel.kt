@@ -86,6 +86,10 @@ class AuthViewModel(
                     repository.clearSession()
                     showEntryAfterBrandMoment(startedAtMs)
                 }
+                AccountValidationResult.RegionBlocked -> {
+                    guestModeStorage.setEnabled(false)
+                    _state.value = AuthUiState.Authenticated(session.account)
+                }
                 AccountValidationResult.Unavailable -> {
                     guestModeStorage.setEnabled(false)
                     _state.value = AuthUiState.Authenticated(session.account)
@@ -110,6 +114,14 @@ class AuthViewModel(
     private fun beginLogin() {
         loginJob?.cancel()
         loginJob = viewModelScope.launch { requestAndPoll() }
+    }
+
+    fun resumeAfterRegionAccess() {
+        when (_state.value) {
+            is AuthUiState.Error,
+            AuthUiState.RequestingCode -> beginLogin()
+            else -> Unit
+        }
     }
 
     private suspend fun requestAndPoll() {

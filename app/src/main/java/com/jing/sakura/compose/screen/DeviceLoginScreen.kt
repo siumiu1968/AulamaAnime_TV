@@ -20,8 +20,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -101,8 +99,7 @@ internal data class WelcomeCopy(
     val slogan: String,
     val message: String,
     val loginButton: String,
-    val guestButton: String,
-    val guestNote: String
+    val guestButton: String
 )
 
 internal data class WelcomeTitleLayout(
@@ -135,19 +132,17 @@ internal fun welcomeTitleLayout(title: String, compact: Boolean): WelcomeTitleLa
 internal fun welcomeCopy(language: TvLanguage): WelcomeCopy = when (language) {
     TvLanguage.Traditional -> WelcomeCopy(
         eyebrow = "本季焦點",
-        slogan = "讓每一段精彩，都在大螢幕綻放。",
-        message = "登入 Aulama ID，即可跨裝置同步收藏、觀看進度與個人化推薦。",
+        slogan = "讓每一段精彩\n都在大螢幕綻放",
+        message = "登入 Aulama ID，即可跨裝置同步收藏、觀看進度與個人化推薦；遊客資料只會儲存在這部電視。",
         loginButton = "使用 Aulama ID 登入",
-        guestButton = "免登入使用",
-        guestNote = "遊客資料只會儲存在這部電視；登入後即可跨裝置同步。"
+        guestButton = "免登入使用"
     )
     TvLanguage.Simplified -> WelcomeCopy(
         eyebrow = "本季焦点",
-        slogan = "让每一段精彩，都在大屏幕绽放。",
-        message = "登录 Aulama ID，即可跨设备同步收藏、观看进度与个性化推荐。",
+        slogan = "让每一段精彩\n都在大屏幕绽放",
+        message = "登录 Aulama ID，即可跨设备同步收藏、观看进度与个性化推荐；游客数据只会保存在这台电视。",
         loginButton = "使用 Aulama ID 登录",
-        guestButton = "免登录使用",
-        guestNote = "游客数据只会保存在这台电视；登录后即可跨设备同步。"
+        guestButton = "免登录使用"
     )
 }
 
@@ -289,7 +284,7 @@ private fun LoginWelcomeScreen(
                     lineHeight = if (compactLayout) 44.sp else 52.sp,
                     fontWeight = FontWeight.Bold
                 ),
-                color = AulamaTvColors.TextPrimary,
+                color = artworkAccent,
                 textAlign = TextAlign.Start
             )
             Text(
@@ -299,7 +294,9 @@ private fun LoginWelcomeScreen(
                     lineHeight = if (compactLayout) 24.sp else 28.sp
                 ),
                 color = AulamaTvColors.TextSecondary,
-                textAlign = TextAlign.Start
+                textAlign = TextAlign.Start,
+                maxLines = 3,
+                overflow = TextOverflow.Clip
             )
             Spacer(Modifier.height(if (compactLayout) 4.dp else 8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -335,15 +332,6 @@ private fun LoginWelcomeScreen(
                     contentHeight = 44.dp
                 )
             }
-            Text(
-                text = copy.guestNote,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = if (compactLayout) 13.sp else 15.sp,
-                    lineHeight = if (compactLayout) 18.sp else 20.sp
-                ),
-                color = AulamaTvColors.TextSecondary.copy(alpha = 0.82f),
-                maxLines = 2
-            )
         }
         LaunchedEffect(Unit) { loginFocusRequester.requestFocus() }
     }
@@ -361,7 +349,7 @@ private fun WelcomeAnimeBackdrop(anime: List<AnimeData>, selectedIndex: Int, acc
         val nextRequest = rememberPosterImageRequest(
             imageUrl = nextAnime.imageUrl,
             widthPx = 960,
-            heightPx = 1_360
+            heightPx = 1_440
         )
         LaunchedEffect(nextRequest) { context.imageLoader.execute(nextRequest) }
     }
@@ -376,7 +364,7 @@ private fun WelcomeAnimeBackdrop(anime: List<AnimeData>, selectedIndex: Int, acc
         val posterRequest = rememberPosterImageRequest(
             imageUrl = item.imageUrl,
             widthPx = 960,
-            heightPx = 1_360
+            heightPx = 1_440
         )
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val artworkWidth = minOf(maxWidth * 0.52f, maxHeight * (2f / 3f))
@@ -384,12 +372,11 @@ private fun WelcomeAnimeBackdrop(anime: List<AnimeData>, selectedIndex: Int, acc
                 model = posterRequest,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
-                alignment = Alignment.TopEnd,
+                alignment = Alignment.BottomEnd,
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .fillMaxHeight()
+                    .align(Alignment.BottomEnd)
+                    .height(maxHeight)
                     .width(artworkWidth)
-                    .aspectRatio(2f / 3f, matchHeightConstraintsFirst = true)
                     .graphicsLayer {
                         alpha = 0.96f
                         compositingStrategy = CompositingStrategy.Offscreen

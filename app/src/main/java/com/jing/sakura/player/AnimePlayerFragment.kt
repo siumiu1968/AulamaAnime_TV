@@ -75,6 +75,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var continueOutroButton: TextView? = null
     private var activePlaybackSkip: ActivePlaybackSkip? = null
     private val skipUiState = PlaybackSkipUiStateMachine()
+    private val skipPromptKeyController = PlaybackSkipPromptKeyController()
     private val skipExitGrace = PlaybackSkipExitGracePolicy()
     private var primaryControlsDock: ViewGroup? = null
     private var playbackProgress: View? = null
@@ -97,7 +98,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var fallbackEpisodeLabel = ""
 
     private val hideTransientSkipRunnable = Runnable {
-        if (skipUiState.onTransientActionTimeout()) hideSkipUi()
+        if (skipUiState.onTransientActionTimeout()) {
+            hideSkipUi(allowPlayerControlsRestore = false)
+        }
     }
 
     private val hideHeaderRunnable = Runnable {
@@ -124,6 +127,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         if (skipExitGrace.shouldCommitExit(SystemClock.uptimeMillis())) {
             skipExitGrace.clear()
             skipUiState.update(null)
+            skipPromptKeyController.reset()
             activePlaybackSkip = null
             hideSkipUi()
         }
@@ -216,6 +220,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                 nearEndAutoAdvanceSuppressed = true
                 skipUiState.onSeek()
+                skipPromptKeyController.reset()
                 activePlaybackSkip = null
                 hideSkipUi()
                 renderSkipSegment(newPosition.positionMs.coerceAtLeast(0L))
@@ -648,10 +653,11 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     fun handlePlaybackKeyEvent(event: KeyEvent): Boolean {
+        if (handleTransientSkipPromptKey(event)) return true
         updateControlsAutoHideFor(event)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            wakeTransientSkipForRemoteInteraction()
             cancelAutoNextForRemoteInteraction()
+            refreshTransientSkipAutoHideForRemoteInteraction()
             if (!isCenterKey(event.keyCode)) showPlayerHeader()
         }
 
@@ -683,6 +689,50 @@ class AnimePlayerFragment : VideoSupportFragment() {
             applyCenterKeyAction(centerKeyController.cancel())
         }
         return glue?.onKey(view, event.keyCode, event) == true
+    }
+
+    private fun handleTransientSkipPromptKey(event: KeyEvent): Boolean {
+        val keyKind = when {
+            isCenterKey(event.keyCode) -> PlaybackSkipPromptKeyKind.CONFIRM
+            event.keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+                event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+                event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+                event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                PlaybackSkipPromptKeyKind.DIRECTION
+            }
+            else -> return false
+        }
+        val action = when (event.action) {
+            KeyEvent.ACTION_DOWN -> skipPromptKeyController.onKeyDown(
+                keyId = event.keyCode,
+                keyKind = keyKind,
+                promptState = skipUiState.promptState(),
+                playerControlsVisible = areTransportControlsVisible(),
+                repeatCount = event.repeatCount
+            )
+            KeyEvent.ACTION_UP -> skipPromptKeyController.onKeyUp(event.keyCode)
+            else -> PlaybackSkipPromptKeyAction.PASS_THROUGH
+        }
+        return when (action) {
+            PlaybackSkipPromptKeyAction.PASS_THROUGH -> false
+            PlaybackSkipPromptKeyAction.CONSUME -> true
+            PlaybackSkipPromptKeyAction.REVEAL_PROMPT -> {
+                wakeTransientSkipForRemoteInteraction()
+                true
+            }
+            PlaybackSkipPromptKeyAction.SHOW_PLAYER_CONTROLS -> {
+                skipUiState.onPlayerControlsShown()
+                glue?.host?.showControlsOverlay(true)
+                showPlayerHeader()
+                scheduleControlsAutoHide()
+                scheduleTransientSkipAutoHide()
+                true
+            }
+            PlaybackSkipPromptKeyAction.ACTIVATE_SKIP -> {
+                activateSkipSegment()
+                true
+            }
+        }
     }
 
     private fun handleSkipActionKey(
@@ -940,6 +990,15 @@ class AnimePlayerFragment : VideoSupportFragment() {
         scheduleTransientSkipAutoHide()
     }
 
+    private fun refreshTransientSkipAutoHideForRemoteInteraction() {
+        when (skipUiState.promptState()) {
+            PlaybackSkipPromptState.VISIBLE,
+            PlaybackSkipPromptState.REVEALED -> scheduleTransientSkipAutoHide()
+            PlaybackSkipPromptState.INACTIVE,
+            PlaybackSkipPromptState.HIDDEN -> Unit
+        }
+    }
+
     private fun scheduleTransientSkipAutoHide() {
         val root = view ?: return
         root.removeCallbacks(hideTransientSkipRunnable)
@@ -1020,7 +1079,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         val decision = skipUiState.update(active)
         activePlaybackSkip = decision.active
         if (!decision.isVisible) {
-            hideSkipUi()
+            hideSkipUi(allowPlayerControlsRestore = false)
             return
         }
         button.text = getString(
@@ -1059,7 +1118,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         if (decision.shouldScheduleAutoHide) scheduleTransientSkipAutoHide()
     }
 
-    private fun hideSkipUi() {
+    private fun hideSkipUi(allowPlayerControlsRestore: Boolean = true) {
         cancelTransientSkipAutoHide()
         cancelScheduledSkipUiExit()
         val shouldRestoreTransport = skipSegmentButton?.hasFocus() == true ||
@@ -1079,7 +1138,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
         }
         setSkipActionsFocusable(false)
         if (shouldRestoreTransport) {
-            restoreTransportFocus(showControls = !restoreWithoutShowingControls)
+            restoreTransportFocus(
+                showControls = allowPlayerControlsRestore && !restoreWithoutShowingControls
+            )
         } else {
             skipFocusWasAutomatic = false
         }
@@ -1089,6 +1150,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         cancelTransientSkipAutoHide()
         cancelScheduledSkipUiExit()
         skipUiState.reset()
+        skipPromptKeyController.reset()
         activePlaybackSkip = null
         hideSkipUi()
     }
@@ -1098,6 +1160,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         if (actions?.visibility != View.VISIBLE) {
             skipExitGrace.clear()
             skipUiState.update(null)
+            skipPromptKeyController.reset()
             activePlaybackSkip = null
             hideSkipUi()
             return

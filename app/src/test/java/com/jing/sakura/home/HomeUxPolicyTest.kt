@@ -9,6 +9,71 @@ import com.jing.sakura.data.AnimeData
 
 class HomeUxPolicyTest {
     @Test
+    fun blocksOnlyWhileTheFirstRenderableHomePayloadIsMissing() {
+        assertTrue(shouldBlockForInitialHomeLoad(isLoading = true, hasDisplayData = false))
+        assertFalse(shouldBlockForInitialHomeLoad(isLoading = true, hasDisplayData = true))
+        assertFalse(shouldBlockForInitialHomeLoad(isLoading = false, hasDisplayData = false))
+    }
+
+    @Test
+    fun firstHomePayloadAppearsWithoutAnInvisibleEntranceFrame() {
+        assertTrue(shouldSkipHomeContentEntrance(reducedMotion = false, contentEntranceVersion = 0))
+        assertTrue(shouldSkipHomeContentEntrance(reducedMotion = true, contentEntranceVersion = 1))
+        assertFalse(shouldSkipHomeContentEntrance(reducedMotion = false, contentEntranceVersion = 1))
+    }
+
+    @Test
+    fun publishesOnlyTheLatestHomeRequestForTheCurrentSource() {
+        assertTrue(shouldPublishHomeLoadResult(2L, 2L, "source-b", "source-b"))
+        assertFalse(shouldPublishHomeLoadResult(1L, 2L, "source-b", "source-b"))
+        assertFalse(shouldPublishHomeLoadResult(2L, 2L, "source-a", "source-b"))
+    }
+
+    @Test
+    fun progressivePayloadPublishesOnlyForAnEmptyCurrentRequest() {
+        assertTrue(
+            shouldPublishProgressiveHomePayload(
+                hasDisplayDataAtRequestStart = false,
+                hasRenderableRows = true,
+                requestGeneration = 2L,
+                activeGeneration = 2L,
+                requestSourceId = "source-b",
+                currentSourceId = "source-b"
+            )
+        )
+        assertFalse(
+            shouldPublishProgressiveHomePayload(
+                hasDisplayDataAtRequestStart = true,
+                hasRenderableRows = true,
+                requestGeneration = 2L,
+                activeGeneration = 2L,
+                requestSourceId = "source-b",
+                currentSourceId = "source-b"
+            )
+        )
+        assertFalse(
+            shouldPublishProgressiveHomePayload(
+                hasDisplayDataAtRequestStart = false,
+                hasRenderableRows = false,
+                requestGeneration = 2L,
+                activeGeneration = 2L,
+                requestSourceId = "source-b",
+                currentSourceId = "source-b"
+            )
+        )
+        assertFalse(
+            shouldPublishProgressiveHomePayload(
+                hasDisplayDataAtRequestStart = false,
+                hasRenderableRows = true,
+                requestGeneration = 1L,
+                activeGeneration = 2L,
+                requestSourceId = "source-a",
+                currentSourceId = "source-b"
+            )
+        )
+    }
+
+    @Test
     fun hidesJapaneseSynopsisUntilLocalizedCopyIsReady() {
         assertEquals("", resolveHeroDescription("これは日本語のあらすじです", null))
         assertEquals(
@@ -54,6 +119,42 @@ class HomeUxPolicyTest {
         assertEquals(0, moveFiniteHomeRowSelection(currentIndex = 0, delta = -1, itemCount = 2))
         assertEquals(1, moveFiniteHomeRowSelection(currentIndex = 0, delta = 1, itemCount = 2))
         assertEquals(1, moveFiniteHomeRowSelection(currentIndex = 1, delta = 1, itemCount = 2))
+    }
+
+    @Test
+    fun virtualRowKeysStayUniqueAcrossCopiesAndSources() {
+        assertEquals("12:source-a:anime", homeRowVirtualItemKey(12, "source-a", "anime"))
+        assertTrue(
+            homeRowVirtualItemKey(12, "source-a", "anime") !=
+                homeRowVirtualItemKey(13, "source-a", "anime")
+        )
+        assertTrue(
+            homeRowVirtualItemKey(12, "source-a", "anime") !=
+                homeRowVirtualItemKey(12, "source-b", "anime")
+        )
+    }
+
+    @Test
+    fun staleCardFocusCannotPublishAfterLeavingItsRow() {
+        assertTrue(shouldPublishFocusedHomeCard(eventRowIndex = 0, focusedRowIndex = 0))
+        assertFalse(shouldPublishFocusedHomeCard(eventRowIndex = 0, focusedRowIndex = null))
+        assertFalse(shouldPublishFocusedHomeCard(eventRowIndex = 0, focusedRowIndex = 1))
+    }
+
+    @Test
+    fun rowFocusStillUpdatesLayoutWhenAutoPreviewIsDisabled() {
+        assertEquals(
+            HomeRowFocusBehavior(notifySelection = true, dimAfterDelay = false),
+            homeRowFocusBehavior(rowFocused = true, previewEnabled = false)
+        )
+        assertEquals(
+            HomeRowFocusBehavior(notifySelection = true, dimAfterDelay = true),
+            homeRowFocusBehavior(rowFocused = true, previewEnabled = true)
+        )
+        assertEquals(
+            HomeRowFocusBehavior(notifySelection = false, dimAfterDelay = false),
+            homeRowFocusBehavior(rowFocused = false, previewEnabled = true)
+        )
     }
 
     @Test

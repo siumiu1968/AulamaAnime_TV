@@ -24,7 +24,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -92,7 +91,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -121,7 +119,9 @@ import com.jing.sakura.compose.common.AulamaCardShape
 import com.jing.sakura.compose.common.AulamaAccountAvatar
 import com.jing.sakura.compose.common.AulamaAnimeBrandMark
 import com.jing.sakura.compose.common.AulamaTvColors
+import com.jing.sakura.compose.common.CinematicArtworkBackdrop
 import com.jing.sakura.compose.common.AutoMarqueeText
+import com.jing.sakura.compose.common.Loading
 import com.jing.sakura.compose.common.TvLanguagePreferences
 import com.jing.sakura.compose.common.TvPreviewPreferences
 import com.jing.sakura.compose.common.ChineseText
@@ -136,6 +136,11 @@ import com.jing.sakura.compose.common.rememberArtworkAccent
 import com.jing.sakura.compose.common.rememberPosterImageRequest
 import com.jing.sakura.compose.common.rememberReducedMotion
 import com.jing.sakura.compose.common.safelyRequestFocus
+import com.jing.sakura.compose.common.boundedVirtualCarouselMove
+import com.jing.sakura.compose.common.virtualCarouselCenterIndex
+import com.jing.sakura.compose.common.virtualCarouselIdentity
+import com.jing.sakura.compose.common.virtualCarouselItemCount
+import com.jing.sakura.compose.common.virtualCarouselLogicalIndex
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.HomePageData
 import com.jing.sakura.data.NamedValue
@@ -148,7 +153,10 @@ import com.jing.sakura.home.HERO_ROTATION_INTERVAL_MS
 import com.jing.sakura.home.HeroPreviewState
 import com.jing.sakura.home.homeDescriptionKey
 import com.jing.sakura.home.homePosterPrefetchUrls
+import com.jing.sakura.home.homeRowFocusBehavior
 import com.jing.sakura.home.homeRowShouldLoop
+import com.jing.sakura.home.homeRowVirtualItemKey
+import com.jing.sakura.home.isHomePreviewPlaybackActive
 import com.jing.sakura.home.moveFiniteHomeRowSelection
 import com.jing.sakura.home.nextHeroIndex
 import com.jing.sakura.home.nextHomeRowIndex
@@ -156,7 +164,10 @@ import com.jing.sakura.home.previewCardAlpha
 import com.jing.sakura.home.resolveHeroDescription
 import com.jing.sakura.home.restoredHomeRowSelection
 import com.jing.sakura.home.shouldResumeHeroRotation
+import com.jing.sakura.home.shouldPublishFocusedHomeCard
+import com.jing.sakura.home.shouldBlockForInitialHomeLoad
 import com.jing.sakura.home.shouldStartPreview
+import com.jing.sakura.home.shouldSkipHomeContentEntrance
 import com.jing.sakura.search.SearchActivity
 import com.jing.sakura.timeline.UpdateTimelineActivity
 import com.jing.sakura.update.TvUpdateChannel
@@ -201,6 +212,16 @@ fun HomeScreen(
         is Resource.Error -> viewModel.lastHomePageData
     }
 
+    if (
+        shouldBlockForInitialHomeLoad(
+            isLoading = homePageDataResource is Resource.Loading,
+            hasDisplayData = displayData != null
+        )
+    ) {
+        Loading()
+        return
+    }
+
     val sourceRows = displayData?.seriesList.orEmpty()
     val todayName = remember { WEEKDAY_SECTION_NAMES[currentWeekdayIndex()] }
     val dailySeed = remember {
@@ -221,11 +242,20 @@ fun HomeScreen(
         val random = Random(dailySeed)
         val theaterIdentityTokens = theaterItems
             .flatMapTo(hashSetOf(), AnimeData::identityTokens)
+        val timelineSourceItems = sourceRows
+            .filter { it.name in WEEKDAY_SECTION_NAMES }
+            .flatMap { it.value }
+            .distinctAnime()
+        val catalogSourceItems = sourceRows
+            .filterNot { it.name in WEEKDAY_SECTION_NAMES }
+            .flatMap { it.value }
+            .distinctAnime()
         buildList {
             addAll(recommendations.distinctAnime().shuffled(random).take(3))
             addAll(todayUpdates.distinctAnime().shuffled(random).take(3))
             addAll(theaterItems.distinctAnime().shuffled(random).take(2))
-            addAll(sourceRows.flatMap { it.value }.distinctAnime().shuffled(random))
+            addAll(timelineSourceItems.shuffled(random))
+            addAll(catalogSourceItems.shuffled(random))
         }.distinctAnime()
             .take(7)
             .map { anime ->
@@ -380,8 +410,24 @@ fun HomeScreen(
         animationSpec = tween(320),
         label = "home-row-shelf-top"
     )
+    val selectedHeroId = hero?.id
+    val selectedHeroSourceId = hero?.sourceId
     val readyPreview = (heroPreviewState as? HeroPreviewState.Ready)?.spec
-    val previewActive = previewArmed && previewFirstFrameReady && readyPreview != null
+        ?.takeIf { spec ->
+            spec.navigateToPlayerArg.animeId == selectedHeroId &&
+                spec.navigateToPlayerArg.sourceId == selectedHeroSourceId
+        }
+    val previewActive = isHomePreviewPlaybackActive(
+        previewEnabled = previewEnabled,
+        isScreenResumed = isScreenResumed,
+        hasFocusedRow = focusedRowIndex != null,
+        previewArmed = previewArmed,
+        firstFrameReady = previewFirstFrameReady,
+        readyAnimeId = readyPreview?.navigateToPlayerArg?.animeId,
+        readySourceId = readyPreview?.navigateToPlayerArg?.sourceId,
+        focusedAnimeId = selectedHeroId,
+        focusedSourceId = selectedHeroSourceId
+    )
     val topChromeAlpha by animateFloatAsState(
         targetValue = if (previewActive) 0.28f else 1f,
         animationSpec = tween(360, easing = FastOutSlowInEasing),
@@ -390,6 +436,10 @@ fun HomeScreen(
     val refreshInProgress = refreshRequested ||
         (homePageDataResource is Resource.Loading && displayData != null)
     val contentEntranceKey = hasRenderableContent to contentEntranceVersion
+    val contentEntranceReducedMotion = shouldSkipHomeContentEntrance(
+        reducedMotion = reducedMotion,
+        contentEntranceVersion = contentEntranceVersion
+    )
 
     LaunchedEffect(homePageDataResource) {
         when (homePageDataResource) {
@@ -462,10 +512,10 @@ fun HomeScreen(
             }
             if (previewIdle) previewIdle = false
             delay(220)
+            if (!shouldPublishFocusedHomeCard(event.rowIndex, focusedRowIndex)) {
+                return@collectLatest
+            }
             focusedHero = event.video
-            heroIndex = featured.indexOfFirst { it.id == event.video.id }
-                .takeIf { it >= 0 }
-                ?: heroIndex
         }
     }
     LaunchedEffect(hero?.id) {
@@ -473,39 +523,40 @@ fun HomeScreen(
         viewModel.loadHeroDescription(selected)
     }
     LaunchedEffect(rows.size, rowMoveEvents) {
-        rowMoveEvents.collect { delta ->
-            if (rows.isEmpty()) return@collect
+        rowMoveEvents.collectLatest { delta ->
+            if (rows.isEmpty()) return@collectLatest
             val current = displayedRowIndex.coerceIn(rows.indices)
-            val target = nextHomeRowIndex(current, delta, rows.size) ?: return@collect
+            val target = nextHomeRowIndex(current, delta, rows.size) ?: return@collectLatest
             interactionEvents.tryEmit(Unit)
             coroutineScope {
                 launch {
                     rowTransitionAlpha.animateTo(
-                        0.38f,
-                        tween(85, easing = FastOutSlowInEasing)
+                        0.72f,
+                        tween(90, easing = FastOutSlowInEasing)
                     )
                 }
                 launch {
                     rowTransitionOffset.animateTo(
-                        if (delta > 0) -14f else 14f,
-                        tween(85, easing = FastOutSlowInEasing)
+                        if (delta > 0) -12f else 12f,
+                        tween(90, easing = FastOutSlowInEasing)
                     )
                 }
             }
             displayedRowIndex = target
             focusedRowIndex = target
-            rowTransitionOffset.snapTo(if (delta > 0) 14f else -14f)
+            rowTransitionAlpha.snapTo(0.72f)
+            rowTransitionOffset.snapTo(if (delta > 0) 12f else -12f)
             coroutineScope {
                 launch {
                     rowTransitionAlpha.animateTo(
                         1f,
-                        tween(175, easing = FastOutSlowInEasing)
+                        tween(180, easing = FastOutSlowInEasing)
                     )
                 }
                 launch {
                     rowTransitionOffset.animateTo(
                         0f,
-                        tween(175, easing = FastOutSlowInEasing)
+                        tween(180, easing = FastOutSlowInEasing)
                     )
                 }
             }
@@ -590,6 +641,7 @@ fun HomeScreen(
     BackHandler(enabled = focusedRowIndex != null) {
         focusedRowIndex = null
         displayedRowIndex = 0
+        focusedHero = null
         previewIdle = false
         previewArmed = false
         previewFirstFrameReady = false
@@ -681,7 +733,7 @@ fun HomeScreen(
                 .padding(top = 72.dp)
                 .lightweightEntrance(
                     transitionKey = contentEntranceKey,
-                    reducedMotion = reducedMotion,
+                    reducedMotion = contentEntranceReducedMotion,
                     durationMillis = 220
                 ),
             onMove = { delta ->
@@ -695,7 +747,11 @@ fun HomeScreen(
             },
             onFocused = {
                 focusedRowIndex = null
+                focusedHero = null
                 if (previewIdle) previewIdle = false
+                previewArmed = false
+                previewFirstFrameReady = false
+                viewModel.cancelHeroPreview()
             },
             onOpen = {
                 hero?.let(openDetail)
@@ -729,7 +785,7 @@ fun HomeScreen(
                         }
                         .lightweightEntrance(
                             transitionKey = contentEntranceKey,
-                            reducedMotion = reducedMotion,
+                            reducedMotion = contentEntranceReducedMotion,
                             delayMillis = 45,
                             durationMillis = 240
                         )
@@ -751,6 +807,11 @@ fun HomeScreen(
                                 delta < 0 && activeRowIndex == 0 -> {
                                     focusedRowIndex = null
                                     displayedRowIndex = 0
+                                    focusedHero = null
+                                    previewIdle = false
+                                    previewArmed = false
+                                    previewFirstFrameReady = false
+                                    viewModel.cancelHeroPreview()
                                     heroFocusRequestCount += 1
                                     true
                                 }
@@ -783,7 +844,7 @@ fun HomeScreen(
                 .align(Alignment.TopCenter)
                 .lightweightEntrance(
                     transitionKey = contentEntranceKey,
-                    reducedMotion = reducedMotion,
+                    reducedMotion = contentEntranceReducedMotion,
                     delayMillis = 80,
                     durationMillis = 220,
                     offsetY = 5.dp
@@ -796,7 +857,11 @@ fun HomeScreen(
             onAnyItemFocused = {
                 focusedRowIndex = null
                 displayedRowIndex = 0
+                focusedHero = null
                 if (previewIdle) previewIdle = false
+                previewArmed = false
+                previewFirstFrameReady = false
+                viewModel.cancelHeroPreview()
             },
             showSource = viewModel.getAllSources().size > 1,
             onHome = {
@@ -872,193 +937,14 @@ private fun CinematicBackdrop(
     revealArtwork: Boolean,
     previewActive: Boolean
 ) {
-    val reducedMotion = rememberReducedMotion()
-    val targetBackdrop = remember(hero?.sourceId, hero?.id, hero?.imageUrl) {
-        hero
-            ?.takeIf { it.imageUrl.isNotBlank() }
-            ?.let {
-                HomeBackdropState(
-                    key = "${it.sourceId}:${it.id}:${it.imageUrl}",
-                    imageUrl = it.imageUrl
-                )
-            }
-    }
-    var readyBackdrop by remember { mutableStateOf<HomeBackdropState?>(null) }
-    val currentTargetKey by rememberUpdatedState(targetBackdrop?.key)
-    val transitionDurationMillis = if (reducedMotion) 0 else 620
-    val artworkAlpha = when {
-        previewActive -> 0f
-        revealArtwork -> 0.96f
-        else -> 0.92f
-    }
-    Box(modifier = Modifier.fillMaxSize()) {
-        targetBackdrop
-            ?.takeIf { it.key != readyBackdrop?.key }
-            ?.let { pending ->
-                val pendingRequest = rememberPosterImageRequest(
-                    imageUrl = pending.imageUrl,
-                    widthPx = 960,
-                    heightPx = 1360
-                )
-                AsyncImage(
-                    model = pendingRequest,
-                    contentDescription = null,
-                    onSuccess = {
-                        if (currentTargetKey == pending.key) {
-                            readyBackdrop = pending
-                        }
-                    },
-                    modifier = Modifier
-                        .size(1.dp)
-                        .graphicsLayer { alpha = 0f }
-                )
-            }
-        AnimatedContent(
-            targetState = readyBackdrop,
-            transitionSpec = {
-                fadeIn(
-                    tween(
-                        durationMillis = transitionDurationMillis,
-                        easing = FastOutSlowInEasing
-                    )
-                ).togetherWith(
-                    fadeOut(
-                        tween(
-                            durationMillis = transitionDurationMillis,
-                            easing = FastOutSlowInEasing
-                        )
-                    )
-                )
-            },
-            label = "home-backdrop-crossfade"
-        ) { state ->
-            if (state == null) return@AnimatedContent
-            val backdropRequest = rememberPosterImageRequest(
-                imageUrl = state.imageUrl,
-                widthPx = 960,
-                heightPx = 1360
-            )
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                val artworkWidth = minOf(maxWidth * 0.52f, maxHeight * (2f / 3f))
-                val artworkModifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .fillMaxHeight()
-                    .width(artworkWidth)
-                    .aspectRatio(2f / 3f, matchHeightConstraintsFirst = true)
-
-                // The alpha feather is local to the poster, not the full screen.
-                // This removes the hard edge without a full-height RenderEffect,
-                // which is too expensive on older Android TV hardware.
-                AsyncImage(
-                    model = backdropRequest,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    alignment = Alignment.TopEnd,
-                    modifier = artworkModifier
-                        .graphicsLayer {
-                            alpha = artworkAlpha
-                            compositingStrategy = CompositingStrategy.Offscreen
-                        }
-                        .drawWithContent {
-                            drawContent()
-                            drawRect(
-                                brush = Brush.horizontalGradient(
-                                    colorStops = arrayOf(
-                                        0f to Color.Transparent,
-                                        0.025f to Color.Black.copy(alpha = 0.06f),
-                                        0.05f to Color.Black.copy(alpha = 0.22f),
-                                        0.08f to Color.Black.copy(alpha = 0.58f),
-                                        0.115f to Color.Black.copy(alpha = 0.86f),
-                                        0.15f to Color.Black,
-                                        1f to Color.Black
-                                    )
-                                ),
-                                blendMode = BlendMode.DstIn
-                            )
-                        }
-                )
-            }
-        }
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .drawBehind {
-                // A broad low-opacity wash carries the poster palette into the
-                // copy area without the hard edge or GPU cost of live blur.
-                drawRect(
-                    brush = Brush.horizontalGradient(
-                        colorStops = arrayOf(
-                            0f to Color.Transparent,
-                            0.18f to accent.copy(alpha = 0.012f),
-                            0.38f to accent.copy(alpha = 0.032f),
-                            0.58f to accent.copy(alpha = 0.065f),
-                            0.76f to accent.copy(alpha = 0.095f),
-                            0.90f to accent.copy(alpha = 0.065f),
-                            1f to accent.copy(alpha = 0.02f)
-                        )
-                    )
-                )
-                drawRect(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            accent.copy(alpha = 0.12f),
-                            accent.copy(alpha = 0.092f),
-                            accent.copy(alpha = 0.058f),
-                            accent.copy(alpha = 0.026f),
-                            Color.Transparent
-                        ),
-                        center = Offset(size.width * 0.76f, size.height * 0.46f),
-                        radius = size.width * 0.80f
-                    )
-                )
-            }
-    )
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.horizontalGradient(
-                    colorStops = if (previewActive) {
-                        arrayOf(
-                            0f to Color.Transparent,
-                            1f to Color.Transparent
-                        )
-                    } else {
-                        arrayOf(
-                            0f to AulamaTvColors.Background,
-                            0.46f to AulamaTvColors.Background,
-                            0.51f to AulamaTvColors.Background.copy(alpha = 0.94f),
-                            0.57f to AulamaTvColors.Background.copy(alpha = 0.68f),
-                            0.63f to AulamaTvColors.Background.copy(alpha = 0.34f),
-                            0.69f to AulamaTvColors.Background.copy(alpha = 0.12f),
-                            0.74f to AulamaTvColors.Background.copy(alpha = 0.03f),
-                            0.78f to Color.Transparent,
-                            1f to Color.Transparent
-                        )
-                    }
-                )
-            )
-            .background(
-                Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0f to AulamaTvColors.Background.copy(
-                            alpha = if (previewActive) 0.18f else 0.16f
-                        ),
-                        0.58f to Color.Transparent,
-                        1f to AulamaTvColors.Background.copy(
-                            alpha = if (previewActive) 0.62f else 1f
-                        )
-                    )
-                )
-            )
+    CinematicArtworkBackdrop(
+        imageUrl = hero?.imageUrl.orEmpty(),
+        imageKey = hero?.let { "${it.sourceId}:${it.id}:${it.imageUrl}" }.orEmpty(),
+        accent = accent,
+        artworkAlpha = if (revealArtwork) 1f else 0.96f,
+        previewActive = previewActive
     )
 }
-
-private data class HomeBackdropState(
-    val key: String,
-    val imageUrl: String
-)
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -1370,15 +1256,17 @@ private fun MediaRow(
 ) {
     if (videos.isEmpty()) return
 
-    val videoIdentity = remember(videos) {
-        videos.joinToString(separator = "|") { "${it.sourceId}:${it.id}" }
+    val videoIdentity = remember(title, videos) {
+        virtualCarouselIdentity(
+            rowKey = title,
+            itemKeys = videos.map { "${it.sourceId}:${it.id}" }
+        )
     }
     val loopEnabled = homeRowShouldLoop(itemCount = videos.size)
     val canMove = videos.size > 1
-    val loopCopies = 101
     val loopStart = remember(videoIdentity) {
         if (loopEnabled) {
-            videos.size * (loopCopies / 2) + initialSelectedIndex
+            virtualCarouselCenterIndex(videos.size, initialSelectedIndex)
         } else {
             initialSelectedIndex
         }
@@ -1391,14 +1279,13 @@ private fun MediaRow(
     }
     var rowFocused by remember { mutableStateOf(false) }
     var dimUnselected by remember { mutableStateOf(false) }
-    val cardStridePx = with(LocalDensity.current) { 166.dp.toPx() }
     val moveEvents = remember(videoIdentity) {
         MutableSharedFlow<Int>(
-            extraBufferCapacity = 2,
+            extraBufferCapacity = 1,
             onBufferOverflow = BufferOverflow.DROP_OLDEST
         )
     }
-    val selectedVideo = videos[selectedVirtualIndex % videos.size]
+    val selectedVideo = videos[virtualCarouselLogicalIndex(selectedVirtualIndex, videos.size)]
     val focusFrameOffset by animateDpAsState(
         targetValue = if (loopEnabled) 0.dp else (selectedVirtualIndex * 166).dp,
         animationSpec = tween(durationMillis = 165, easing = LinearOutSlowInEasing),
@@ -1415,41 +1302,48 @@ private fun MediaRow(
     )
 
     LaunchedEffect(rowFocused, selectedVirtualIndex, videoIdentity, previewEnabled) {
-        if (!rowFocused || !previewEnabled) {
+        val focusBehavior = homeRowFocusBehavior(rowFocused, previewEnabled)
+        if (!focusBehavior.notifySelection) {
             dimUnselected = false
             return@LaunchedEffect
         }
         dimUnselected = false
         onFocused(selectedVideo)
+        if (!focusBehavior.dimAfterDelay) return@LaunchedEffect
         delay(3_000)
         dimUnselected = true
     }
 
-    LaunchedEffect(videoIdentity, rowState, cardStridePx) {
+    LaunchedEffect(videoIdentity, rowState) {
         moveEvents.collect { delta ->
             if (!canMove) return@collect
             dimUnselected = false
             val previousIndex = selectedVirtualIndex
-            val targetIndex = if (loopEnabled) {
-                previousIndex + delta
-            } else {
-                moveFiniteHomeRowSelection(
+            if (loopEnabled) {
+                val move = boundedVirtualCarouselMove(
                     currentIndex = previousIndex,
                     delta = delta,
                     itemCount = videos.size
                 )
-            }
-            if (targetIndex == previousIndex) return@collect
-            selectedVirtualIndex = targetIndex
-            onSelectionChanged(selectedVirtualIndex % videos.size)
-            if (loopEnabled) {
-                rowState.animateScrollBy(
-                    value = (targetIndex - previousIndex) * cardStridePx,
-                    animationSpec = tween(
-                        durationMillis = 165,
-                        easing = LinearOutSlowInEasing
-                    )
+                if (move.targetIndex == previousIndex && move.recenterIndex == null) {
+                    return@collect
+                }
+                selectedVirtualIndex = move.targetIndex
+                onSelectionChanged(move.logicalIndex)
+                rowState.animateScrollToItem(move.targetIndex)
+                move.recenterIndex?.let { recenteredIndex ->
+                    rowState.scrollToItem(recenteredIndex)
+                    selectedVirtualIndex = recenteredIndex
+                }
+            } else {
+                val targetIndex = moveFiniteHomeRowSelection(
+                    currentIndex = previousIndex,
+                    delta = delta,
+                    itemCount = videos.size
                 )
+                if (targetIndex == previousIndex) return@collect
+                selectedVirtualIndex = targetIndex
+                onSelectionChanged(targetIndex)
             }
         }
     }
@@ -1533,12 +1427,20 @@ private fun MediaRow(
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                val itemCount = if (loopEnabled) videos.size * loopCopies else videos.size
+                val itemCount = if (loopEnabled) {
+                    virtualCarouselItemCount(videos.size)
+                } else {
+                    videos.size
+                }
                 items(
                     count = itemCount,
-                    key = { itemIndex -> "$itemIndex:${videos[itemIndex % videos.size].id}" }
+                    key = { itemIndex ->
+                        val video = videos[virtualCarouselLogicalIndex(itemIndex, videos.size)]
+                        homeRowVirtualItemKey(itemIndex, video.sourceId, video.id)
+                    },
+                    contentType = { "home-poster" }
                 ) { itemIndex ->
-                    val video = videos[itemIndex % videos.size]
+                    val video = videos[virtualCarouselLogicalIndex(itemIndex, videos.size)]
                     val targetCardAlpha = if (!rowFocused) {
                         0.48f
                     } else {
@@ -1760,11 +1662,7 @@ private fun HomeTopBar(
             }
             Spacer(Modifier.width(16.dp))
 
-            Row(
-                modifier = Modifier
-                    .graphicsLayer { alpha = chromeAlpha },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 navItems.forEachIndexed { index, item ->
                     TopNavButton(
                         item = item,
@@ -1821,17 +1719,22 @@ private fun TopNavButton(
     onFocused: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var focused by remember { mutableStateOf(false) }
+    val contentColor = if (focused) Color(0xFF07090E) else Color.White
     Button(
         onClick = item.onClick,
         modifier = modifier
             .height(40.dp)
-            .onFocusChanged { if (it.isFocused) onFocused() },
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            },
         contentPadding = PaddingValues(horizontal = 11.dp, vertical = 6.dp),
         shape = ButtonDefaults.shape(shape = RoundedCornerShape(7.dp)),
         scale = ButtonDefaults.scale(focusedScale = 1.045f),
         colors = ButtonDefaults.colors(
             containerColor = Color.Transparent,
-            contentColor = AulamaTvColors.TextSecondary,
+            contentColor = Color.White,
             focusedContainerColor = Color.White,
             focusedContentColor = Color(0xFF07090E)
         ),
@@ -1840,10 +1743,16 @@ private fun TopNavButton(
             focusedBorder = Border(BorderStroke(2.dp, Color.White))
         )
     ) {
-        Icon(item.icon, contentDescription = null, modifier = Modifier.size(17.dp))
+        Icon(
+            item.icon,
+            contentDescription = null,
+            tint = contentColor,
+            modifier = Modifier.size(17.dp)
+        )
         Spacer(Modifier.width(5.dp))
         androidx.tv.material3.Text(
             text = localizedText(item.label),
+            color = contentColor,
             maxLines = 1,
             style = MaterialTheme.typography.titleSmall.copy(
                 fontSize = 14.sp,

@@ -3,7 +3,6 @@
 package com.jing.sakura.compose.common
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -19,7 +18,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -36,14 +34,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,7 +50,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 
 @Composable
@@ -84,25 +81,6 @@ fun LoadingOverlay(
 @Composable
 fun Loading(text: String = "") {
     val reducedMotion = rememberReducedMotion()
-    val breathTransition = rememberInfiniteTransition(label = "aulama-loading-breath")
-    val logoScale by breathTransition.animateFloat(
-        initialValue = 0.985f,
-        targetValue = 1.018f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 920, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "aulama-loading-logo-scale"
-    )
-    val logoAlpha by breathTransition.animateFloat(
-        initialValue = 0.78f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 920, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "aulama-loading-logo-alpha"
-    )
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -122,12 +100,7 @@ fun Loading(text: String = "") {
         ) {
             AulamaAnimeBrandMark(
                 height = 76.dp,
-                modifier = Modifier.graphicsLayer {
-                    val scale = if (reducedMotion) 1f else logoScale
-                    scaleX = scale
-                    scaleY = scale
-                    alpha = if (reducedMotion) 1f else logoAlpha
-                }
+                modifier = Modifier
             )
             Spacer(Modifier.height(22.dp))
             AulamaLoadingPulse(reducedMotion = reducedMotion)
@@ -157,7 +130,7 @@ fun AulamaLoadingPulse(
 ) {
     val motionReduced = reducedMotion ?: rememberReducedMotion()
     val transition = rememberInfiniteTransition(label = "aulama-loading-flow")
-    val progress by transition.animateFloat(
+    val progress = transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -166,33 +139,42 @@ fun AulamaLoadingPulse(
         ),
         label = "aulama-loading-flow-progress"
     )
-    val travelPx = with(LocalDensity.current) { 122.dp.toPx() }
     Box(
         modifier = modifier
             .size(width = 178.dp, height = 6.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(AulamaTvColors.Outline.copy(alpha = 0.42f))
-    ) {
-        Box(
-            modifier = Modifier
-                .width(56.dp)
-                .fillMaxHeight()
-                .graphicsLayer {
-                    translationX = if (motionReduced) travelPx / 2f else progress * travelPx
-                }
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(
-                            Color.Transparent,
-                            AulamaTvColors.Cyan,
-                            accent,
-                            AulamaTvColors.Pink,
-                            Color.Transparent
-                        )
-                    )
+            .drawWithCache {
+                val radius = size.height / 2f
+                val cornerRadius = CornerRadius(radius, radius)
+                val segmentWidth = size.width * (56f / 178f)
+                val travel = size.width - segmentWidth
+                val segmentBrush = Brush.horizontalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        AulamaTvColors.Cyan,
+                        accent,
+                        AulamaTvColors.Pink,
+                        Color.Transparent
+                    ),
+                    startX = 0f,
+                    endX = segmentWidth
                 )
-        )
-    }
+                onDrawBehind {
+                    drawRoundRect(
+                        color = AulamaTvColors.Outline.copy(alpha = 0.42f),
+                        cornerRadius = cornerRadius
+                    )
+                    translate(
+                        left = travel * if (motionReduced) 0.5f else progress.value
+                    ) {
+                        drawRoundRect(
+                            brush = segmentBrush,
+                            size = Size(segmentWidth, size.height),
+                            cornerRadius = cornerRadius
+                        )
+                    }
+                }
+            }
+    )
 }
 
 @Composable
@@ -219,73 +201,15 @@ fun ArtworkLoading(
     val hasMetadata = showEpisodeInfo ||
         displayResumeEpisode.isNotBlank() ||
         tagItems.isNotEmpty()
-    val posterRequest = rememberPosterImageRequest(
-        imageUrl = imageUrl,
-        widthPx = 960,
-        heightPx = 1_360
-    )
-    var posterReady by remember(imageUrl) { mutableStateOf(false) }
-    val posterAlpha by animateFloatAsState(
-        targetValue = if (posterReady) 0.76f else 0f,
-        animationSpec = tween(
-            durationMillis = if (reducedMotion) 0 else 420,
-            easing = FastOutSlowInEasing
-        ),
-        label = "artwork-loading-poster-alpha"
-    )
-
     Box(
         modifier = modifier
             .fillMaxSize()
             .zIndex(100f)
             .aulamaTvBackground()
     ) {
-        if (imageUrl.isNotBlank()) {
-            AsyncImage(
-                model = posterRequest,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                alignment = Alignment.TopEnd,
-                onSuccess = { posterReady = true },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        alpha = posterAlpha
-                        scaleX = 1.42f
-                        scaleY = 1.42f
-                        transformOrigin = TransformOrigin(1f, 0f)
-                    }
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(accent.copy(alpha = 0.18f), Color.Transparent),
-                        radius = 900f
-                    )
-                )
-                .background(
-                    Brush.horizontalGradient(
-                        colorStops = arrayOf(
-                            0f to AulamaTvColors.Background,
-                            0.43f to AulamaTvColors.Background,
-                            0.56f to AulamaTvColors.Background.copy(alpha = 0.92f),
-                            0.72f to AulamaTvColors.Background.copy(alpha = 0.42f),
-                            1f to Color.Transparent
-                        )
-                    )
-                )
-                .background(
-                    Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0f to AulamaTvColors.Background.copy(alpha = 0.26f),
-                            0.58f to Color.Transparent,
-                            1f to AulamaTvColors.Background
-                        )
-                    )
-                )
+        CinematicArtworkBackdrop(
+            imageUrl = imageUrl,
+            accent = accent
         )
         Column(
             modifier = Modifier

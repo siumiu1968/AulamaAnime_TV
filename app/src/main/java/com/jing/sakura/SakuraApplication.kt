@@ -6,7 +6,6 @@ import android.app.Application
 import android.content.Context
 import android.os.Bundle
 import android.util.Log
-import android.webkit.CookieManager
 import android.webkit.WebSettings
 import androidx.room.Room
 import coil.disk.DiskCache
@@ -22,6 +21,7 @@ import com.jing.sakura.auth.PlaybackHistorySyncScheduler
 import com.jing.sakura.auth.SecureAuthStorage
 import com.jing.sakura.auth.SearchHistorySyncQueue
 import com.jing.sakura.auth.SearchHistorySyncScheduler
+import com.jing.sakura.compose.common.ChineseText
 import com.jing.sakura.detail.DetailPageViewModel
 import com.jing.sakura.extend.AndroidCookieJar
 import com.jing.sakura.history.HistoryViewModel
@@ -69,6 +69,7 @@ import kotlinx.coroutines.launch
 class SakuraApplication : Application(), ImageLoaderFactory {
 
     private val remotePlaybackScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val startupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var remotePlaybackJob: Job? = null
     private var currentActivity = WeakReference<Activity>(null)
     private lateinit var applicationKoin: Koin
@@ -96,29 +97,29 @@ class SakuraApplication : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
-        try {
-            CookieManager.getInstance().removeAllCookies { }
-        } catch (error: RuntimeException) {
-            Log.w(TAG, "System WebView is unavailable; skipping cookie cleanup", error)
-        }
         context = this
+        ChineseText.warmUpAsync()
         applicationKoin = startKoin {
             androidContext(this@SakuraApplication)
             androidLogger()
             modules(httpModule(), roomModule(), viewModelModule())
         }.koin
-        applicationKoin.get<AulamaAuthRepository>().session.value?.account?.email?.let { accountKey ->
-            if (applicationKoin.get<PlaybackHistorySyncQueue>()
-                    .pendingForAccount(accountKey)
-                    .isNotEmpty()
-            ) {
-                PlaybackHistorySyncScheduler.enqueue(this)
-            }
-            if (applicationKoin.get<SearchHistorySyncQueue>()
-                    .pendingForAccount(accountKey)
-                    .isNotEmpty()
-            ) {
-                SearchHistorySyncScheduler.enqueue(this)
+        val accountKey = applicationKoin.get<AulamaAuthRepository>()
+            .session.value?.account?.email
+        if (!accountKey.isNullOrBlank()) {
+            startupScope.launch {
+                if (applicationKoin.get<PlaybackHistorySyncQueue>()
+                        .pendingForAccount(accountKey)
+                        .isNotEmpty()
+                ) {
+                    PlaybackHistorySyncScheduler.enqueue(this@SakuraApplication)
+                }
+                if (applicationKoin.get<SearchHistorySyncQueue>()
+                        .pendingForAccount(accountKey)
+                        .isNotEmpty()
+                ) {
+                    SearchHistorySyncScheduler.enqueue(this@SakuraApplication)
+                }
             }
         }
         registerActivityLifecycleCallbacks(remotePlaybackCallbacks)
@@ -316,6 +317,7 @@ class SakuraApplication : Application(), ImageLoaderFactory {
 
     override fun onTerminate() {
         unregisterActivityLifecycleCallbacks(remotePlaybackCallbacks)
+        startupScope.cancel()
         remotePlaybackScope.cancel()
         WebServerContext.stopServer()
         super.onTerminate()

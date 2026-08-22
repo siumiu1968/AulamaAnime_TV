@@ -2,13 +2,17 @@ package com.jing.sakura.compose.common
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.core.os.ConfigurationCompat
 import com.github.houbb.opencc4j.util.ZhConverterUtil
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.util.LinkedHashMap
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 enum class TvLanguage(val storageValue: String) {
     Traditional("zh-Hant"),
@@ -68,19 +72,56 @@ class TvLanguagePreferences private constructor(context: Context) {
 val LocalTvLanguage = compositionLocalOf { TvLanguage.Traditional }
 
 object ChineseText {
+    private const val MAX_CACHE_ENTRIES = 512
+    private val warmUpStarted = AtomicBoolean(false)
+    private val _ready = MutableStateFlow(false)
+    internal val ready: StateFlow<Boolean> = _ready
+    private val cache = object : LinkedHashMap<String, String>(MAX_CACHE_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
+            size > MAX_CACHE_ENTRIES
+    }
+
+    fun warmUpAsync() {
+        if (_ready.value || !warmUpStarted.compareAndSet(false, true)) return
+        Thread({
+            val initialized = runCatching {
+                ZhConverterUtil.toTraditional("測試")
+                ZhConverterUtil.toSimple("测试")
+            }.isSuccess
+            if (initialized) {
+                _ready.value = true
+            } else {
+                warmUpStarted.set(false)
+            }
+        }, "opencc-warmup").apply {
+            isDaemon = true
+            priority = Thread.MIN_PRIORITY
+            start()
+        }
+    }
+
     fun convert(text: String, language: TvLanguage): String {
         if (text.isBlank()) return text
-        return runCatching {
+        if (!_ready.value) {
+            warmUpAsync()
+            return text
+        }
+        val cacheKey = "${language.storageValue}:$text"
+        synchronized(cache) { cache[cacheKey] }?.let { return it }
+        val converted = runCatching {
             when (language) {
                 TvLanguage.Traditional -> ZhConverterUtil.toTraditional(text)
                 TvLanguage.Simplified -> ZhConverterUtil.toSimple(text)
             }
         }.getOrElse { text }
+        synchronized(cache) { cache[cacheKey] = converted }
+        return converted
     }
 }
 
 @Composable
 fun localizedText(text: String): String {
     val language = LocalTvLanguage.current
-    return remember(text, language) { ChineseText.convert(text, language) }
+    val conversionReady by ChineseText.ready.collectAsState()
+    return remember(text, language, conversionReady) { ChineseText.convert(text, language) }
 }
