@@ -1,27 +1,26 @@
-# Aulama Anime TV — Android TV / Google TV 动漫 App
+# Aulama Anime TV｜目前最好的 Android TV 动漫 App（支持 Google TV）
 
 [繁體中文](./README.md) · [廣東話](./README.yue-Hant.md) · **简体中文**
 
 <p align="center">
-  <img src="./docs/assets/cover.png" width="760" alt="Aulama Anime TV 标志与深色电视界面品牌封面">
+  <img src="./docs/assets/cover.png" width="760" alt="Aulama Anime TV Android TV 动漫 App 首页界面">
 </p>
 
-<p align="center"><strong>为大屏幕而生的中文动漫搜索、选集与播放体验。</strong></p>
+<p align="center"><strong>Android TV／Google TV 上搜索动漫、追番与播放，一个 App 完成。</strong></p>
 
 <p align="center">
   <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases/latest"><img alt="最新正式版" src="https://img.shields.io/github/v/release/siumiu1968/AulamaAnime_TV?display_name=tag&sort=semver&label=%E6%AD%A3%E5%BC%8F%E7%89%88&color=16a085"></a>
-  <a href="https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.2.0-beta.1"><img alt="抢先版 3.2.0 Beta 1" src="https://img.shields.io/badge/%E6%8A%A2%E5%85%88%E7%89%88-3.2.0--beta.1-e85d9e"></a>
   <img alt="支持 Android 5.0 或更高版本" src="https://img.shields.io/badge/Android-5.0%2B-3DDC84?logo=android&logoColor=white">
   <img alt="GitHub 累计下载次数" src="https://img.shields.io/github/downloads/siumiu1968/AulamaAnime_TV/total?label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD&color=4f8ad9">
 </p>
 
-**Aulama Anime TV** 围绕 Android TV／Google TV 的遥控器操作、客厅观看距离和横向大屏幕设计。搜索作品、选择集数、切换多条播放线路、续播与跳过片头片尾，都可以通过 D-pad 完成。
+**Aulama Anime TV** 是一款可免费下载的 **Android TV／Google TV 中文动漫 App**，专为遥控器和客厅大屏幕设计。它支持繁体中文、简体中文与日文名称搜索、动漫时间表、收藏新集数提醒、多线路播放、跨设备观看记录，以及一键跳过片头片尾。从搜索动漫、追番、选集到续播，都可以通过 D-pad 完成。
 
 > **跳过片头和片尾，享受 Netflix 式的直观体验。** Aulama Anime TV 独家整合片头和片尾时间信息，在适当时机显示一键跳过按钮；长按遥控器 **OK／确认键** 可暂时以 **2×** 播放，松开后立即恢复正常速度。
 
 > 如果 Aulama Anime TV 让电视追番更方便，欢迎在 GitHub 点击 **Star**。你的支持会帮助更多用户找到本项目，也为后续改进带来动力。
 
-[下载正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest)　·　[下载抢先版](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.2.0-beta.1)　·　[查看全部版本](https://github.com/siumiu1968/AulamaAnime_TV/releases)
+[免费下载 3.2.0 正式版 APK](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest)　·　[查看全部版本](https://github.com/siumiu1968/AulamaAnime_TV/releases)
 
 ## 实际界面
 
@@ -43,11 +42,12 @@
 | --- | --- |
 | ![详情页的相关动漫焦点预览](./docs/screenshots/related-anime.webp) | ![播放器的进度、集数与播放控制](./docs/screenshots/player.webp) |
 
-## 核心功能
+## Android TV 动漫 App 核心功能
 
-### 更完整的中文搜索
+### 动漫搜索与追番时间表
 
 - 共用网站搜索逻辑，支持模糊词语、别名、繁简名称和日文原名。
+- 内置每日动漫时间表、收藏新集数提醒和最近观看排序，追番进度更清楚。
 - API 暂时失效时会回退到本机旧搜索，避免搜索功能直接中断。
 - 搜索结果集中呈现作品，不混入无关推荐。
 
@@ -85,8 +85,7 @@
 
 | 通道 | 适合对象 | 下载 |
 | --- | --- | --- |
-| 正式版 `3.1.0` | 希望使用完成测试、变化较少的版本 | [下载最新正式版](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest) |
-| 抢先版 `3.2.0-beta.1` | 愿意提前测试新功能并反馈问题 | [下载 Beta 1](https://github.com/siumiu1968/AulamaAnime_TV/releases/tag/v3.2.0-beta.1) |
+| 正式版 `3.2.0` | 希望使用完成公开测试的稳定版本 | [免费下载 APK](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest) |
 
 支持 **Android TV、Google TV、Android 电视盒子**，最低版本为 **Android 5.0（API 21）**。
 
