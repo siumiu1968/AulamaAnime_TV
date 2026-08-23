@@ -7,6 +7,14 @@ import org.junit.Test
 
 class PreviewSessionPolicyTest {
     @Test
+    fun previewStartsSevenSecondsAfterFocus() {
+        assertEquals(
+            7_000L,
+            PREVIEW_DIM_DELAY_MS + PREVIEW_START_AFTER_DIM_DELAY_MS
+        )
+    }
+
+    @Test
     fun returningToScreenRejectsOldPreviewTimerAndAcceptsNewSession() {
         assertFalse(
             shouldStartPreview(

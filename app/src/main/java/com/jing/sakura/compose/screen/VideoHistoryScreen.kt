@@ -64,11 +64,14 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.tv.material3.Border
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
@@ -83,6 +86,7 @@ import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.CinematicArtworkBackdrop
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.LoadingOverlay
+import com.jing.sakura.compose.common.NewEpisodeBadge
 import com.jing.sakura.compose.common.aulamaTvBackground
 import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.rememberArtworkAccent
@@ -112,6 +116,14 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
     val error by viewModel.libraryError.collectAsState()
     val animeDetails by viewModel.animeDetails.collectAsState()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshLibrary()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val localHistory = viewModel.pager.collectAsLazyPagingItems()
     val localHistoryItems = localHistory.itemSnapshotList.items
     val localHistoryByAnime = remember(localHistoryItems) {
@@ -798,6 +810,12 @@ private fun LibraryPosterCard(
                 }
             }
         }
+        NewEpisodeBadge(
+            label = anime.newEpisodeBadge,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(9.dp)
+        )
     }
 }
 

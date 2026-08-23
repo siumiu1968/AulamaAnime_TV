@@ -132,6 +132,7 @@ import com.jing.sakura.compose.common.ChangeSourceDialog
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.HeroPreviewPlayer
 import com.jing.sakura.compose.common.LoadingOverlay
+import com.jing.sakura.compose.common.NewEpisodeBadge
 import com.jing.sakura.compose.common.rememberArtworkAccent
 import com.jing.sakura.compose.common.rememberPosterImageRequest
 import com.jing.sakura.compose.common.rememberReducedMotion
@@ -148,6 +149,8 @@ import com.jing.sakura.data.Resource
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.history.HistoryActivity
 import com.jing.sakura.home.HomeViewModel
+import com.jing.sakura.home.PREVIEW_DIM_DELAY_MS
+import com.jing.sakura.home.PREVIEW_START_AFTER_DIM_DELAY_MS
 import com.jing.sakura.home.HERO_MANUAL_RESUME_DELAY_MS
 import com.jing.sakura.home.HERO_ROTATION_INTERVAL_MS
 import com.jing.sakura.home.HeroPreviewState
@@ -459,6 +462,7 @@ fun HomeScreen(
                 Lifecycle.Event.ON_RESUME -> {
                     isScreenResumed = true
                     previewSession += 1
+                    viewModel.refreshSyncedContent()
                 }
 
                 Lifecycle.Event.ON_PAUSE -> {
@@ -587,9 +591,9 @@ fun HomeScreen(
                 previewArmed = false
                 previewFirstFrameReady = false
                 val selected = hero ?: return@collectLatest
-                delay(1_000)
+                delay(PREVIEW_DIM_DELAY_MS)
                 previewIdle = true
-                delay(9_000)
+                delay(PREVIEW_START_AFTER_DIM_DELAY_MS)
                 if (!shouldStartPreview(
                         scheduledSession = scheduledSession,
                         currentSession = previewSession,
@@ -1311,7 +1315,7 @@ private fun MediaRow(
         dimUnselected = false
         onFocused(selectedVideo)
         if (!focusBehavior.dimAfterDelay) return@LaunchedEffect
-        delay(3_000)
+        delay(PREVIEW_DIM_DELAY_MS)
         dimUnselected = true
     }
 
@@ -1469,6 +1473,7 @@ private fun MediaRow(
                         imageUrl = video.imageUrl,
                         title = video.title,
                         subTitle = video.currentEpisode,
+                        newEpisodeBadge = video.newEpisodeBadge,
                         showLabels = rowFocused,
                         selected = rowFocused && itemIndex == selectedVirtualIndex,
                         modifier = Modifier
@@ -1523,6 +1528,7 @@ private fun CarouselPoster(
     imageUrl: String,
     title: String,
     subTitle: String,
+    newEpisodeBadge: String,
     showLabels: Boolean,
     selected: Boolean,
     modifier: Modifier = Modifier
@@ -1560,7 +1566,13 @@ private fun CarouselPoster(
                     )
             )
         }
-        if (showLabels && displaySubtitle.isNotEmpty()) {
+        NewEpisodeBadge(
+            label = newEpisodeBadge,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(9.dp)
+        )
+        if (showLabels && newEpisodeBadge.isBlank() && displaySubtitle.isNotEmpty()) {
             androidx.tv.material3.Text(
                 text = displaySubtitle,
                 maxLines = 1,

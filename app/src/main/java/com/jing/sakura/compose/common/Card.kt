@@ -37,6 +37,29 @@ import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 
+@Composable
+fun NewEpisodeBadge(
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    if (label.isBlank()) return
+    Text(
+        text = localizedText(label),
+        color = Color.White,
+        maxLines = 1,
+        overflow = TextOverflow.Clip,
+        style = MaterialTheme.typography.labelMedium.copy(
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        ),
+        modifier = modifier
+            .wrapContentWidth()
+            .clip(RoundedCornerShape(50))
+            .background(Color(0xFFE92E6E))
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    )
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoCard(

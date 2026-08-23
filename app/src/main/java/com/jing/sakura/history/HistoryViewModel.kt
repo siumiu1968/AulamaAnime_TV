@@ -9,6 +9,7 @@ import androidx.paging.*
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.GuestLibraryStore
 import com.jing.sakura.auth.TvLibraryPayload
+import com.jing.sakura.auth.applyFavoriteNewEpisodeBadges
 import com.jing.sakura.auth.toAnimeData
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimeDetailPageData
@@ -22,6 +23,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -103,10 +106,25 @@ class HistoryViewModel(
                     }
                     val isGuest = authRepository.session.value == null
                     publishRefreshState(generation) { _guestMode.value = isGuest }
-                    val payload = if (isGuest) {
-                        guestLibraryPayload()
-                    } else {
-                        authRepository.fetchTvLibrary()
+                    val payload = coroutineScope {
+                        val libraryRequest = async {
+                            if (isGuest) guestLibraryPayload() else authRepository.fetchTvLibrary()
+                        }
+                        val scheduleRequest = async {
+                            runCatching { authRepository.fetchPublicSchedule() }.getOrNull()
+                        }
+                        val localHistoryRequest = async {
+                            videoHistoryDao.queryAllHistoryRecords()
+                        }
+                        val library = libraryRequest.await()
+                        library.copy(
+                            favorites = applyFavoriteNewEpisodeBadges(
+                                favorites = library.favorites,
+                                schedule = scheduleRequest.await(),
+                                remoteHistory = library.historyItems,
+                                localHistory = localHistoryRequest.await()
+                            )
+                        )
                     }
                     publishRefreshState(generation) { _library.value = payload }
                 } catch (error: CancellationException) {

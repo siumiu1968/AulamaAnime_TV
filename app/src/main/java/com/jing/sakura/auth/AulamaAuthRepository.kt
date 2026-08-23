@@ -178,7 +178,12 @@ class AulamaAuthRepository(
             payload.copy(
                 recommendations = payload.recommendations.filterNot(::isSuppressedAnime),
                 todayUpdates = payload.todayUpdates.filterNot(::isSuppressedAnime),
-                theaterItems = payload.theaterItems.filterNot(::isSuppressedAnime)
+                theaterItems = payload.theaterItems.filterNot(::isSuppressedAnime),
+                schedule = payload.schedule?.copy(
+                    timeline = payload.schedule.timeline.map { (label, items) ->
+                        label to items.filterNot(::isSuppressedAnime)
+                    }
+                )
             )
         }
     }

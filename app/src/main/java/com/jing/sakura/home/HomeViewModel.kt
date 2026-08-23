@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.jing.sakura.SakuraApplication
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.GuestLibraryStore
+import com.jing.sakura.auth.applyFavoriteNewEpisodeBadges
 import com.jing.sakura.auth.toAnimeData
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimeDetailPageData
@@ -103,6 +104,8 @@ class HomeViewModel(
 
     private var loadDataJob: Pair<String, Job>? = null
     private val homeLoadGeneration = AtomicLong(0L)
+    private var syncedContentRefreshJob: Job? = null
+    private val lastSyncedContentStartedAtMs = AtomicLong(0L)
     private var heroPreviewJob: Job? = null
     private var heroPreviewRequestKey: String? = null
     private val heroPreviewGeneration = AtomicLong(0L)
@@ -232,11 +235,20 @@ class HomeViewModel(
     fun getAllSources(): List<AnimationSource> = repository.animationSources
 
     fun refreshSyncedContent() {
-        viewModelScope.launch(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        if (
+            syncedContentRefreshJob?.isActive == true ||
+            now - lastSyncedContentStartedAtMs.get() < SYNCED_CONTENT_REFRESH_DEBOUNCE_MS
+        ) return
+        syncedContentRefreshJob = viewModelScope.launch(Dispatchers.IO) {
             if (authRepository.session.value == null) {
                 loadGuestContent(guestLibraryStore.favorites.value)
             } else {
                 loadSyncedContent()
+            }
+        }.also { job ->
+            job.invokeOnCompletion {
+                if (syncedContentRefreshJob === job) syncedContentRefreshJob = null
             }
         }
     }
@@ -486,13 +498,18 @@ class HomeViewModel(
     }
 
     private suspend fun loadSyncedContent() {
-        runCatching { authRepository.fetchTvHome() }
+        lastSyncedContentStartedAtMs.set(System.currentTimeMillis())
+        val homeResult = runCatching { authRepository.fetchTvHome() }
+        homeResult
             .onSuccess { payload ->
                 _recommendations.value = payload.recommendations
                 _todayUpdates.value = payload.todayUpdates
                 _theaterItems.value = payload.theaterItems
             }
             .onFailure { Log.e("tv-home-sync", "載入首頁同步內容失敗", it) }
+        val schedule = homeResult.getOrNull()?.schedule
+            ?: runCatching { authRepository.fetchPublicSchedule() }.getOrNull()
+        val localHistory = videoHistoryDao.queryAllHistoryRecords()
 
         runCatching { authRepository.fetchTvLibrary() }
             .onSuccess { payload ->
@@ -510,12 +527,18 @@ class HomeViewModel(
                         )
                     }
                 )
+                val favorites = applyFavoriteNewEpisodeBadges(
+                    favorites = payload.favorites,
+                    schedule = schedule,
+                    remoteHistory = payload.historyItems,
+                    localHistory = localHistory
+                )
                 _syncedRows.value = buildList {
                     if (payload.continueWatching.isNotEmpty()) {
                         add(NamedValue("繼續觀看", payload.continueWatching))
                     }
-                    if (payload.favorites.isNotEmpty()) {
-                        add(NamedValue("我的收藏", payload.favorites))
+                    if (favorites.isNotEmpty()) {
+                        add(NamedValue("我的收藏", favorites))
                     }
                 }
             }
@@ -523,14 +546,23 @@ class HomeViewModel(
     }
 
     private suspend fun loadGuestContent(favorites: List<com.jing.sakura.auth.FavoritePayload>) {
+        lastSyncedContentStartedAtMs.set(System.currentTimeMillis())
         replaceRemoteHeroPreviewHistory(emptyList())
         _recommendations.value = emptyList()
         _todayUpdates.value = emptyList()
+        val schedule = runCatching { authRepository.fetchPublicSchedule() }.getOrNull()
+        val localHistory = videoHistoryDao.queryAllHistoryRecords()
         val recent = videoHistoryDao.queryRecentHistory(GUEST_CONTINUE_WATCHING_LIMIT)
             .map(VideoHistoryEntity::toLocalAnimeData)
+        val favoriteAnime = applyFavoriteNewEpisodeBadges(
+            favorites = favorites.map { it.toAnimeData() },
+            schedule = schedule,
+            remoteHistory = emptyList(),
+            localHistory = localHistory
+        )
         _syncedRows.value = buildList {
             if (recent.isNotEmpty()) add(NamedValue("繼續觀看", recent))
-            favorites.map { it.toAnimeData() }
+            favoriteAnime
                 .takeIf(List<AnimeData>::isNotEmpty)
                 ?.let { add(NamedValue("我的收藏", it)) }
         }
@@ -570,6 +602,7 @@ class HomeViewModel(
     private companion object {
         const val HERO_DESCRIPTION_PREFETCH_LIMIT = 12
         const val GUEST_CONTINUE_WATCHING_LIMIT = 24
+        const val SYNCED_CONTENT_REFRESH_DEBOUNCE_MS = 750L
     }
 
 }

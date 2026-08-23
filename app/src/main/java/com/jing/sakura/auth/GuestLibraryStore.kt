@@ -79,5 +79,6 @@ internal fun FavoritePayload.toAnimeData(): AnimeData = AnimeData(
     description = summary,
     tags = tags.joinToString("、"),
     sourceId = sourceTypeId,
-    year = year
+    year = year,
+    favoriteAddedAtEpochMs = CloudTimestamp.parseEpochMs(addedAt.ifBlank { updatedAt })
 )

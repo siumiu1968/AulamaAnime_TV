@@ -55,6 +55,7 @@ class TvLibraryParserTest {
         assertEquals("推薦一", payload.recommendations.single().title)
         assertEquals("今日一", payload.todayUpdates.single().title)
         assertEquals("劇場一", payload.theaterItems.single().title)
+        assertEquals("d1", payload.schedule?.timeline?.get(1)?.second?.single()?.id)
     }
 
     @Test
@@ -66,6 +67,18 @@ class TvLibraryParserTest {
         assertEquals(1, items.size)
         assertEquals("收藏一", items.single().title)
         assertEquals("第 3 集", items.single().currentEpisode)
+    }
+
+    @Test
+    fun mapsFavoriteAddedTimeForStableCompletedOrdering() {
+        val item = TvLibraryParser.parseFavorites(
+            """{"items":[{"id":"f1","title":"收藏一","addedAt":"2026-08-20T10:00:00Z"}]}"""
+        ).single()
+
+        assertEquals(
+            CloudTimestamp.parseEpochMs("2026-08-20T10:00:00Z"),
+            item.favoriteAddedAtEpochMs
+        )
     }
 
     @Test
@@ -104,7 +117,11 @@ class TvLibraryParserTest {
                   "duration":1500,
                   "completed":"true",
                   "sourceTypeId":7,
-                  "updatedAt":"2026-07-14T10:00:00Z"
+                  "updatedAt":"2026-07-14T10:00:00Z",
+                  "episodeProgress": {
+                    "6": {"episodeIndex":6},
+                    "8": {"episodeIndex":8}
+                  }
                 }]}
             """.trimIndent()
         ).single()
@@ -123,6 +140,7 @@ class TvLibraryParserTest {
         assertEquals("7", item.sourceTypeId)
         assertEquals("2026-07-14T10:00:00Z", item.updatedAt)
         assertTrue(item.updatedAtEpochMs > 0L)
+        assertEquals(setOf(6, 8), item.viewedEpisodeIndexes)
     }
 
     @Test
@@ -175,6 +193,21 @@ class TvLibraryParserTest {
                 ]}
             """.trimIndent()
         ))
+    }
+
+    @Test
+    fun sortsHistoryFromMostRecentlyViewedToOldest() {
+        val items = TvLibraryParser.parseHistoryItems(
+            """
+                {"items":[
+                  {"animeId":"old","title":"較舊","episodeId":"old-1","updatedAt":"2026-08-20T10:00:00Z"},
+                  {"animeId":"new","title":"最近","episodeId":"new-1","updatedAt":"2026-08-22T10:00:00Z"},
+                  {"animeId":"middle","title":"中間","episodeId":"middle-1","updatedAt":"2026-08-21T10:00:00Z"}
+                ]}
+            """.trimIndent()
+        )
+
+        assertEquals(listOf("new", "middle", "old"), items.map(TvHistoryItem::animeId))
     }
 
     @Test

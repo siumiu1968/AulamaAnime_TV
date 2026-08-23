@@ -74,7 +74,10 @@ object RecommendationParser {
             sourceId = CycaniSource.SOURCE_ID,
             year = listOf("year", "releaseYear", "release_year", "vod_year")
                 .firstNotNullOfOrNull { item.string(it).takeIf(String::isNotBlank) }
-                .orEmpty()
+                .orEmpty(),
+            favoriteAddedAtEpochMs = CloudTimestamp.parseEpochMs(
+                item.string("addedAt").ifBlank { item.string("updatedAt") }
+            )
         )
     }
 

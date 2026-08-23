@@ -100,6 +100,8 @@ import com.jing.sakura.data.Resource
 import com.jing.sakura.data.UpdateTimeLine
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.home.HeroPreviewState
+import com.jing.sakura.home.PREVIEW_DIM_DELAY_MS
+import com.jing.sakura.home.PREVIEW_START_AFTER_DIM_DELAY_MS
 import com.jing.sakura.home.isPreviewPlaybackActive
 import com.jing.sakura.home.previewCardAlpha
 import com.jing.sakura.home.shouldStartPreview
@@ -446,9 +448,9 @@ fun TimeLine(
         previewFirstFrameReady = false
         val selected = highlightedAnime ?: return@LaunchedEffect
         if (!rowHasFocus || !isScreenResumed || !previewEnabled) return@LaunchedEffect
-        delay(3_000)
+        delay(PREVIEW_DIM_DELAY_MS)
         dimUnselected = true
-        delay(12_000)
+        delay(PREVIEW_START_AFTER_DIM_DELAY_MS)
         if (!shouldStartPreview(
                 scheduledSession = scheduledSession,
                 currentSession = previewSession,

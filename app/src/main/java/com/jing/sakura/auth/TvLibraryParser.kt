@@ -25,7 +25,8 @@ object TvLibraryParser {
         return TvHomePayload(
             recommendations = recommendations,
             todayUpdates = todayItems,
-            theaterItems = theaterItems
+            theaterItems = theaterItems,
+            schedule = parseSchedule(body, (weekday - 1).coerceIn(0, 6))
         )
     }
 
@@ -82,9 +83,12 @@ object TvLibraryParser {
                 completed = item.boolean("completed"),
                 sourceTypeId = item.primitiveString("sourceTypeId"),
                 updatedAt = item.primitiveString("updatedAt"),
-                updatedAtEpochMs = CloudTimestamp.parseEpochMs(item.primitiveString("updatedAt"))
+                updatedAtEpochMs = CloudTimestamp.parseEpochMs(item.primitiveString("updatedAt")),
+                viewedEpisodeIndexes = item.episodeProgressIndexes()
             )
-        }.distinctBy { it.anime.id }
+        }
+            .sortedByDescending(TvHistoryItem::updatedAtEpochMs)
+            .distinctBy { it.anime.id }
     }
 
     fun parseAnimeDetail(body: String): TvAnimeDetailPayload {
@@ -180,6 +184,20 @@ object TvLibraryParser {
             "true", "1" -> true
             else -> false
         }
+
+    private fun JsonObject.episodeProgressIndexes(): Set<Int> =
+        objectOrNull("episodeProgress")
+            ?.entrySet()
+            .orEmpty()
+            .mapNotNull { (key, value) ->
+                val nestedIndex = value
+                    .takeIf(JsonElement::isJsonObject)
+                    ?.asJsonObject
+                    ?.primitiveString("episodeIndex")
+                    ?.toIntOrNull()
+                (key.toIntOrNull() ?: nestedIndex)?.takeIf { it >= 0 }
+            }
+            .toSet()
 
     private fun Int?.orZeroEpisodeCount(): Int = this?.coerceIn(0, 5_000) ?: 0
 

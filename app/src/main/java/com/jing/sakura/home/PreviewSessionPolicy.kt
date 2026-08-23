@@ -1,5 +1,8 @@
 package com.jing.sakura.home
 
+internal const val PREVIEW_DIM_DELAY_MS = 2_000L
+internal const val PREVIEW_START_AFTER_DIM_DELAY_MS = 5_000L
+
 internal fun shouldStartPreview(
     scheduledSession: Int,
     currentSession: Int,

@@ -9,5 +9,7 @@ data class AnimeData(
     val description: String = "",
     val tags: String = "",
     val sourceId:String,
-    val year: String = ""
+    val year: String = "",
+    val newEpisodeBadge: String = "",
+    val favoriteAddedAtEpochMs: Long = 0L
 )

@@ -16,7 +16,8 @@ data class AulamaAccount(
 data class TvHomePayload(
     val recommendations: List<com.jing.sakura.data.AnimeData> = emptyList(),
     val todayUpdates: List<com.jing.sakura.data.AnimeData> = emptyList(),
-    val theaterItems: List<com.jing.sakura.data.AnimeData> = emptyList()
+    val theaterItems: List<com.jing.sakura.data.AnimeData> = emptyList(),
+    val schedule: com.jing.sakura.data.UpdateTimeLine? = null
 )
 
 data class TvLibraryPayload(
@@ -37,7 +38,8 @@ data class TvHistoryItem(
     val completed: Boolean = false,
     val sourceTypeId: String = "",
     val updatedAt: String = "",
-    val updatedAtEpochMs: Long = 0L
+    val updatedAtEpochMs: Long = 0L,
+    val viewedEpisodeIndexes: Set<Int> = emptySet()
 )
 
 data class TvAnimeDetailPayload(
