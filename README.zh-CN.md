@@ -20,7 +20,7 @@
 
 > 如果 Aulama Anime TV 让电视追番更方便，欢迎在 GitHub 点击 **Star**。你的支持会帮助更多用户找到本项目，也为后续改进带来动力。
 
-[免费下载 3.2.0 正式版 APK](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest)　·　[查看全部版本](https://github.com/siumiu1968/AulamaAnime_TV/releases)
+[免费下载 3.2.1 正式版 APK](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest)　·　[查看全部版本](https://github.com/siumiu1968/AulamaAnime_TV/releases)
 
 ## 实际界面
 
@@ -85,7 +85,7 @@
 
 | 通道 | 适合对象 | 下载 |
 | --- | --- | --- |
-| 正式版 `3.2.0` | 希望使用完成公开测试的稳定版本 | [免费下载 APK](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest) |
+| 正式版 `3.2.1` | 希望使用完成公开测试的稳定版本 | [免费下载 APK](https://github.com/siumiu1968/AulamaAnime_TV/releases/latest) |
 
 支持 **Android TV、Google TV、Android 电视盒子**，最低版本为 **Android 5.0（API 21）**。
 

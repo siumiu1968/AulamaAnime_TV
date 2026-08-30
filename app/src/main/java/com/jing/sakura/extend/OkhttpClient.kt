@@ -180,3 +180,88 @@ class AndroidCookieJar : CookieJar {
         manager.flush()
     }
 }
+
+internal class InMemoryCookieJar : CookieJar {
+    private val cookies = mutableListOf<Cookie>()
+
+    @Synchronized
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        val now = System.currentTimeMillis()
+        cookies.forEach { incoming ->
+            this.cookies.removeAll { stored ->
+                stored.expiresAt <= now || stored.hasSameIdentityAs(incoming)
+            }
+            if (incoming.expiresAt > now) {
+                this.cookies += incoming
+            }
+        }
+    }
+
+    @Synchronized
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        val now = System.currentTimeMillis()
+        cookies.removeAll { it.expiresAt <= now }
+        return cookies.filter { it.matches(url) }
+    }
+
+    private fun Cookie.hasSameIdentityAs(other: Cookie): Boolean =
+        name == other.name && domain == other.domain && path == other.path
+}
+
+/**
+ * Mirrors network cookies in memory so requests can continue when the device has no usable
+ * WebView provider. WebView failures are treated as permanent for this jar instance.
+ */
+internal class WebViewCompatibleCookieJar(
+    private val webViewJarProvider: () -> CookieJar = { AndroidCookieJar() },
+    private val fallback: CookieJar = InMemoryCookieJar(),
+    private val onWebViewFailure: (Throwable) -> Unit = {},
+) : CookieJar {
+    @Volatile
+    private var webViewUnavailable = false
+
+    @Volatile
+    private var webViewJar: CookieJar? = null
+
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        fallback.saveFromResponse(url, cookies)
+        val jar = webViewJarOrNull() ?: return
+        try {
+            jar.saveFromResponse(url, cookies)
+        } catch (error: Throwable) {
+            handleWebViewFailure(error)
+        }
+    }
+
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        val jar = webViewJarOrNull() ?: return fallback.loadForRequest(url)
+        return try {
+            jar.loadForRequest(url)
+        } catch (error: Throwable) {
+            handleWebViewFailure(error)
+            fallback.loadForRequest(url)
+        }
+    }
+
+    private fun webViewJarOrNull(): CookieJar? {
+        if (webViewUnavailable) return null
+        webViewJar?.let { return it }
+        return synchronized(this) {
+            if (webViewUnavailable) return@synchronized null
+            webViewJar ?: try {
+                webViewJarProvider().also { webViewJar = it }
+            } catch (error: Throwable) {
+                handleWebViewFailure(error)
+                null
+            }
+        }
+    }
+
+    private fun handleWebViewFailure(error: Throwable) {
+        if (error !is RuntimeException && error !is LinkageError) throw error
+        val shouldReport = !webViewUnavailable
+        webViewUnavailable = true
+        webViewJar = null
+        if (shouldReport) onWebViewFailure(error)
+    }
+}

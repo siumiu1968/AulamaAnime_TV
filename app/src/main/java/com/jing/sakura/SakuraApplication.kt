@@ -23,7 +23,7 @@ import com.jing.sakura.auth.SearchHistorySyncQueue
 import com.jing.sakura.auth.SearchHistorySyncScheduler
 import com.jing.sakura.compose.common.ChineseText
 import com.jing.sakura.detail.DetailPageViewModel
-import com.jing.sakura.extend.AndroidCookieJar
+import com.jing.sakura.extend.WebViewCompatibleCookieJar
 import com.jing.sakura.history.HistoryViewModel
 import com.jing.sakura.home.CategoryViewModel
 import com.jing.sakura.home.HomeViewModel
@@ -37,7 +37,6 @@ import com.jing.sakura.room.SakuraDatabase
 import com.jing.sakura.search.SearchResultViewModel
 import com.jing.sakura.search.SearchViewModel
 import com.jing.sakura.timeline.TimelineViewModel
-import okhttp3.CookieJar
 import okhttp3.Dns
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -233,11 +232,8 @@ class SakuraApplication : Application(), ImageLoaderFactory {
     }
 
     private fun provideOkHttpClient(): OkHttpClient {
-        val cookieJar = try {
-            AndroidCookieJar()
-        } catch (error: RuntimeException) {
-            Log.w(TAG, "System WebView cookie store is unavailable; continuing without it", error)
-            CookieJar.NO_COOKIES
+        val cookieJar = WebViewCompatibleCookieJar { error ->
+            Log.w(TAG, "System WebView cookie store is unavailable; using in-memory cookies", error)
         }
         return basicOkhttpClient()
             .cookieJar(cookieJar)
