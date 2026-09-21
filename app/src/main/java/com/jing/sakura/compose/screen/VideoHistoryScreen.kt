@@ -86,6 +86,7 @@ import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.CinematicArtworkBackdrop
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.LoadingOverlay
+import com.jing.sakura.compose.common.PosterRatingBadge
 import com.jing.sakura.compose.common.NewEpisodeBadge
 import com.jing.sakura.compose.common.aulamaTvBackground
 import com.jing.sakura.compose.common.localizedText
@@ -141,7 +142,7 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
                 .maxBy(VideoHistoryEntity::updateTime)
         }
     }
-    val rows = remember(library.continueWatching, library.favorites, historyByAnime) {
+    val rows = remember(library.continueWatching, library.completedWatching, library.favorites, historyByAnime) {
         buildList {
             if (library.continueWatching.isNotEmpty()) {
                 add(
@@ -151,6 +152,9 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
                         historyByAnime = historyByAnime
                     )
                 )
+            }
+            if (library.completedWatching.isNotEmpty()) {
+                add(LibraryRow(title = "已看完", videos = library.completedWatching, historyByAnime = historyByAnime, showProgress = false))
             }
             if (library.favorites.isNotEmpty()) {
                 add(LibraryRow(title = "我的收藏", videos = library.favorites))
@@ -698,7 +702,9 @@ private fun LibraryMediaRow(
                     LibraryPosterCard(
                         anime = anime,
                         history = row.historyByAnime[historyKey(anime.id, anime.sourceId)],
+                        showProgress = row.showProgress,
                         showLabels = true,
+                        selected = selected,
                         modifier = Modifier
                             .requiredSize(width = 148.dp, height = 208.dp)
                             .graphicsLayer { alpha = cardAlpha }
@@ -725,6 +731,8 @@ private fun LibraryPosterCard(
     anime: AnimeData,
     history: VideoHistoryEntity?,
     showLabels: Boolean,
+    showProgress: Boolean = true,
+    selected: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val title = localizedText(anime.title)
@@ -743,6 +751,7 @@ private fun LibraryPosterCard(
                 LibraryPosterShape
             )
             .clip(LibraryPosterShape)
+            .background(Color(0xFF151B27))
     ) {
         AsyncImage(
             model = rememberPosterImageRequest(anime.imageUrl),
@@ -770,18 +779,21 @@ private fun LibraryPosterCard(
                     .fillMaxWidth()
                     .padding(horizontal = 10.dp, vertical = 9.dp)
             ) {
-                Text(
+                AutoMarqueeText(
                     text = title,
                     color = Color.White,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                    enabled = selected,
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontSize = 13.sp,
                         lineHeight = 16.sp,
                         fontWeight = FontWeight.Bold
-                    )
+                    ),
+                    modifier = Modifier.fillMaxWidth()
                 )
-                if (subtitle.isNotBlank()) {
+                if (anime.newEpisodeBadge.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    NewEpisodeBadge(label = anime.newEpisodeBadge)
+                } else if (subtitle.isNotBlank()) {
                     Spacer(Modifier.height(3.dp))
                     Text(
                         text = subtitle,
@@ -791,7 +803,7 @@ private fun LibraryPosterCard(
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp)
                     )
                 }
-                if (progress > 0f) {
+                if (showProgress && progress > 0f) {
                     Spacer(Modifier.height(5.dp))
                     Box(
                         modifier = Modifier
@@ -810,12 +822,7 @@ private fun LibraryPosterCard(
                 }
             }
         }
-        NewEpisodeBadge(
-            label = anime.newEpisodeBadge,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(9.dp)
-        )
+        PosterRatingBadge(anime.rating, Modifier.align(Alignment.TopStart).padding(9.dp))
     }
 }
 
@@ -883,7 +890,8 @@ private fun LibraryRefreshButton(
 private data class LibraryRow(
     val title: String,
     val videos: List<AnimeData>,
-    val historyByAnime: Map<String, VideoHistoryEntity> = emptyMap()
+    val historyByAnime: Map<String, VideoHistoryEntity> = emptyMap(),
+    val showProgress: Boolean = true
 )
 
 private val LibraryPosterShape = RoundedCornerShape(10.dp)

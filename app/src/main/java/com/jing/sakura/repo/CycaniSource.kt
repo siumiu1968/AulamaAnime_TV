@@ -7,11 +7,12 @@ import com.google.gson.JsonParser
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.AulamaPlaybackProvider
 import com.jing.sakura.auth.buildCycaniManifestBridgeUrl
-import com.jing.sakura.auth.parseCycaniPlaybackUrl
+import com.jing.sakura.auth.parseCycaniPlaybackUrlPayload
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimeDetailPageData
 import com.jing.sakura.data.AnimePageData
 import com.jing.sakura.data.AnimePlayList
+import com.jing.sakura.home.withCurrentScheduleStatus
 import com.jing.sakura.data.AnimePlayListEpisode
 import com.jing.sakura.data.HomePageData
 import com.jing.sakura.data.NamedValue
@@ -49,7 +50,7 @@ class CycaniSource(
                     ?: if (shouldUseDirectCycaniPlayUrlFallback(repository != null)) {
                         okHttpClient.getHtml(
                             "https://aulama.org/anime/api/cycani/sections/$sectionId/play-url"
-                        ).let(::parseCycaniPlaybackUrl)
+                        ).let(::parseCycaniPlaybackUrlPayload)
                     } else {
                         null
                     }
@@ -98,11 +99,22 @@ class CycaniSource(
                 Result.failure(error)
             }
         }
-        val scheduleRows = timelineGroups.await()
+        val rawScheduleRows = timelineGroups.await()
+        val ratedSchedule = authRepository?.withCatalogRatings(rawScheduleRows.flatMap { it.value })
+            .orEmpty().associateBy { it.id }
+        val scheduleRows = rawScheduleRows.map { row -> row.copy(value = row.value.map { ratedSchedule[it.id] ?: it }) }
         if (scheduleRows.isNotEmpty()) {
             onPartial(HomePageData(sourceId = sourceId, seriesList = scheduleRows))
         }
-        val homeGroups = scheduleRows + catalogGroups.await().getOrThrow()
+        val latestItems = scheduleRows.flatMap { it.value }
+        val rawCatalogRows = catalogGroups.await().getOrThrow()
+        val ratedCatalog = authRepository?.withCatalogRatings(rawCatalogRows.flatMap { it.value })
+            .orEmpty().associateBy { it.id }
+        val homeGroups = scheduleRows + rawCatalogRows.map { row ->
+            row.copy(value = row.value.map { ratedCatalog[it.id] ?: it })
+        }.map { row ->
+            row.copy(value = withCurrentScheduleStatus(row.value, latestItems))
+        }
 
         if (homeGroups.isEmpty()) {
             throw RuntimeException(trad("次元城首页未解析到内容"))
@@ -214,6 +226,17 @@ class CycaniSource(
     }
 
     private suspend fun fetchWebDetailPage(animeId: String): AnimeDetailPageData = coroutineScope {
+        val relatedItems = async {
+            try {
+                apiGetDataArray("$API_BASE_URL/video/prefer", linkedMapOf("vod_id" to animeId))
+                    .asJsonObjects().map { parseAnimeItem(it) }
+                    .filterNot { it.id == animeId || isSuppressedAnime(it) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
         val cachedSynopsis = async {
             try {
                 withTimeoutOrNull(CACHED_SYNOPSIS_TIMEOUT_MS) {
@@ -323,7 +346,8 @@ class CycaniSource(
             description = description,
             imageUrl = imageUrl,
             playLists = playLists,
-            infoList = infoList
+            infoList = infoList,
+            otherAnimeList = relatedItems.await()
         )
     }
 

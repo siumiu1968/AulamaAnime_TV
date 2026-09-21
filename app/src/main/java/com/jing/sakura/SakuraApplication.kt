@@ -226,7 +226,7 @@ class SakuraApplication : Application(), ImageLoaderFactory {
         viewModel { holder -> SearchViewModel(get(), get(), get(), holder.get()) }
         viewModel { holder -> TimelineViewModel(get(), holder.get()) }
         viewModelOf(::HistoryViewModel)
-        viewModel { holder -> SearchResultViewModel(holder.get(), get(), holder.get()) }
+        viewModel { holder -> SearchResultViewModel(holder.get(), get(), holder.get(), get(), get()) }
         viewModel { holder -> CategoryViewModel(get(), holder.get()) }
 
     }
@@ -320,7 +320,7 @@ class SakuraApplication : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader = ImageLoader(this).newBuilder()
-        .okHttpClient(basicOkhttpClient().build())
+        .okHttpClient(basicOkhttpClient().addInterceptor(com.jing.sakura.http.PosterFallbackInterceptor()).build())
         .allowHardware(true)
         .memoryCache {
             MemoryCache.Builder(this)

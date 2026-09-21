@@ -97,8 +97,7 @@ fun rememberArtworkAccent(imageUrl: String, enabled: Boolean = true): Color {
             return@LaunchedEffect
         }
 
-        val request = ImageRequest.Builder(context)
-            .data(imageUrl)
+        val request = posterImageRequest(context, imageUrl).newBuilder()
             .allowHardware(false)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)

@@ -60,12 +60,7 @@ fun CinematicArtworkBackdrop(
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val duration = if (reducedMotion) 0 else transitionDurationMillis
-        val animatedAspectRatio by animateFloatAsState(
-            targetValue = ready?.aspectRatio ?: DefaultArtworkAspectRatio,
-            animationSpec = tween(duration, easing = FastOutSlowInEasing),
-            label = "cinematic-artwork-aspect-ratio"
-        )
-        val adaptiveArtworkWidth = minOf(maxWidth, maxHeight * animatedAspectRatio)
+        val adaptiveArtworkWidth = minOf(maxWidth, maxHeight * (ready?.aspectRatio ?: DefaultArtworkAspectRatio))
         val artworkStartFraction = if (maxWidth.value > 0f) {
             (1f - adaptiveArtworkWidth.value / maxWidth.value).coerceIn(0f, 1f)
         } else {

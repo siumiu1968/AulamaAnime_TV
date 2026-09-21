@@ -22,6 +22,8 @@ import com.jing.sakura.repo.WebPageRepository
 import com.jing.sakura.room.VideoHistoryDao
 import com.jing.sakura.room.VideoHistoryEntity
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -499,16 +501,20 @@ class HomeViewModel(
 
     private suspend fun loadSyncedContent() {
         lastSyncedContentStartedAtMs.set(System.currentTimeMillis())
-        val homeResult = runCatching { authRepository.fetchTvHome() }
+        val (homeResult, freshSchedule) = coroutineScope {
+            val home = async { runCatching { authRepository.fetchTvHome() } }
+            val schedule = async { runCatching { authRepository.fetchPublicSchedule() }.getOrNull() }
+            home.await() to schedule.await()
+        }
+        val schedule = freshSchedule ?: homeResult.getOrNull()?.schedule
         homeResult
             .onSuccess { payload ->
-                _recommendations.value = payload.recommendations
-                _todayUpdates.value = payload.todayUpdates
-                _theaterItems.value = payload.theaterItems
+                val scheduledItems = schedule?.timeline.orEmpty().flatMap { it.second }
+                _recommendations.value = withCurrentScheduleStatus(payload.recommendations, scheduledItems)
+                _todayUpdates.value = withCurrentScheduleStatus(payload.todayUpdates, scheduledItems)
+                _theaterItems.value = withCurrentScheduleStatus(payload.theaterItems, scheduledItems)
             }
             .onFailure { Log.e("tv-home-sync", "載入首頁同步內容失敗", it) }
-        val schedule = homeResult.getOrNull()?.schedule
-            ?: runCatching { authRepository.fetchPublicSchedule() }.getOrNull()
         val localHistory = videoHistoryDao.queryAllHistoryRecords()
 
         runCatching { authRepository.fetchTvLibrary() }

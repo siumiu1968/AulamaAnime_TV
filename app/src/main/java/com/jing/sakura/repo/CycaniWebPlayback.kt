@@ -4,6 +4,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.github.houbb.opencc4j.util.ZhConverterUtil
+import com.jing.sakura.auth.CycaniPlaybackUrl
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.extend.TraditionalChinese
 import com.jing.sakura.extend.getHtml
@@ -29,7 +30,7 @@ import java.util.Locale
 internal class CycaniWebPlaybackResolver(
     private val client: OkHttpClient,
     private val apiBaseUrl: String = WEB_API_BASE,
-    private val authenticatedPlayUrlResolver: suspend (String) -> String,
+    private val authenticatedPlayUrlResolver: suspend (String) -> CycaniPlaybackUrl,
     private val manifestBridgeUrlResolver: (String) -> String = { "" }
 ) {
     private val artworkMutex = Mutex()
@@ -93,13 +94,15 @@ internal class CycaniWebPlaybackResolver(
     /** Resolves one Web section at the moment it is selected for playback. */
     suspend fun resolveSection(sectionId: String): String {
         require(sectionId.matches(Regex("\\d{1,12}"))) { "Cycani Web section ID is invalid" }
-        val directUrl = authenticatedPlayUrlResolver(sectionId)
+        val playback = authenticatedPlayUrlResolver(sectionId)
+        val directUrl = playback.url
         if (!CycaniWebPlaybackPolicy.isTrustedPlaybackUrl(directUrl)) {
             error("Cycani Web returned an invalid playback URL")
         }
         val selectedUrl = CycaniWebPlaybackPolicy.selectMainSectionPlaybackUrl(
             directUrl = directUrl,
-            manifestBridgeUrl = manifestBridgeUrlResolver(sectionId)
+            manifestBridgeUrl = manifestBridgeUrlResolver(sectionId),
+            backendMediaKind = playback.mediaKind
         )
         if (!CycaniWebPlaybackPolicy.isTrustedPlaybackUrl(selectedUrl)) {
             error("Cycani Web returned an invalid manifest bridge URL")
@@ -367,13 +370,15 @@ internal fun isRetiredCycaniOldPcUrl(value: String): Boolean {
 internal object CycaniWebPlaybackPolicy {
     fun selectMainSectionPlaybackUrl(
         directUrl: String,
-        manifestBridgeUrl: String
+        manifestBridgeUrl: String,
+        backendMediaKind: String = ""
     ): String {
         val direct = directUrl.trim()
         val url = direct.toHttpUrlOrNull()
-        val requiresManifestBridge = url?.isHttps == true &&
-            url.host.equals("vhub.babel.gold", ignoreCase = true) &&
-            url.encodedPath.endsWith(".m3u8", ignoreCase = true)
+        val requiresManifestBridge = backendMediaKind.equals("hls", ignoreCase = true) ||
+            (url?.isHttps == true &&
+                url.host.equals("vhub.babel.gold", ignoreCase = true) &&
+                url.encodedPath.endsWith(".m3u8", ignoreCase = true))
         return if (requiresManifestBridge) manifestBridgeUrl.trim() else direct
     }
 

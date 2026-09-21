@@ -60,6 +60,16 @@ fun NewEpisodeBadge(
     )
 }
 
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun PosterRatingBadge(rating: String, modifier: Modifier = Modifier) {
+    if (rating.isBlank()) return
+    Text(text = "★ $rating", color = Color(0xFFFFDFEA), maxLines = 1,
+        style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+        modifier = modifier.clip(RoundedCornerShape(50)).background(Color(0xE65A3649))
+            .padding(horizontal = 8.dp, vertical = 4.dp))
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoCard(
@@ -72,6 +82,7 @@ fun VideoCard(
     isFocusable: Boolean = true,
     externallyFocused: Boolean = false,
     showFocusFrame: Boolean = true,
+    showScrim: Boolean = true,
     focusAccent: Color? = null,
     posterWidthPx: Int = 420,
     posterHeightPx: Int = 600,
@@ -87,6 +98,7 @@ fun VideoCard(
         mutableStateOf(false)
     }
     val focused = internallyFocused || externallyFocused
+    var artworkLoaded by remember(imageUrl) { mutableStateOf(false) }
     val focusFrameActive = focused && showFocusFrame
     var focusSettled by remember { mutableStateOf(false) }
     var focusedAccent by remember(imageUrl) { mutableStateOf<Color?>(null) }
@@ -97,7 +109,7 @@ fun VideoCard(
     )
     val extractedArtworkAccent = rememberArtworkAccent(
         imageUrl,
-        enabled = focusSettled && focusAccent == null
+        enabled = focusSettled && artworkLoaded && focusAccent == null
     )
     val artworkAccent = focusAccent ?: if (focused) {
         focusedAccent ?: extractedArtworkAccent
@@ -120,7 +132,7 @@ fun VideoCard(
         Modifier.graphicsLayer {
                 scaleX = cardScale
                 scaleY = cardScale
-                shadowElevation = if (focusFrameActive) 8.dp.toPx() else 0f
+                shadowElevation = if (focusFrameActive && artworkLoaded) 8.dp.toPx() else 0f
                 shape = AulamaCardShape
                 clip = false
                 ambientShadowColor = artworkAccent.copy(alpha = 0.54f)
@@ -140,7 +152,7 @@ fun VideoCard(
             .border(
                 border = BorderStroke(
                     width = if (focusFrameActive) 2.5.dp else 1.dp,
-                    color = if (focusFrameActive) artworkAccent
+                    color = if (focusFrameActive) { if (artworkLoaded) artworkAccent else Color.White.copy(alpha = 0.65f) }
                     else AulamaTvColors.Outline.copy(alpha = 0.72f)
                 ),
                 shape = AulamaCardShape
@@ -150,14 +162,16 @@ fun VideoCard(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(AulamaCardShape)
+                .background(Color(0xFF151B27))
         ) {
             AsyncImage(
                 model = posterRequest,
+                onSuccess = { artworkLoaded = true },
                 contentDescription = displayTitle,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
-            Box(
+            if (showScrim) Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(

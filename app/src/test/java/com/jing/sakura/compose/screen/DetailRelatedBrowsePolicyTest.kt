@@ -11,7 +11,7 @@ class DetailRelatedBrowsePolicyTest {
         val policy = detailRelatedBrowsePolicy(playlistCount = 2)
 
         assertEquals(226, policy.listViewportTopDp)
-        assertEquals(120, policy.heroClearanceDp)
+        assertEquals(160, policy.heroClearanceDp)
         assertEquals(24, policy.upperViewportScrollOffsetDp)
     }
 
@@ -20,7 +20,7 @@ class DetailRelatedBrowsePolicyTest {
         val policy = detailRelatedBrowsePolicy(playlistCount = 0)
 
         assertEquals(226, policy.listViewportTopDp)
-        assertEquals(120, policy.heroClearanceDp)
+        assertEquals(160, policy.heroClearanceDp)
         assertEquals(0, policy.upperViewportScrollOffsetDp)
     }
 

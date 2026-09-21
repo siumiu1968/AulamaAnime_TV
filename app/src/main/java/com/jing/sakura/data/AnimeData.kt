@@ -11,5 +11,6 @@ data class AnimeData(
     val sourceId:String,
     val year: String = "",
     val newEpisodeBadge: String = "",
-    val favoriteAddedAtEpochMs: Long = 0L
+    val favoriteAddedAtEpochMs: Long = 0L,
+    val rating: String = ""
 )

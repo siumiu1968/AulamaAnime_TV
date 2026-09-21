@@ -39,6 +39,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.translate
@@ -88,6 +89,7 @@ fun Loading(text: String = "") {
             .aulamaTvBackground(),
         contentAlignment = Alignment.Center
     ) {
+        StartupEdgeFlow(reducedMotion)
         Column(
             modifier = Modifier.lightweightEntrance(
                 transitionKey = Unit,
@@ -102,8 +104,6 @@ fun Loading(text: String = "") {
                 height = 76.dp,
                 modifier = Modifier
             )
-            Spacer(Modifier.height(22.dp))
-            AulamaLoadingPulse(reducedMotion = reducedMotion)
             if (text.isNotBlank()) {
                 Spacer(Modifier.height(14.dp))
                 Text(
@@ -120,6 +120,43 @@ fun Loading(text: String = "") {
             }
         }
     }
+}
+
+@Composable
+private fun StartupEdgeFlow(reducedMotion: Boolean) {
+    val transition = rememberInfiniteTransition(label = "startup-edge")
+    val angle = transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(3_200, easing = LinearEasing)),
+        label = "startup-edge-angle"
+    )
+    Box(Modifier.fillMaxSize().drawWithCache {
+        val inset = 8.dp.toPx()
+        val radius = 20.dp.toPx()
+        val bounds = android.graphics.RectF(inset, inset, size.width - inset, size.height - inset)
+        val shader = android.graphics.SweepGradient(size.width / 2, size.height / 2,
+            intArrayOf(0x0028dfff, 0xff28dfff.toInt(), 0xffe2ffff.toInt(),
+                0x009a78ff, 0x00ad70ff, 0xffff6bcb.toInt(), 0xffffe0f4.toInt(), 0x0028dfff),
+            floatArrayOf(0f, .14f, .19f, .4f, .54f, .72f, .78f, 1f))
+        val matrix = android.graphics.Matrix()
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            style = android.graphics.Paint.Style.STROKE
+            this.shader = shader
+        }
+        onDrawBehind {
+            matrix.setRotate(if (reducedMotion) 0f else angle.value, size.width / 2, size.height / 2)
+            shader.setLocalMatrix(matrix)
+            val canvas = drawContext.canvas.nativeCanvas
+            // Layered strokes keep the bloom inexpensive on TV GPUs.
+            paint.strokeWidth = 16.dp.toPx(); paint.alpha = 22
+            canvas.drawRoundRect(bounds, radius, radius, paint)
+            paint.strokeWidth = 9.dp.toPx(); paint.alpha = 45
+            canvas.drawRoundRect(bounds, radius, radius, paint)
+            paint.strokeWidth = 3.dp.toPx(); paint.alpha = 255
+            canvas.drawRoundRect(bounds, radius, radius, paint)
+        }
+    })
 }
 
 @Composable

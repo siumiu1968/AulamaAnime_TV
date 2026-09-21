@@ -666,6 +666,7 @@ private fun TimelinePosterCard(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(TimelinePosterShape)
+                .background(Color(0xFF151B27))
         ) {
             AsyncImage(
                 model = posterRequest,

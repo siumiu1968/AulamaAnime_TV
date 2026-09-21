@@ -75,6 +75,9 @@ object RecommendationParser {
             year = listOf("year", "releaseYear", "release_year", "vod_year")
                 .firstNotNullOfOrNull { item.string(it).takeIf(String::isNotBlank) }
                 .orEmpty(),
+            rating = listOf("bangumiRating", "anilistRating", "rating", "providerRating")
+                .firstNotNullOfOrNull { key -> item.string(key).toDoubleOrNull()?.takeIf { it > 0 && it <= 10 } }
+                ?.let { String.format(java.util.Locale.ROOT, "%.1f", it) }.orEmpty(),
             favoriteAddedAtEpochMs = CloudTimestamp.parseEpochMs(
                 item.string("addedAt").ifBlank { item.string("updatedAt") }
             )

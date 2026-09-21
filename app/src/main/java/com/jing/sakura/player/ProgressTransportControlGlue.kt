@@ -7,6 +7,8 @@ import android.view.View
 import androidx.core.content.ContextCompat
 import androidx.leanback.media.PlaybackTransportControlGlue
 import androidx.leanback.media.PlayerAdapter
+import androidx.leanback.widget.PlaybackRowPresenter
+import androidx.leanback.widget.PlaybackTransportRowPresenter
 import androidx.leanback.widget.Action
 import androidx.leanback.widget.ArrayObjectAdapter
 import androidx.leanback.widget.PlaybackControlsRow.FastForwardAction
@@ -27,7 +29,8 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
     private val switchSourceFallback: () -> Unit,
     private val playPreviousEpisode: () -> Unit,
     private val playNextEpisode: () -> Unit,
-    private val open4kModePicker: () -> Unit
+    private val open4kModePicker: () -> Unit,
+    private val openSpeedPicker: () -> Unit
 ) : PlaybackTransportControlGlue<T>(context, impl) {
 
     private val appContext = context
@@ -49,6 +52,10 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
         null,
         ContextCompat.getDrawable(context, R.drawable.ic_player_4k_off)
     )
+    private val speedAction = Action(
+        13L, "播放速度 · 1×", null,
+        ContextCompat.getDrawable(context, R.drawable.ic_player_speed)
+    )
     private val sourceFallbackAction = Action(
         ACTION_SOURCE_FALLBACK,
         context.getString(R.string.player_switch_source),
@@ -68,10 +75,23 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
         super.onCreateSecondaryActions(secondaryActionsAdapter)
         this.secondaryActionsAdapter = secondaryActionsAdapter
         secondaryActionsAdapter.add(episodeListAction)
+        secondaryActionsAdapter.add(speedAction)
         secondaryActionsAdapter.add(fast4kAction)
     }
 
+    private var transportPresenter: PlaybackTransportRowPresenter? = null
+
+    override fun onCreateRowPresenter(): PlaybackRowPresenter = super.onCreateRowPresenter().also {
+        transportPresenter = it as? PlaybackTransportRowPresenter
+        updateSeekIncrement()
+    }
+
+    private fun updateSeekIncrement() {
+        transportPresenter?.defaultSeekIncrement = PlaybackSeekPolicy.fraction(playerAdapter.duration)
+    }
+
     override fun onUpdateProgress() {
+        updateSeekIncrement()
         super.onUpdateProgress()
         updateProgress()
     }
@@ -79,12 +99,13 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
     override fun onActionClicked(action: Action) {
         when (action) {
             previousAction -> playPreviousEpisode()
-            rewindAction -> seekBy(-SEEK_INCREMENT_MS)
-            fastForwardAction -> seekBy(SEEK_INCREMENT_MS)
+            rewindAction -> seekBy(-PlaybackSeekPolicy.incrementMs(playerAdapter.duration))
+            fastForwardAction -> seekBy(PlaybackSeekPolicy.incrementMs(playerAdapter.duration))
             nextAction -> playNextEpisode()
             episodeListAction -> chooseEpisode()
             sourceFallbackAction -> switchSourceFallback()
             fast4kAction -> open4kModePicker()
+            speedAction -> openSpeedPicker()
             is PlayPauseAction -> if (!onPlayPauseAction(action)) {
                 super.onActionClicked(action)
             }
@@ -143,6 +164,14 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
         playerAdapter.seekTo(if (duration > 0L) target.coerceAtMost(duration) else target)
     }
 
+    fun updateSpeedAction(speed: Float) {
+        speedAction.label1 = "播放速度 · ${speed.toString().removeSuffix(".0")}×"
+        secondaryActionsAdapter?.let { adapter ->
+            val index = adapter.indexOf(speedAction)
+            if (index >= 0) adapter.notifyArrayItemRangeChanged(index, 1)
+        }
+    }
+
     fun update4kAction(mode: Tv4kMode) {
         fast4kAction.label1 = appContext.getString(mode.labelRes)
         fast4kAction.icon = ContextCompat.getDrawable(
@@ -158,7 +187,7 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
     fun showSourceFallbackAction(visible: Boolean) {
         val adapter = secondaryActionsAdapter ?: return
         val index = adapter.indexOf(sourceFallbackAction)
-        if (visible && index < 0) adapter.add(0, sourceFallbackAction)
+        if (visible && index < 0) adapter.add(sourceFallbackAction)
         if (!visible && index >= 0) adapter.remove(sourceFallbackAction)
     }
 
@@ -166,6 +195,5 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
         private const val ACTION_EPISODE_LIST = 10L
         private const val ACTION_FAST_4K = 11L
         private const val ACTION_SOURCE_FALLBACK = 12L
-        private const val SEEK_INCREMENT_MS = 10_000L
     }
 }

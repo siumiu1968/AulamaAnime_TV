@@ -23,7 +23,8 @@ data class TvHomePayload(
 data class TvLibraryPayload(
     val continueWatching: List<com.jing.sakura.data.AnimeData> = emptyList(),
     val favorites: List<com.jing.sakura.data.AnimeData> = emptyList(),
-    val historyItems: List<TvHistoryItem> = emptyList()
+    val historyItems: List<TvHistoryItem> = emptyList(),
+    val completedWatching: List<com.jing.sakura.data.AnimeData> = emptyList()
 )
 
 data class TvHistoryItem(

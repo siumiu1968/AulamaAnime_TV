@@ -7,6 +7,7 @@ import android.view.WindowManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -65,8 +66,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -258,6 +259,20 @@ private fun DetailContent(
     val selectedRelatedAccent = rememberArtworkAccent(selectedRelatedImageUrl)
     val relatedBackdropAccent = remember(selectedRelatedImageUrl) { selectedRelatedAccent }
     val heroPresentation = detailHeroPresentation(relatedRowFocusState.value)
+    val rowTransitionAlpha = remember { Animatable(1f) }
+    var rowTransitionRunning by remember { mutableStateOf(false) }
+    suspend fun transitionDetailRow(change: suspend () -> Unit) {
+        rowTransitionRunning = true
+        try {
+            rowTransitionAlpha.animateTo(0f, tween(100))
+            change()
+            withFrameNanos { }
+            rowTransitionAlpha.animateTo(1f, tween(200, easing = LinearOutSlowInEasing))
+        } finally {
+            rowTransitionRunning = false
+            rowTransitionAlpha.snapTo(1f)
+        }
+    }
     val relatedPreviewState = viewModel.relatedPreviewState.collectAsState().value
     val selectedRelatedSourceId = selectedRelatedAnime?.sourceId?.ifBlank { viewModel.sourceId }
     val readyRelatedPreview = (relatedPreviewState as? HeroPreviewState.Ready)?.spec
@@ -444,8 +459,11 @@ private fun DetailContent(
         modifier = Modifier
             .fillMaxSize()
             .background(AulamaTvColors.Background)
+            .graphicsLayer { alpha = rowTransitionAlpha.value }
             .onPreviewKeyEvent { event ->
-                if (
+                if (rowTransitionRunning && (event.key == Key.DirectionDown || event.key == Key.DirectionUp)) {
+                    true
+                } else if (
                     event.type == KeyEventType.KeyDown &&
                     event.key == Key.DirectionDown &&
                     heroHasFocus &&
@@ -462,9 +480,7 @@ private fun DetailContent(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .drawWithContent {
-                    if (!heroPresentation.showRelatedHero) drawContent()
-                }
+                .drawWithContent { if (!heroPresentation.showRelatedHero) drawContent() }
                 .then(
                     if (heroPresentation.showRelatedHero) Modifier.clearAndSetSemantics { }
                     else Modifier
@@ -479,9 +495,7 @@ private fun DetailContent(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .drawWithContent {
-                        if (heroPresentation.showRelatedHero) drawContent()
-                    }
+                    .drawWithContent { if (heroPresentation.showRelatedHero) drawContent() }
                     .then(
                         if (heroPresentation.showRelatedHero) Modifier
                         else Modifier.clearAndSetSemantics { }
@@ -525,9 +539,7 @@ private fun DetailContent(
             accent = detailAccent,
             height = DetailHeroHeight,
             modifier = Modifier
-                .drawWithContent {
-                    if (!heroPresentation.showRelatedHero) drawContent()
-                }
+                .drawWithContent { if (!heroPresentation.showRelatedHero) drawContent() }
                 .then(
                     if (heroPresentation.showRelatedHero) Modifier.clearAndSetSemantics { }
                     else Modifier
@@ -561,9 +573,7 @@ private fun DetailContent(
                 imageUrl = selectedRelatedImageUrl,
                 accent = selectedRelatedAccent,
                 modifier = Modifier
-                    .drawWithContent {
-                        if (heroPresentation.showRelatedHero) drawContent()
-                    }
+                    .drawWithContent { if (heroPresentation.showRelatedHero) drawContent() }
                     .then(
                         if (heroPresentation.showRelatedHero) Modifier
                         else Modifier.clearAndSetSemantics { }
@@ -631,8 +641,13 @@ private fun DetailContent(
                             },
                             onNavigateDown = focusRequesters.related?.let {
                                 {
-                                    detailListState.requestScrollToItem(relatedRowIndex)
-                                    runCatching { focusRequesters.related.requestFocus() }
+                                    relatedExitJobHolder.job?.cancel()
+                                    relatedExitJobHolder.job = scope.launch {
+                                        transitionDetailRow {
+                                            detailListState.scrollToItem(relatedRowIndex)
+                                            runCatching { focusRequesters.related.requestFocus() }
+                                        }
+                                    }
                                 }
                             },
                             onEpisodeFocused = { episodeIndex, _ ->
@@ -671,8 +686,9 @@ private fun DetailContent(
                             viewModel.cancelRelatedPreview()
                             relatedExitJobHolder.job?.cancel()
                             relatedExitJobHolder.job = scope.launch {
+                              transitionDetailRow {
                                 if (hasEpisodes) {
-                                    detailListState.requestScrollToItem(
+                                    detailListState.scrollToItem(
                                         index = 0,
                                         scrollOffset = upperViewportScrollOffsetPx
                                     )
@@ -690,7 +706,7 @@ private fun DetailContent(
                                     }
                                 } else {
                                     relatedRowFocusState.value = false
-                                    detailListState.requestScrollToItem(0)
+                                    detailListState.scrollToItem(0)
                                     withFrameNanos { }
                                     val primaryFocusResult = runCatching {
                                         primaryActionFocusRequester.requestFocus()
@@ -699,6 +715,7 @@ private fun DetailContent(
                                         runCatching { focusRequesters.hero.requestFocus() }
                                     }
                                 }
+                              }
                             }
                         },
                         onRowFocusChanged = { focused ->
@@ -709,7 +726,7 @@ private fun DetailContent(
                                 relatedPreviewFirstFrameReady = false
                                 viewModel.cancelRelatedPreview()
                             }
-                            if (shouldCancelDetailRelatedExit(wasFocused, focused)) {
+                            if (!rowTransitionRunning && shouldCancelDetailRelatedExit(wasFocused, focused)) {
                                 relatedExitJobHolder.job?.cancel()
                                 relatedExitJobHolder.job = null
                             }
@@ -1526,7 +1543,7 @@ private fun EpisodeSection(
                     color = AulamaTvColors.TextSecondary
                 )
             }
-            Spacer(modifier = Modifier.height(7.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             CompositionLocalProvider(
                 LocalBringIntoViewSpec provides horizontalBringIntoViewSpec
             ) {

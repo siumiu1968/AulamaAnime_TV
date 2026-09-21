@@ -2,6 +2,7 @@ package com.jing.sakura.compose.common
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,6 +36,7 @@ fun CustomTextField(
     onValueChange: (String) -> Unit,
     onSubmit: () -> Unit = {},
     downFocusRequester: FocusRequester? = null,
+    flat: Boolean = false,
     placeholder: @Composable () -> Unit = {}
 ) {
     var focused by remember {
@@ -48,12 +50,12 @@ fun CustomTextField(
             .onFocusChanged {
                 focused = it.hasFocus || it.isFocused
             }
-            .clickable(onClick = {
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {
                 focusText = true
             })
             .border(
-                width = if (focused) 2.dp else 1.dp,
-                color = if (focused) AulamaTvColors.FocusBorder else AulamaTvColors.Outline,
+                width = if(flat) 0.dp else if (focused) 2.dp else 1.dp,
+                color = if(flat) Color.Transparent else if (focused) AulamaTvColors.FocusBorder else AulamaTvColors.Outline,
                 shape = AulamaCardShape
             )
             .focusable()
@@ -66,8 +68,8 @@ fun CustomTextField(
                 focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent,
                 disabledIndicatorColor = Color.Transparent,
-                focusedContainerColor = AulamaTvColors.SurfaceRaised,
-                unfocusedContainerColor = AulamaTvColors.SurfaceRaised
+                focusedContainerColor = if(flat) Color.Transparent else AulamaTvColors.SurfaceRaised,
+                unfocusedContainerColor = if(flat) Color.Transparent else AulamaTvColors.SurfaceRaised
             ),
             shape = AulamaCardShape,
             value = value,

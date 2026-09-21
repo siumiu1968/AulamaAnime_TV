@@ -43,6 +43,17 @@ class SpeedBoostOverlay @JvmOverloads constructor(
     }
     private val bounds = RectF()
     private val triangle = Path()
+    private var charge = 0f
+    private var locked = false
+    private val chargePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(83, 217, 233)
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val chargePath = Path()
+    private val chargeSegment = Path()
+    private val pathMeasure = android.graphics.PathMeasure()
     private var phase = 0f
     private var phaseAnimator: ValueAnimator? = null
 
@@ -54,13 +65,20 @@ class SpeedBoostOverlay @JvmOverloads constructor(
         canvas.drawRoundRect(bounds, radius, radius, backgroundPaint)
         canvas.drawRoundRect(bounds, radius, radius, borderPaint)
 
+        chargePath.reset()
+        chargePath.addRoundRect(bounds, radius, radius, Path.Direction.CW)
+        pathMeasure.setPath(chargePath, false)
+        chargeSegment.reset()
+        pathMeasure.getSegment(0f, pathMeasure.length * charge, chargeSegment, true)
+        if (!locked) canvas.drawPath(chargeSegment, chargePaint)
+
         val centerY = height / 2f
         val textBaseline = centerY - (textPaint.ascent() + textPaint.descent()) / 2f
         canvas.drawText("2×", width * 0.36f, textBaseline, textPaint)
 
-        val triangleSize = 10f * density
+        val triangleSize = 8f * density
         val gap = 4f * density
-        val firstX = width * 0.58f + phase * 2f * density
+        val firstX = width * 0.58f + phase * 3f * density
         drawTriangle(canvas, firstX, centerY, triangleSize, pulseAlpha(phase))
         drawTriangle(
             canvas,
@@ -71,11 +89,26 @@ class SpeedBoostOverlay @JvmOverloads constructor(
         )
     }
 
+    fun updateCharge(value: Float, isLocked: Boolean) {
+        charge = value.coerceIn(0f, 1f)
+        val wasLocked = locked
+        locked = isLocked
+        if (isLocked && !wasLocked) {
+            animate().cancel()
+            animate().alpha(0.55f).translationY(-12f * density).setDuration(260L).start()
+        }
+        contentDescription = if (locked) "2 倍速已鎖定，再按確認解除" else "2 倍速，長按 3 秒鎖定"
+        invalidate()
+    }
+
     fun showBoost() {
+        charge = 0f
+        locked = false
+        translationY = 0f
         animate().cancel()
         visibility = VISIBLE
         alpha = 0f
-        animate().alpha(1f).setDuration(110L).start()
+        animate().alpha(1f).setDuration(160L).start()
         if (phaseAnimator?.isRunning == true) return
         phaseAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 720L

@@ -20,7 +20,7 @@ internal fun detailRelatedBrowsePolicy(
     require(playlistCount >= 0) { "playlistCount must not be negative" }
     return DetailRelatedBrowsePolicy(
         listViewportTopDp = 226,
-        heroClearanceDp = 120,
+        heroClearanceDp = 160,
         upperViewportScrollOffsetDp = if (playlistCount > 0) 24 else 0
     )
 }

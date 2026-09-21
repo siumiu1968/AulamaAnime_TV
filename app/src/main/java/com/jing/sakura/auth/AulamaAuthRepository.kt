@@ -15,6 +15,12 @@ import com.jing.sakura.remote.RemotePlaybackCommand
 import com.jing.sakura.remote.RemotePlaybackCommandParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
+import com.jing.sakura.SakuraApplication
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -164,6 +170,46 @@ class AulamaAuthRepository(
         }
     }
 
+    private val ratingPreferences by lazy {
+        SakuraApplication.context.getSharedPreferences("catalog_ratings", android.content.Context.MODE_PRIVATE)
+    }
+
+    suspend fun withCatalogRatings(items: List<AnimeData>): List<AnimeData> {
+        val now = System.currentTimeMillis()
+        val ids = items.filter { it.rating.isBlank() &&
+            (ratingPreferences.getString(it.id, "").isNullOrBlank() ||
+                now - ratingPreferences.getLong("${it.id}:checked", 0) > 86_400_000L) }
+            .map { it.id }.distinct().take(96)
+        // Fetch whole rows together; cards never launch their own score requests.
+        withTimeoutOrNull(2_000L) {
+            coroutineScope {
+                ids.chunked(32).map { batch -> async {
+                    try {
+                        val url = "$API_BASE/catalog-ratings".toHttpUrl().newBuilder()
+                            .addQueryParameter("ids", batch.joinToString(",")).build()
+                        val body = authenticatedBody(url) ?: return@async
+                        val values = JsonParser.parseString(body).asJsonObject.getAsJsonObject("ratings") ?: return@async
+                        val editor = ratingPreferences.edit()
+                        batch.forEach { id ->
+                            val item = values.getAsJsonObject(id) ?: return@forEach
+                            val score = listOf("bangumiRating", "anilistRating").firstNotNullOfOrNull { key ->
+                                item.get(key)?.takeIf { it.isJsonPrimitive }?.asString?.toDoubleOrNull()?.takeIf { it > 0 && it <= 10 }
+                            }
+                            if (score != null) {
+                                editor.putString(id, String.format(java.util.Locale.ROOT, "%.1f", score))
+                                editor.putLong("$id:checked", now)
+                            }
+                        }
+                        editor.apply()
+                    } catch (error: CancellationException) { throw error }
+                    catch (_: Exception) { /* Retain previously cached scores while offline. */ }
+                } }.awaitAll()
+            }
+        }
+        return items.map { item -> if (item.rating.isNotBlank()) item else
+            item.copy(rating = ratingPreferences.getString(item.id, "").orEmpty()) }
+    }
+
     suspend fun fetchRecommendations(): List<AnimeData> {
         return fetchTvHome().recommendations
     }
@@ -175,10 +221,12 @@ class AulamaAuthRepository(
             if (day == Calendar.SUNDAY) 7 else day - 1
         }
         return TvLibraryParser.parseHome(body, weekday).let { payload ->
+            val rated = withCatalogRatings(payload.recommendations + payload.todayUpdates + payload.theaterItems).associateBy { it.id }
+            fun ratedItems(items: List<AnimeData>) = items.filterNot(::isSuppressedAnime).map { it.copy(rating = rated[it.id]?.rating ?: it.rating) }
             payload.copy(
-                recommendations = payload.recommendations.filterNot(::isSuppressedAnime),
-                todayUpdates = payload.todayUpdates.filterNot(::isSuppressedAnime),
-                theaterItems = payload.theaterItems.filterNot(::isSuppressedAnime),
+                recommendations = ratedItems(payload.recommendations),
+                todayUpdates = ratedItems(payload.todayUpdates),
+                theaterItems = ratedItems(payload.theaterItems),
                 schedule = payload.schedule?.copy(
                     timeline = payload.schedule.timeline.map { (label, items) ->
                         label to items.filterNot(::isSuppressedAnime)
@@ -235,13 +283,16 @@ class AulamaAuthRepository(
 
     suspend fun fetchTvLibrary(): TvLibraryPayload {
         val favorites = fetchFavorites()
-        val historyItems = authenticatedBody("/history")
+        val rawHistoryItems = authenticatedBody("/history")
             ?.let(TvLibraryParser::parseHistoryItems)
             ?.filterNot { isSuppressedAnime(it.anime) }
             .orEmpty()
+        val scores = withCatalogRatings(favorites + rawHistoryItems.map(TvHistoryItem::anime)).associateBy { it.id }
+        val historyItems = rawHistoryItems.map { it.copy(anime = it.anime.copy(rating = scores[it.anime.id]?.rating.orEmpty())) }
         return TvLibraryPayload(
-            continueWatching = historyItems.map(TvHistoryItem::anime),
-            favorites = favorites,
+            continueWatching = historyItems.filterNot(::isHistorySeriesCompleted).map(TvHistoryItem::anime),
+            completedWatching = historyItems.filter(::isHistorySeriesCompleted).map(TvHistoryItem::anime),
+            favorites = favorites.map { it.copy(rating = scores[it.id]?.rating.orEmpty()) },
             historyItems = historyItems
         )
     }
@@ -359,33 +410,50 @@ class AulamaAuthRepository(
      * Resolves the playback URL for both signed-in and guest sessions. Video
      * bytes are fetched directly by the TV player from the returned CDN URL.
      */
-    suspend fun fetchCycaniPlaybackUrl(sectionId: String): String? {
+    suspend fun fetchCycaniPlaybackUrl(sectionId: String): CycaniPlaybackUrl? {
         if (!sectionId.matches(Regex("\\d{1,12}"))) return null
-        val url = API_BASE.toHttpUrl().newBuilder()
-            .addPathSegment("cycani")
-            .addPathSegment("sections")
-            .addPathSegment(sectionId)
-            .addPathSegment("play-url")
-            .build()
         val session = _session.value
-        val request = session
-            ?.let { authenticatedRequest(url.toString(), it) }
-            ?: Request.Builder()
-                .url(url)
-                .header("Accept", "application/json")
-        return executeResponseOnIo(request.get().build()) { response, responseBody ->
-            if (response.code == 401 && session != null) {
-                clearSession()
-                return@executeResponseOnIo null
+        repeat(CycaniPlaybackUrlRetryPolicy.MAX_ATTEMPTS) { attemptIndex ->
+            val url = API_BASE.toHttpUrl().newBuilder()
+                .addPathSegment("cycani")
+                .addPathSegment("sections")
+                .addPathSegment(sectionId)
+                .addPathSegment("play-url")
+                .apply {
+                    if (CycaniPlaybackUrlRetryPolicy.shouldForceRefresh(attemptIndex)) {
+                        addQueryParameter("refresh", "1")
+                    }
+                }
+                .build()
+            val request = session
+                ?.let { authenticatedRequest(url.toString(), it) }
+                ?: Request.Builder()
+                    .url(url)
+                    .header("Accept", "application/json")
+            try {
+                return executeResponseOnIo(request.get().build()) { response, responseBody ->
+                    if (response.code == 401 && session != null) {
+                        clearSession()
+                        return@executeResponseOnIo null
+                    }
+                    if (response.code == 403 && recordRegionBlock(response, responseBody)) {
+                        return@executeResponseOnIo null
+                    }
+                    if (CycaniPlaybackUrlRetryPolicy.shouldRetryStatus(response.code)) {
+                        throw RetryableCycaniPlaybackUrlException(response.code)
+                    }
+                    if (!response.isSuccessful) {
+                        throw IllegalStateException("播放地址請求失敗（${response.code}）")
+                    }
+                    parseCycaniPlaybackUrlPayload(responseBody)
+                }
+            } catch (error: RetryableCycaniPlaybackUrlException) {
+                val retryDelayMs = CycaniPlaybackUrlRetryPolicy.retryDelayAfter(attemptIndex)
+                    ?: throw IllegalStateException("播放地址請求失敗（${error.statusCode}）")
+                delay(retryDelayMs)
             }
-            if (response.code == 403 && recordRegionBlock(response, responseBody)) {
-                return@executeResponseOnIo null
-            }
-            if (!response.isSuccessful) {
-                throw IllegalStateException("播放地址請求失敗（${response.code}）")
-            }
-            parseCycaniPlaybackUrl(responseBody)
         }
+        return null
     }
 
     internal fun cycaniManifestBridgeUrl(sectionId: String): String? {
@@ -721,14 +789,45 @@ internal fun isCurrentRegionRouteGeneration(
     currentGeneration: Long
 ): Boolean = responseGeneration == null || responseGeneration == currentGeneration
 
-internal fun parseCycaniPlaybackUrl(body: String): String? = runCatching {
+data class CycaniPlaybackUrl(
+    val url: String,
+    val mediaKind: String = ""
+)
+
+internal object CycaniPlaybackUrlRetryPolicy {
+    const val MAX_ATTEMPTS = 3
+
+    fun shouldRetryStatus(statusCode: Int): Boolean = statusCode in setOf(408, 429, 502, 503, 504)
+
+    fun shouldForceRefresh(attemptIndex: Int): Boolean = attemptIndex >= 1
+
+    fun retryDelayAfter(attemptIndex: Int): Long? = when (attemptIndex) {
+        0 -> 180L
+        1 -> 450L
+        else -> null
+    }
+}
+
+private class RetryableCycaniPlaybackUrlException(val statusCode: Int) : Exception()
+
+internal fun parseCycaniPlaybackUrlPayload(body: String): CycaniPlaybackUrl? = runCatching {
     val root = JsonParser.parseString(body).asJsonObject
-    root.getAsJsonObject("data")
+    val data = root.getAsJsonObject("data")
+    val url = (data
         ?.get("url")
         ?.takeUnless { it.isJsonNull }
         ?.asString
-        ?: root.get("url")?.takeUnless { it.isJsonNull }?.asString
-}.getOrNull()?.trim()?.takeIf(String::isNotBlank)
+        ?: root.get("url")?.takeUnless { it.isJsonNull }?.asString).orEmpty()
+    val mediaKind = data
+        ?.get("mediaKind")
+        ?.takeUnless { it.isJsonNull }
+        ?.asString
+        ?: root.get("mediaKind")?.takeUnless { it.isJsonNull }?.asString
+    url.trim().takeIf(String::isNotBlank)?.let { CycaniPlaybackUrl(it, mediaKind.orEmpty().trim()) }
+}.getOrNull()
+
+internal fun parseCycaniPlaybackUrl(body: String): String? =
+    parseCycaniPlaybackUrlPayload(body)?.url
 
 internal fun buildCycaniManifestBridgeUrl(apiBase: String, sectionId: String): String? {
     if (!sectionId.matches(Regex("\\d{1,12}"))) return null

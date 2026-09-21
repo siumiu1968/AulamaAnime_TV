@@ -77,7 +77,8 @@ object TvLibraryParser {
                 episodeId = item.primitiveString("episodeId"),
                 episodeLabel = item.primitiveString("episodeLabel"),
                 episodeIndex = item.nonNegativeInt("episodeIndex"),
-                episodeCount = item.nonNegativeInt("episodeCount"),
+                episodeCount = item.nonNegativeInt("availableEpisodeCount").takeIf { it > 0 }
+                    ?: item.nonNegativeInt("episodeCount"),
                 currentTimeSeconds = item.nonNegativeDouble("currentTime"),
                 durationSeconds = item.nonNegativeDouble("duration"),
                 completed = item.boolean("completed"),

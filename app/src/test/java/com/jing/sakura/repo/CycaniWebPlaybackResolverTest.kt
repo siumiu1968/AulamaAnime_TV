@@ -1,5 +1,6 @@
 package com.jing.sakura.repo
 
+import com.jing.sakura.auth.CycaniPlaybackUrl
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -63,7 +64,7 @@ class CycaniWebPlaybackResolverTest {
             apiBaseUrl = server.url("/api/").toString(),
             authenticatedPlayUrlResolver = { sectionId ->
                 resolvedSectionId = sectionId
-                "https://media.example/episode-1.m3u8"
+                CycaniPlaybackUrl("https://media.example/episode-1.m3u8")
             }
         )
 
@@ -81,7 +82,7 @@ class CycaniWebPlaybackResolverTest {
             client = OkHttpClient(),
             apiBaseUrl = server.url("/api/").toString(),
             authenticatedPlayUrlResolver = {
-                "https://vhub.babel.gold/hls/episode-19/index.m3u8?token=signed"
+                CycaniPlaybackUrl("https://vhub.babel.gold/hls/episode-19/index.m3u8?token=signed")
             },
             manifestBridgeUrlResolver = { sectionId ->
                 bridgedSectionId = sectionId
@@ -104,7 +105,7 @@ class CycaniWebPlaybackResolverTest {
             client = OkHttpClient(),
             apiBaseUrl = server.url("/api/").toString(),
             authenticatedPlayUrlResolver = {
-                "https://media.example/episode-19.m3u8?token=signed"
+                CycaniPlaybackUrl("https://media.example/episode-19.m3u8?token=signed")
             },
             manifestBridgeUrlResolver = {
                 "https://aulama.org/anime/api/cycani/sections/$it/manifest.m3u8"
@@ -113,6 +114,28 @@ class CycaniWebPlaybackResolverTest {
 
         assertEquals(
             "https://media.example/episode-19.m3u8?token=signed",
+            resolver.resolveSection("51796")
+        )
+    }
+
+    @Test
+    fun backendHlsKindUsesManifestBridgeEvenWhenUrlSuffixIsOpaque() = runBlocking {
+        resolver = CycaniWebPlaybackResolver(
+            client = OkHttpClient(),
+            apiBaseUrl = server.url("/api/").toString(),
+            authenticatedPlayUrlResolver = {
+                CycaniPlaybackUrl(
+                    url = "https://media.example/signed/episode.mp3?token=opaque",
+                    mediaKind = "hls"
+                )
+            },
+            manifestBridgeUrlResolver = {
+                "https://aulama.org/anime/api/cycani/sections/$it/manifest.m3u8"
+            }
+        )
+
+        assertEquals(
+            "https://aulama.org/anime/api/cycani/sections/51796/manifest.m3u8",
             resolver.resolveSection("51796")
         )
     }

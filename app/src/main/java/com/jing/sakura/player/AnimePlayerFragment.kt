@@ -133,8 +133,14 @@ class AnimePlayerFragment : VideoSupportFragment() {
         }
     }
 
-    private val centerLongPressRunnable = Runnable {
-        applyCenterKeyAction(centerKeyController.onLongPressTimeout(SystemClock.uptimeMillis()))
+    private val centerLongPressRunnable = object : Runnable {
+        override fun run() {
+            val now = SystemClock.uptimeMillis()
+            applyCenterKeyAction(centerKeyController.onReleaseTimeout(now))
+            applyCenterKeyAction(centerKeyController.onLongPressTimeout(now))
+            speedBoostIndicator?.updateCharge(centerKeyController.charge(now), centerKeyController.isLocked)
+            if (centerKeyController.isActive && !centerKeyController.isLocked) view?.postDelayed(this, 32L)
+        }
     }
 
     private val analyticsListener = object : AnalyticsListener {
@@ -208,6 +214,10 @@ class AnimePlayerFragment : VideoSupportFragment() {
             showPlaybackFailure(error.errorCodeName)
         }
 
+        override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+            if (com.jing.sakura.BuildConfig.DEBUG) Log.d(TAG, "speed=${playbackParameters.speed}")
+        }
+
         override fun onVideoSizeChanged(videoSize: VideoSize) {
             Log.d(TAG, "videoSize=${videoSize.width}x${videoSize.height}")
         }
@@ -218,6 +228,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
             reason: Int
         ) {
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                if (com.jing.sakura.BuildConfig.DEBUG) Log.d(TAG,
+                    "seek=${newPosition.positionMs - oldPosition.positionMs} duration=${player?.duration}")
                 nearEndAutoAdvanceSuppressed = true
                 skipUiState.onSeek()
                 skipPromptKeyController.reset()
@@ -442,7 +454,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
             switchSourceFallback = ::confirmSourceFallback,
             playPreviousEpisode = viewModel::playPreviousEpisodeIfExists,
             playNextEpisode = ::advanceToNextEpisode,
-            open4kModePicker = ::open4kModePicker
+            open4kModePicker = ::open4kModePicker,
+            openSpeedPicker = ::openSpeedPicker
         ).apply {
             title = ""
             subtitle = ""
@@ -475,6 +488,21 @@ class AnimePlayerFragment : VideoSupportFragment() {
         trackSelector = null
         glue = null
         current4kMode = Tv4kMode.OFF
+    }
+
+    private fun openSpeedPicker() {
+        applyCenterKeyAction(centerKeyController.cancel())
+        val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+        ChooseEpisodeDialog(
+            title = "播放速度",
+            dataList = speeds,
+            defaultSelectIndex = speeds.indexOf(player?.playbackParameters?.speed ?: 1f),
+            viewWidthDp = QUALITY_PANEL_WIDTH_DP,
+            getText = { _, speed -> "${speed.toString().removeSuffix(".0")}×" }
+        ) { _, speed ->
+            player?.setPlaybackSpeed(speed)
+            glue?.updateSpeedAction(speed)
+        }.showNow(parentFragmentManager, "playback-speed")
     }
 
     private fun open4kModePicker() {
@@ -653,6 +681,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     fun handlePlaybackKeyEvent(event: KeyEvent): Boolean {
+        if (isCenterKey(event.keyCode) && centerKeyController.isActive) return handleCenterKey(event)
         if (handleTransientSkipPromptKey(event)) return true
         updateControlsAutoHideFor(event)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
@@ -684,7 +713,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
             }
         }
 
-        if (event.action == KeyEvent.ACTION_DOWN) {
+        if (event.action == KeyEvent.ACTION_DOWN && !centerKeyController.isLocked) {
             view?.removeCallbacks(centerLongPressRunnable)
             applyCenterKeyAction(centerKeyController.cancel())
         }
@@ -758,19 +787,14 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private fun handleCenterKey(event: KeyEvent): Boolean {
         when (event.action) {
             KeyEvent.ACTION_DOWN -> {
-                val action = centerKeyController.onKeyDown(event.eventTime, event.repeatCount)
-                if (event.repeatCount == 0) {
-                    view?.removeCallbacks(centerLongPressRunnable)
-                    view?.postDelayed(
-                        centerLongPressRunnable,
-                        PlaybackCenterKeyController.DEFAULT_LONG_PRESS_THRESHOLD_MS
-                    )
-                }
-                applyCenterKeyAction(action)
+                applyCenterKeyAction(centerKeyController.onKeyDown(event.eventTime, event.repeatCount))
+                view?.removeCallbacks(centerLongPressRunnable)
+                view?.post(centerLongPressRunnable)
             }
             KeyEvent.ACTION_UP -> {
+                applyCenterKeyAction(centerKeyController.onKeyUp(event.eventTime))
                 view?.removeCallbacks(centerLongPressRunnable)
-                applyCenterKeyAction(centerKeyController.onKeyUp())
+                if (centerKeyController.isActive && !centerKeyController.isLocked) view?.post(centerLongPressRunnable)
             }
         }
         return true
@@ -794,10 +818,14 @@ class AnimePlayerFragment : VideoSupportFragment() {
                 hidePlayerChromeForBoost()
                 showSpeedBoostIndicator()
             }
+            CenterKeyAction.LOCK_BOOST -> {
+                speedBoostIndicator?.updateCharge(1f, true)
+            }
             CenterKeyAction.STOP_BOOST -> {
                 localPlayer.setPlaybackSpeed(speedBeforeBoost.coerceAtLeast(0.1f))
                 if (!wasPlayingBeforeBoost) localPlayer.pause()
                 hideSpeedBoostIndicator()
+                view?.removeCallbacks(centerLongPressRunnable)
             }
         }
     }

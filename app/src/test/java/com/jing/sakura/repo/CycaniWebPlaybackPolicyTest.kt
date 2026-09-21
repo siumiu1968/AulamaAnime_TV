@@ -142,6 +142,19 @@ class CycaniWebPlaybackPolicyTest {
     }
 
     @Test
+    fun bridgesBackendVerifiedHlsEvenWhenUrlDoesNotEndInManifest() {
+        val bridge = "https://aulama.org/anime/api/cycani/sections/51796/manifest.m3u8"
+        assertEquals(
+            bridge,
+            CycaniWebPlaybackPolicy.selectMainSectionPlaybackUrl(
+                directUrl = "https://media.example/signed/episode.mp3?token=opaque",
+                manifestBridgeUrl = bridge,
+                backendMediaKind = "hls"
+            )
+        )
+    }
+
+    @Test
     fun updatesLegacyArtworkFromTheCurrentWebCatalogue() {
         val index = CycaniWebPlaybackPolicy.buildArtworkIndex(rows(
             """[

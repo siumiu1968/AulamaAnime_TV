@@ -65,4 +65,13 @@ class RecommendationParserTest {
             page.animeList.single().title
         )
     }
+    @Test
+    fun includesCachedBangumiScoreInInitialHomeCards() {
+        val items = RecommendationParser.parse("""{"recommendations":[
+          {"id":"42","title":"作品","bangumiRating":7.8},
+          {"id":"43","title":"另一作品","bangumiRating":0,"anilistRating":6.4}
+        ]}""")
+        assertEquals(listOf("7.8", "6.4"), items.map { it.rating })
+    }
+
 }

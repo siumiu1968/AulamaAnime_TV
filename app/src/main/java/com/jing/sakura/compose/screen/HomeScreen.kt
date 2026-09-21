@@ -132,9 +132,11 @@ import com.jing.sakura.compose.common.ChangeSourceDialog
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.HeroPreviewPlayer
 import com.jing.sakura.compose.common.LoadingOverlay
+import com.jing.sakura.compose.common.PosterRatingBadge
 import com.jing.sakura.compose.common.NewEpisodeBadge
 import com.jing.sakura.compose.common.rememberArtworkAccent
 import com.jing.sakura.compose.common.rememberPosterImageRequest
+import com.jing.sakura.compose.common.posterImageRequest
 import com.jing.sakura.compose.common.rememberReducedMotion
 import com.jing.sakura.compose.common.safelyRequestFocus
 import com.jing.sakura.compose.common.boundedVirtualCarouselMove
@@ -318,19 +320,8 @@ fun HomeScreen(
         homePosterPrefetchUrls(featured, rows.map { it.value })
     }
     LaunchedEffect(posterPrefetchUrls) {
-        delay(600)
         posterPrefetchUrls.chunked(4).forEach { batch ->
-            batch.forEach { imageUrl ->
-                context.imageLoader.enqueue(
-                    ImageRequest.Builder(context)
-                        .data(imageUrl)
-                        .size(320, 460)
-                        .memoryCachePolicy(CachePolicy.ENABLED)
-                        .diskCachePolicy(CachePolicy.ENABLED)
-                        .networkCachePolicy(CachePolicy.ENABLED)
-                        .build()
-                )
-            }
+            batch.forEach { imageUrl -> context.imageLoader.enqueue(posterImageRequest(context, imageUrl)) }
             delay(100)
         }
     }
@@ -783,7 +774,7 @@ fun HomeScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .offset(y = rowShelfTop)
+                        .graphicsLayer { translationY = rowShelfTop.toPx() }
                         .graphicsLayer {
                             alpha = rowTransitionAlpha.value
                             translationY = rowTransitionOffset.value.dp.toPx()
@@ -1474,6 +1465,7 @@ private fun MediaRow(
                         title = video.title,
                         subTitle = video.currentEpisode,
                         newEpisodeBadge = video.newEpisodeBadge,
+                        rating = video.rating,
                         showLabels = rowFocused,
                         selected = rowFocused && itemIndex == selectedVirtualIndex,
                         modifier = Modifier
@@ -1486,7 +1478,8 @@ private fun MediaRow(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(start = 42.dp + focusFrameOffset, top = 6.dp)
+                        .padding(start = 42.dp, top = 6.dp)
+                        .graphicsLayer { translationX = focusFrameOffset.toPx() }
                         .requiredSize(width = 148.dp, height = 208.dp)
                         .border(
                             BorderStroke(2.dp, selectedAccent),
@@ -1529,6 +1522,7 @@ private fun CarouselPoster(
     title: String,
     subTitle: String,
     newEpisodeBadge: String,
+    rating: String,
     showLabels: Boolean,
     selected: Boolean,
     modifier: Modifier = Modifier
@@ -1543,6 +1537,7 @@ private fun CarouselPoster(
                 CarouselCardShape
             )
             .clip(CarouselCardShape)
+            .background(Color(0xFF151B27))
     ) {
         AsyncImage(
             model = posterRequest,
@@ -1566,45 +1561,25 @@ private fun CarouselPoster(
                     )
             )
         }
-        NewEpisodeBadge(
-            label = newEpisodeBadge,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(9.dp)
-        )
-        if (showLabels && newEpisodeBadge.isBlank() && displaySubtitle.isNotEmpty()) {
-            androidx.tv.material3.Text(
-                text = displaySubtitle,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = Color.White,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                ),
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(9.dp)
-                    .clip(RoundedCornerShape(5.dp))
-                    .background(Color(0xCC080B12))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            )
-        }
+        PosterRatingBadge(rating, Modifier.align(Alignment.TopStart).padding(9.dp))
         if (showLabels) {
-            AutoMarqueeText(
-                text = displayTitle,
-                color = AulamaTvColors.TextPrimary,
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = 16.sp,
-                    lineHeight = 19.sp,
-                    fontWeight = FontWeight.SemiBold
-                ),
-                enabled = selected,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 11.dp)
-            )
+            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(12.dp)) {
+                AutoMarqueeText(
+                    text = displayTitle,
+                    color = AulamaTvColors.TextPrimary,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold),
+                    enabled = selected,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (newEpisodeBadge.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    NewEpisodeBadge(label = newEpisodeBadge)
+                } else if (displaySubtitle.isNotBlank()) {
+                    androidx.tv.material3.Text(text = displaySubtitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        color = Color.White.copy(alpha = 0.8f),
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp))
+                }
+            }
         }
     }
 }

@@ -49,10 +49,10 @@
 
     <com.jing.sakura.player.SpeedBoostOverlay
         android:id="@+id/player_speed_boost"
-        android:layout_width="124dp"
-        android:layout_height="44dp"
+        android:layout_width="104dp"
+        android:layout_height="40dp"
         android:layout_gravity="center_horizontal|top"
-        android:layout_marginTop="88dp"
+        android:layout_marginTop="48dp"
         android:visibility="gone" />
 
     <LinearLayout

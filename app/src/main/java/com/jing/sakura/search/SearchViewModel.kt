@@ -14,6 +14,7 @@ import com.jing.sakura.auth.SearchHistorySyncScheduler
 import com.jing.sakura.auth.searchHistoryCacheKey
 import com.jing.sakura.room.SearchHistoryDao
 import com.jing.sakura.room.SearchHistoryEntity
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -36,15 +37,21 @@ class SearchViewModel(
         searchHistoryDao.queryHistory(cacheKey, SEARCH_HISTORY_LIMIT)
     }.flow
 
-    init {
-        viewModelScope.launch(Dispatchers.IO) {
-            if (accountKey.isBlank()) return@launch
+    private var refreshJob: Job? = null
+
+    init { refreshHistory() }
+
+    fun refreshHistory() {
+        if (accountKey.isBlank() || refreshJob?.isActive == true) return
+        refreshJob = viewModelScope.launch(Dispatchers.IO) {
+            if (authRepository.session.value?.account?.email != accountKey) return@launch
             val observedVersion = mutationVersion.get()
             flushPendingMutations()
+            if (syncQueue.pendingForAccount(accountKey).isNotEmpty()) return@launch
             runCatching { authRepository.fetchSearchHistory() }
                 .onFailure { Log.w(SEARCH_HISTORY_SYNC_TAG, "Unable to fetch search history", it) }
                 .getOrNull()
-                ?.takeIf { observedVersion == mutationVersion.get() }
+                ?.takeIf { observedVersion == mutationVersion.get() && syncQueue.pendingForAccount(accountKey).isEmpty() }
                 ?.let(::replaceLocalHistory)
         }
     }
@@ -137,19 +144,14 @@ class SearchViewModel(
     }
 
     private fun replaceLocalHistory(items: List<SearchHistorySyncItem>) {
-        searchHistoryDao.deleteAllHistory(cacheKey)
-        items.take(SEARCH_HISTORY_LIMIT).forEach { item ->
+        val rows = items.take(SEARCH_HISTORY_LIMIT).mapNotNull { item ->
             val normalized = normalizeSearchKeyword(item.keyword)
-            if (normalized.isBlank()) return@forEach
-            searchHistoryDao.saveHistory(
-                SearchHistoryEntity(
-                    accountKey = cacheKey,
-                    keywordKey = searchKeywordKey(normalized),
-                    keyword = normalized,
-                    searchTime = item.updatedAtEpochMs
-                )
+            if (normalized.isBlank()) null else SearchHistoryEntity(
+                accountKey = cacheKey, keywordKey = searchKeywordKey(normalized),
+                keyword = normalized, searchTime = item.updatedAtEpochMs
             )
         }
+        searchHistoryDao.replaceSnapshot(cacheKey, rows)
     }
 
     private companion object {
