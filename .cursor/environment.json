@@ -1,0 +1,8 @@
+{
+  "name": "Aulama Anime TV (Android)",
+  "user": "ubuntu",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "install": "chmod +x ./gradlew\n./gradlew -Dorg.gradle.java.home=\"$JAVA_HOME\" --no-daemon :app:assembleDebug"
+}
