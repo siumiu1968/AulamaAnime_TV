@@ -542,13 +542,17 @@ private fun WelcomeChoiceCard(
             color = AulamaTvColors.TextSecondary,
             maxLines = 2,
             overflow = TextOverflow.Clip,
-            modifier = Modifier.graphicsLayer { alpha = 0.78f + 0.22f * focusProgress.value }
+            modifier = Modifier.graphicsLayer {
+                alpha = 0.78f + 0.22f * AulamaMotion.unit(focusProgress.value)
+            }
         )
         Spacer(Modifier.weight(1f))
         Spacer(Modifier.height(10.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.graphicsLayer { alpha = 0.62f + 0.38f * focusProgress.value }
+            modifier = Modifier.graphicsLayer {
+                alpha = 0.62f + 0.38f * AulamaMotion.unit(focusProgress.value)
+            }
         ) {
             Icon(
                 imageVector = hintIcon,
@@ -581,7 +585,11 @@ private fun WelcomeChoiceIcon(
             .size(36.dp)
             .drawBehind {
                 drawCircle(
-                    color = lerp(Color.White.copy(alpha = 0.08f), accent(), focusProgress.value)
+                    color = lerp(
+                        Color.White.copy(alpha = 0.08f),
+                        accent(),
+                        AulamaMotion.unit(focusProgress.value)
+                    )
                 )
             },
         contentAlignment = Alignment.Center
@@ -593,7 +601,7 @@ private fun WelcomeChoiceIcon(
             tint = AulamaTvColors.TextPrimary,
             modifier = Modifier
                 .size(20.dp)
-                .graphicsLayer { alpha = 1f - focusProgress.value }
+                .graphicsLayer { alpha = 1f - AulamaMotion.unit(focusProgress.value) }
         )
         Icon(
             imageVector = icon,
@@ -601,12 +609,13 @@ private fun WelcomeChoiceIcon(
             tint = WelcomeOnAccent,
             modifier = Modifier
                 .size(20.dp)
-                .graphicsLayer { alpha = focusProgress.value }
+                .graphicsLayer { alpha = AulamaMotion.unit(focusProgress.value) }
         )
     }
 }
 
-private fun DrawScope.drawWelcomeChoiceChrome(progress: Float, accent: Color) {
+private fun DrawScope.drawWelcomeChoiceChrome(rawProgress: Float, accent: Color) {
+    val progress = AulamaMotion.unit(rawProgress)
     val radius = WelcomeChoiceCorner.toPx()
     if (progress > 0f) {
         // Layered halo instead of a blurred glow: blur effects need Android 12, shadows look

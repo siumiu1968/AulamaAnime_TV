@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -47,6 +48,7 @@ import org.koin.core.qualifier.qualifier
 fun HeroPreviewPlayer(
     spec: HeroPreviewSpec,
     modifier: Modifier = Modifier,
+    volume: () -> Float = { 1f },
     onReady: () -> Unit = {},
     onError: (String) -> Unit = {},
     onEnded: () -> Unit = {}
@@ -59,6 +61,7 @@ fun HeroPreviewPlayer(
     val currentOnReady by rememberUpdatedState(onReady)
     val currentOnError by rememberUpdatedState(onError)
     val currentOnEnded by rememberUpdatedState(onEnded)
+    val currentVolume by rememberUpdatedState(volume)
     var showPoster by remember { mutableStateOf(true) }
     val controller = remember(context, okHttpClient) {
         HeroPreviewController(
@@ -102,6 +105,11 @@ fun HeroPreviewPlayer(
         controller.load(spec)
     }
 
+    // Audio follows the visual reveal so previews swell in and duck out instead of popping.
+    LaunchedEffect(controller) {
+        snapshotFlow { currentVolume().coerceIn(0f, 1f) }.collect(controller::setVolume)
+    }
+
     Box(modifier = modifier) {
         AndroidView(
             factory = controller::createPlayerView,
@@ -135,6 +143,7 @@ private class HeroPreviewController(
     private var firstFrameDispatched = false
     private var playbackRetryCount = 0
     private var loadGeneration = 0L
+    private var volume = 1f
 
     private val playerListener = object : Player.Listener {
         override fun onRenderedFirstFrame() {
@@ -203,6 +212,11 @@ private class HeroPreviewController(
         }
     }
 
+    fun setVolume(value: Float) {
+        volume = value
+        player?.volume = value
+    }
+
     fun load(spec: HeroPreviewSpec) {
         pendingSpec = spec
         if (started && playerView != null) {
@@ -252,7 +266,7 @@ private class HeroPreviewController(
             .setLoadControl(loadControl)
             .build()
             .apply {
-                volume = 1f
+                volume = this@HeroPreviewController.volume
                 repeatMode = Player.REPEAT_MODE_OFF
                 addListener(playerListener)
                 playerView?.player = this

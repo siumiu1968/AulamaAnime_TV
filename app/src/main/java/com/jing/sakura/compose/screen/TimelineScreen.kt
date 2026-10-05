@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -88,7 +89,9 @@ import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.CinematicArtworkBackdrop
 import com.jing.sakura.compose.common.AutoMarqueeText
 import com.jing.sakura.compose.common.ErrorTip
-import com.jing.sakura.compose.common.HeroPreviewPlayer
+import com.jing.sakura.compose.common.RetainedHeroPreview
+import com.jing.sakura.compose.common.rememberReducedMotion
+import com.jing.sakura.compose.common.rememberPreviewReveal
 import com.jing.sakura.compose.common.LoadingOverlay
 import com.jing.sakura.compose.common.TvPreviewPreferences
 import com.jing.sakura.compose.common.aulamaTvBackground
@@ -219,6 +222,7 @@ fun TimeLine(
         focusedAnimeId = highlightedAnime?.id,
         focusedSourceId = highlightedAnime?.sourceId
     )
+    val previewReveal = rememberPreviewReveal(previewActive, rememberReducedMotion())
     val chromeAlpha by animateFloatAsState(
         targetValue = if (previewActive) 0.28f else 1f,
         animationSpec = tween(320, easing = FastOutSlowInEasing),
@@ -277,30 +281,28 @@ fun TimeLine(
                 false
             }
     ) {
-        readyPreview?.let { spec ->
-            HeroPreviewPlayer(
-                spec = spec,
-                onReady = { previewFirstFrameReady = true },
-                onError = {
-                    previewArmed = false
-                    previewFirstFrameReady = false
-                    onCancelPreview()
-                },
-                onEnded = {
-                    dimUnselected = true
-                    previewArmed = false
-                    previewFirstFrameReady = false
-                    onCancelPreview()
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = if (previewActive) 1f else 0f }
-            )
-        }
+        RetainedHeroPreview(
+            spec = readyPreview,
+            reveal = previewReveal,
+            retainWhileFading = isScreenResumed,
+            onReady = { previewFirstFrameReady = true },
+            onError = {
+                previewArmed = false
+                previewFirstFrameReady = false
+                onCancelPreview()
+            },
+            onEnded = {
+                dimUnselected = true
+                previewArmed = false
+                previewFirstFrameReady = false
+                onCancelPreview()
+            },
+            modifier = Modifier.fillMaxSize()
+        )
         TimelineBackdrop(
             anime = highlightedAnime,
             accent = accent,
-            previewActive = previewActive
+            previewReveal = previewReveal
         )
         Column(modifier = Modifier.fillMaxSize()) {
             Spacer(Modifier.height(8.dp))
@@ -728,13 +730,13 @@ private fun TimelinePosterCard(
 private fun TimelineBackdrop(
     anime: AnimeData?,
     accent: Color,
-    previewActive: Boolean
+    previewReveal: State<Float>
 ) {
     CinematicArtworkBackdrop(
         imageUrl = anime?.imageUrl.orEmpty(),
         imageKey = anime?.let { "${it.sourceId}:${it.id}:${it.imageUrl}" }.orEmpty(),
         accent = accent,
-        previewActive = previewActive
+        previewReveal = { previewReveal.value }
     )
 }
 

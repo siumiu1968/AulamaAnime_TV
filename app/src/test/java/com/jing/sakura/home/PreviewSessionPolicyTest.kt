@@ -7,9 +7,9 @@ import org.junit.Test
 
 class PreviewSessionPolicyTest {
     @Test
-    fun previewStartsSevenSecondsAfterFocus() {
+    fun previewStartsLoadingThreeSecondsAfterFocus() {
         assertEquals(
-            7_000L,
+            3_000L,
             PREVIEW_DIM_DELAY_MS + PREVIEW_START_AFTER_DIM_DELAY_MS
         )
     }

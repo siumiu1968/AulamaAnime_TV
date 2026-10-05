@@ -176,7 +176,7 @@ class DetailRelatedBrowsePolicyTest {
 
     @Test
     fun relatedPreviewUsesHomeTimingContract() {
-        assertEquals(10_000L, DETAIL_RELATED_PREVIEW_DWELL_MS)
+        assertEquals(3_000L, DETAIL_RELATED_PREVIEW_DWELL_MS)
         assertEquals(60_000L, DETAIL_RELATED_PREVIEW_LIMIT_MS)
     }
 

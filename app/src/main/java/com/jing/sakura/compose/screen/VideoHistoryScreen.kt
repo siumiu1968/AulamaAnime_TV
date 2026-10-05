@@ -83,6 +83,11 @@ import com.jing.sakura.auth.TvHistoryItem
 import com.jing.sakura.compose.common.AutoMarqueeText
 import com.jing.sakura.compose.common.AulamaCardShape
 import com.jing.sakura.compose.common.AulamaTvColors
+import com.jing.sakura.compose.common.rememberReducedMotion
+import com.jing.sakura.compose.common.HorizontalDpadKeys
+import com.jing.sakura.compose.common.rememberDpadRepeatGate
+import com.jing.sakura.compose.common.rememberCarouselGlide
+import com.jing.sakura.compose.common.AulamaMotion
 import com.jing.sakura.compose.common.CinematicArtworkBackdrop
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.LoadingOverlay
@@ -567,10 +572,21 @@ private fun LibraryMediaRow(
     }
     val selectedIndex = virtualCarouselLogicalIndex(selectedVirtualIndex, videos.size)
     val selectedVideo = videos[selectedIndex]
+    val reducedMotion = rememberReducedMotion()
+    val glide = rememberCarouselGlide(rowState, itemWidth = 148.dp, spacing = 18.dp)
+    val consumeRapidRepeat = rememberDpadRepeatGate(
+        minIntervalMs = 110L,
+        gatedKeys = HorizontalDpadKeys
+    )
     val focusFrameOffset by animateDpAsState(
         targetValue = if (loopEnabled) 0.dp else (selectedIndex * 166).dp,
-        animationSpec = tween(165, easing = LinearOutSlowInEasing),
+        animationSpec = AulamaMotion.focusSpring(reducedMotion),
         label = "library-focus-frame-offset"
+    )
+    val frameLift by animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = AulamaMotion.focusSpring(reducedMotion),
+        label = "library-frame-lift"
     )
     val selectedAccent = rememberArtworkAccent(selectedVideo.imageUrl, enabled = true)
     LaunchedEffect(identity, selectedVirtualIndex) {
@@ -591,9 +607,9 @@ private fun LibraryMediaRow(
                     return@collect
                 }
                 selectedVirtualIndex = move.targetIndex
-                rowState.animateScrollToItem(move.targetIndex)
+                glide.glideTo(move.targetIndex, reducedMotion)
                 move.recenterIndex?.let { recenteredIndex ->
-                    rowState.scrollToItem(recenteredIndex)
+                    glide.jumpTo(recenteredIndex)
                     selectedVirtualIndex = recenteredIndex
                 }
             } else {
@@ -645,6 +661,7 @@ private fun LibraryMediaRow(
                     focused = state.isFocused || state.hasFocus
                 }
                 .onPreviewKeyEvent { event ->
+                    if (consumeRapidRepeat(event)) return@onPreviewKeyEvent true
                     when {
                         event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
                             moveEvents.tryEmit(1)
@@ -699,6 +716,11 @@ private fun LibraryMediaRow(
                         ),
                         label = "library-row-card-alpha"
                     )
+                    val lift by animateFloatAsState(
+                        targetValue = if (selected && focused) 1f else 0f,
+                        animationSpec = AulamaMotion.focusSpring(reducedMotion),
+                        label = "library-row-card-lift"
+                    )
                     LibraryPosterCard(
                         anime = anime,
                         history = row.historyByAnime[historyKey(anime.id, anime.sourceId)],
@@ -707,14 +729,26 @@ private fun LibraryMediaRow(
                         selected = selected,
                         modifier = Modifier
                             .requiredSize(width = 148.dp, height = 208.dp)
-                            .graphicsLayer { alpha = cardAlpha }
+                            .graphicsLayer {
+                                alpha = cardAlpha
+                                val scale = 1f + (AulamaMotion.PosterFocusScale - 1f) * lift
+                                scaleX = scale
+                                scaleY = scale
+                            }
                     )
                 }
             }
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(start = 42.dp + focusFrameOffset, top = 6.dp)
+                    .padding(start = 42.dp, top = 6.dp)
+                    // Translate rather than pad, so the frame moves without relayout.
+                    .graphicsLayer {
+                        translationX = focusFrameOffset.toPx()
+                        val scale = 1f + (AulamaMotion.PosterFocusScale - 1f) * frameLift
+                        scaleX = scale
+                        scaleY = scale
+                    }
                     .requiredSize(width = 148.dp, height = 208.dp)
                     .border(BorderStroke(3.dp, selectedAccent), LibraryPosterShape)
                     .border(

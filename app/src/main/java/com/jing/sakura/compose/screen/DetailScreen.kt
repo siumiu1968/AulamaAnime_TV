@@ -7,7 +7,6 @@ import android.view.WindowManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -64,9 +63,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.State
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
@@ -115,7 +115,15 @@ import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.ArtworkLoading
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.FocusGroup
-import com.jing.sakura.compose.common.HeroPreviewPlayer
+import com.jing.sakura.compose.common.PreviewLegibilityScrim
+import com.jing.sakura.compose.common.SpringFocusButton
+import com.jing.sakura.compose.common.HorizontalDpadKeys
+import com.jing.sakura.compose.common.rememberCarouselGlide
+import com.jing.sakura.compose.common.springScrollToItem
+import com.jing.sakura.compose.common.AulamaMotion
+import com.jing.sakura.compose.common.rememberReducedMotion
+import com.jing.sakura.compose.common.RetainedHeroPreview
+import com.jing.sakura.compose.common.rememberPreviewReveal
 import com.jing.sakura.compose.common.TvPreviewPreferences
 import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.rememberArtworkAccent
@@ -144,6 +152,9 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.coroutineScope
 
 private val DetailHeroHeight = 346.dp
 private val RelatedSectionHeight = 318.dp
@@ -259,18 +270,15 @@ private fun DetailContent(
     val selectedRelatedAccent = rememberArtworkAccent(selectedRelatedImageUrl)
     val relatedBackdropAccent = remember(selectedRelatedImageUrl) { selectedRelatedAccent }
     val heroPresentation = detailHeroPresentation(relatedRowFocusState.value)
-    val rowTransitionAlpha = remember { Animatable(1f) }
     var rowTransitionRunning by remember { mutableStateOf(false) }
+    // Rows glide into place while the hero cross-fades; there is no full-screen dip to black.
+    // Up/down presses are held back until the move lands so focus and scroll stay in step.
     suspend fun transitionDetailRow(change: suspend () -> Unit) {
         rowTransitionRunning = true
         try {
-            rowTransitionAlpha.animateTo(0f, tween(100))
             change()
-            withFrameNanos { }
-            rowTransitionAlpha.animateTo(1f, tween(200, easing = LinearOutSlowInEasing))
         } finally {
             rowTransitionRunning = false
-            rowTransitionAlpha.snapTo(1f)
         }
     }
     val relatedPreviewState = viewModel.relatedPreviewState.collectAsState().value
@@ -291,6 +299,10 @@ private fun DetailContent(
         selectedAnimeId = selectedRelatedAnime?.id,
         selectedSourceId = selectedRelatedSourceId
     )
+
+    val reducedMotion = rememberReducedMotion()
+    val relatedPreviewReveal = rememberPreviewReveal(relatedPreviewActive, reducedMotion)
+    val heroSwap = rememberHeroSwap(heroPresentation.showRelatedHero, reducedMotion)
 
     LaunchedEffect(selectedRelatedAnime?.id, selectedRelatedAnime?.sourceId) {
         selectedRelatedAnime?.let(viewModel::loadRelatedDescription)
@@ -459,7 +471,6 @@ private fun DetailContent(
         modifier = Modifier
             .fillMaxSize()
             .background(AulamaTvColors.Background)
-            .graphicsLayer { alpha = rowTransitionAlpha.value }
             .onPreviewKeyEvent { event ->
                 if (rowTransitionRunning && (event.key == Key.DirectionDown || event.key == Key.DirectionUp)) {
                     true
@@ -480,7 +491,7 @@ private fun DetailContent(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .drawWithContent { if (!heroPresentation.showRelatedHero) drawContent() }
+                .graphicsLayer { alpha = 1f - AulamaMotion.unit(heroSwap.value) }
                 .then(
                     if (heroPresentation.showRelatedHero) Modifier.clearAndSetSemantics { }
                     else Modifier
@@ -495,7 +506,7 @@ private fun DetailContent(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .drawWithContent { if (heroPresentation.showRelatedHero) drawContent() }
+                    .graphicsLayer { alpha = AulamaMotion.unit(heroSwap.value) }
                     .then(
                         if (heroPresentation.showRelatedHero) Modifier
                         else Modifier.clearAndSetSemantics { }
@@ -507,25 +518,24 @@ private fun DetailContent(
                 )
             }
         }
-        readyRelatedPreview?.let { spec ->
-            HeroPreviewPlayer(
-                spec = spec,
-                onReady = { relatedPreviewFirstFrameReady = true },
-                onError = {
-                    relatedPreviewArmed = false
-                    relatedPreviewFirstFrameReady = false
-                    viewModel.cancelRelatedPreview()
-                },
-                onEnded = {
-                    relatedPreviewArmed = false
-                    relatedPreviewFirstFrameReady = false
-                    viewModel.cancelRelatedPreview()
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = if (relatedPreviewActive) 1f else 0f }
-            )
-        }
+        RetainedHeroPreview(
+            spec = readyRelatedPreview,
+            reveal = relatedPreviewReveal,
+            retainWhileFading = isScreenResumed,
+            onReady = { relatedPreviewFirstFrameReady = true },
+            onError = {
+                relatedPreviewArmed = false
+                relatedPreviewFirstFrameReady = false
+                viewModel.cancelRelatedPreview()
+            },
+            onEnded = {
+                relatedPreviewArmed = false
+                relatedPreviewFirstFrameReady = false
+                viewModel.cancelRelatedPreview()
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+        PreviewLegibilityScrim(reveal = { relatedPreviewReveal.value })
         DetailHero(
             detail = detail,
             history = history,
@@ -539,7 +549,7 @@ private fun DetailContent(
             accent = detailAccent,
             height = DetailHeroHeight,
             modifier = Modifier
-                .drawWithContent { if (!heroPresentation.showRelatedHero) drawContent() }
+                .heroSwapOut(heroSwap)
                 .then(
                     if (heroPresentation.showRelatedHero) Modifier.clearAndSetSemantics { }
                     else Modifier
@@ -573,7 +583,7 @@ private fun DetailContent(
                 imageUrl = selectedRelatedImageUrl,
                 accent = selectedRelatedAccent,
                 modifier = Modifier
-                    .drawWithContent { if (heroPresentation.showRelatedHero) drawContent() }
+                    .heroSwapIn(heroSwap)
                     .then(
                         if (heroPresentation.showRelatedHero) Modifier
                         else Modifier.clearAndSetSemantics { }
@@ -615,6 +625,11 @@ private fun DetailContent(
                                 .focusRequester(focusRequesters.playlist)
                                 .onFocusChanged { state ->
                                     playlistSectionHasFocus = state.isFocused || state.hasFocus
+                                }
+                                // Hand-off: the episode row fades as it glides away under the
+                                // outgoing hero, and fades back in on the way up.
+                                .graphicsLayer {
+                                    alpha = 1f - AulamaMotion.unit(heroSwap.value * HeroSwapOutRate)
                                 },
                             restoreFocusRequester = restoreEpisodeFocusRequester,
                             restoreFocusEpisodeIndex = restoreEpisodePosition
@@ -644,8 +659,15 @@ private fun DetailContent(
                                     relatedExitJobHolder.job?.cancel()
                                     relatedExitJobHolder.job = scope.launch {
                                         transitionDetailRow {
-                                            detailListState.scrollToItem(relatedRowIndex)
+                                            // Focus first so the hero swap runs with the glide.
                                             runCatching { focusRequesters.related.requestFocus() }
+                                            detailListState.springScrollToItem(
+                                                index = relatedRowIndex,
+                                                reducedMotion = reducedMotion
+                                            )
+                                            if (!relatedRowFocusState.value) {
+                                                runCatching { focusRequesters.related.requestFocus() }
+                                            }
                                         }
                                     }
                                 }
@@ -688,13 +710,27 @@ private fun DetailContent(
                             relatedExitJobHolder.job = scope.launch {
                               transitionDetailRow {
                                 if (hasEpisodes) {
-                                    detailListState.scrollToItem(
-                                        index = 0,
-                                        scrollOffset = upperViewportScrollOffsetPx
-                                    )
-                                    withFrameNanos { }
-                                    runCatching {
-                                        focusRequesters.playlist.requestFocus()
+                                    coroutineScope {
+                                        val glide = launch {
+                                            detailListState.springScrollToItem(
+                                                index = 0,
+                                                scrollOffset = upperViewportScrollOffsetPx,
+                                                reducedMotion = reducedMotion
+                                            )
+                                        }
+                                        // Hand focus over as soon as the episode row is laid
+                                        // out, so the hero swap overlaps the glide.
+                                        withTimeoutOrNull(DETAIL_ROW_FOCUS_HANDOFF_TIMEOUT_MS) {
+                                            snapshotFlow {
+                                                detailListState.layoutInfo.visibleItemsInfo
+                                                    .any { it.index == relatedRowIndex - 1 }
+                                            }.first { it }
+                                        }
+                                        withFrameNanos { }
+                                        runCatching {
+                                            focusRequesters.playlist.requestFocus()
+                                        }
+                                        glide.join()
                                     }
                                     if (
                                         shouldRetryDetailRelatedExitFocus(
@@ -706,13 +742,21 @@ private fun DetailContent(
                                     }
                                 } else {
                                     relatedRowFocusState.value = false
-                                    detailListState.scrollToItem(0)
-                                    withFrameNanos { }
-                                    val primaryFocusResult = runCatching {
-                                        primaryActionFocusRequester.requestFocus()
-                                    }
-                                    if (primaryFocusResult.isFailure) {
-                                        runCatching { focusRequesters.hero.requestFocus() }
+                                    coroutineScope {
+                                        val glide = launch {
+                                            detailListState.springScrollToItem(
+                                                index = 0,
+                                                reducedMotion = reducedMotion
+                                            )
+                                        }
+                                        withFrameNanos { }
+                                        val primaryFocusResult = runCatching {
+                                            primaryActionFocusRequester.requestFocus()
+                                        }
+                                        if (primaryFocusResult.isFailure) {
+                                            runCatching { focusRequesters.hero.requestFocus() }
+                                        }
+                                        glide.join()
                                     }
                                 }
                               }
@@ -1088,6 +1132,7 @@ private fun DetailHero(
                             label = if (history == null) "立即播放" else "繼續播放",
                             icon = Icons.Default.PlayArrow,
                             accent = accent,
+                            prominent = true,
                             enabled = isInteractive,
                             onClick = play,
                             onNavigateDown = onNavigateDown,
@@ -1241,12 +1286,16 @@ private fun DetailActionButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    prominent: Boolean = false,
     onNavigateDown: (() -> Unit)? = null
 ) {
-    val shape = RoundedCornerShape(7.dp)
-    Surface(
+    SpringFocusButton(
         onClick = onClick,
         enabled = enabled,
+        accent = accent,
+        prominent = prominent,
+        cornerRadius = 7.dp,
+        contentPadding = PaddingValues(horizontal = 14.dp),
         modifier = modifier
             .onPreviewKeyEvent { event ->
                 if (
@@ -1260,47 +1309,24 @@ private fun DetailActionButton(
                     false
                 }
             }
-            .height(46.dp),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = AulamaTvColors.SurfaceRaised,
-            contentColor = AulamaTvColors.TextPrimary,
-            focusedContainerColor = accent,
-            focusedContentColor = Color(0xFF061014),
-            pressedContainerColor = accent.copy(alpha = 0.82f)
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(shape),
-        border = ClickableSurfaceDefaults.border(
-            border = Border(BorderStroke(1.dp, AulamaTvColors.Outline), shape = shape),
-            focusedBorder = Border(BorderStroke(2.dp, AulamaTvColors.FocusBorder), shape = shape)
-        )
+            .height(46.dp)
     ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(7.dp))
-                Text(
-                    text = localizedText(label),
-                    maxLines = 1,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleSmall.copy(
-                        fontSize = 15.sp,
-                        lineHeight = 18.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                )
-            }
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(7.dp))
+        Text(
+            text = localizedText(label),
+            maxLines = 1,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontSize = 15.sp,
+                lineHeight = 18.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        )
     }
 }
 
@@ -1862,7 +1888,12 @@ private fun RelatedAnimeSection(
     var selectedVirtualIndex by remember(identity) { mutableStateOf(initialVirtualIndex) }
     var rowFocused by remember(identity) { mutableStateOf(false) }
     var dimUnselected by remember(identity) { mutableStateOf(false) }
-    val cardStridePx = with(LocalDensity.current) { 164.dp.toPx() }
+    val reducedMotion = rememberReducedMotion()
+    val glide = rememberCarouselGlide(rowState, itemWidth = 160.dp, spacing = 4.dp)
+    val consumeRapidRepeat = rememberDpadRepeatGate(
+        minIntervalMs = 110L,
+        gatedKeys = HorizontalDpadKeys
+    )
     val moveEvents = remember(identity) {
         MutableSharedFlow<Int>(
             extraBufferCapacity = 2,
@@ -1873,8 +1904,13 @@ private fun RelatedAnimeSection(
     val selectedVideo = videos[selectedLogicalIndex]
     val selectedAccent = rememberArtworkAccent(selectedVideo.imageUrl, enabled = rowFocused)
     val publishFocusedVideo by rememberUpdatedState(onVideoFocused)
+    val headerAlpha by animateFloatAsState(
+        targetValue = if (previewActive) 0.10f else 1f,
+        animationSpec = AulamaMotion.fade(AulamaMotion.PreviewDismissMillis, reducedMotion),
+        label = "detail-related-header-alpha"
+    )
 
-    LaunchedEffect(identity, rowState, cardStridePx) {
+    LaunchedEffect(identity, rowState, glide) {
         moveEvents.collect { delta ->
             val target = detailRelatedMoveVirtualIndex(
                 currentIndex = selectedVirtualIndex,
@@ -1887,13 +1923,7 @@ private fun RelatedAnimeSection(
             publishFocusedVideo(
                 videos[detailRelatedLogicalIndex(target, videos.size)]
             )
-            rowState.animateScrollBy(
-                value = delta * cardStridePx,
-                animationSpec = tween(
-                    durationMillis = 165,
-                    easing = LinearOutSlowInEasing
-                )
-            )
+            glide.glideTo(target, reducedMotion)
         }
     }
 
@@ -1917,7 +1947,7 @@ private fun RelatedAnimeSection(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 44.dp)
-                    .graphicsLayer { alpha = if (previewActive) 0.10f else 1f },
+                    .graphicsLayer { alpha = headerAlpha },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -1952,6 +1982,7 @@ private fun RelatedAnimeSection(
                         onRowFocusChanged(focused)
                     }
                     .onPreviewKeyEvent { event ->
+                        if (consumeRapidRepeat(event)) return@onPreviewKeyEvent true
                         when {
                             event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
                                 moveEvents.tryEmit(1)
@@ -2015,10 +2046,20 @@ private fun RelatedAnimeSection(
                                 animationSpec = tween(durationMillis = 420),
                                 label = "detail-related-card-alpha"
                             )
+                            val lift by animateFloatAsState(
+                                targetValue = if (selected) 1f else 0f,
+                                animationSpec = AulamaMotion.focusSpring(reducedMotion),
+                                label = "detail-related-card-lift"
+                            )
                             Box(
                                 modifier = Modifier
                                     .size(width = 160.dp, height = 238.dp)
-                                    .graphicsLayer { alpha = cardAlpha },
+                                    .graphicsLayer {
+                                        alpha = cardAlpha
+                                        val scale = 1f + (AulamaMotion.PosterFocusScale - 1f) * lift
+                                        scaleX = scale
+                                        scaleY = scale
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
                                 RelatedPosterCard(
@@ -2365,6 +2406,42 @@ private fun DialogBlurBehind(radius: Int) {
             }
         }
     }
+}
+
+private val HeroSwapDrift = 12.dp
+private const val HeroSwapOutRate = 1.8f
+private const val DETAIL_ROW_FOCUS_HANDOFF_TIMEOUT_MS = 600L
+
+/**
+ * 0 = this title's hero, 1 = the focused related anime's hero. Decelerating so the outgoing
+ * content clears out as fast as the rows start gliding underneath it.
+ */
+@Composable
+private fun rememberHeroSwap(showRelated: Boolean, reducedMotion: Boolean): State<Float> =
+    animateFloatAsState(
+        targetValue = if (showRelated) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = if (reducedMotion) 0 else AulamaMotion.HeroSwapMillis,
+            easing = AulamaMotion.EmphasizedDecelerate
+        ),
+        label = "detail-hero-swap"
+    )
+
+/**
+ * Outgoing hero: fades while drifting up, the way tvOS hands one header to the next. It clears
+ * out in the first half of the swap so rows gliding up underneath never overlap its buttons.
+ */
+private fun Modifier.heroSwapOut(progress: State<Float>): Modifier = graphicsLayer {
+    val swap = AulamaMotion.unit(progress.value * HeroSwapOutRate)
+    alpha = 1f - swap
+    translationY = -HeroSwapDrift.toPx() * swap
+}
+
+/** Incoming hero: rises into place as it fades in. */
+private fun Modifier.heroSwapIn(progress: State<Float>): Modifier = graphicsLayer {
+    val swap = AulamaMotion.unit(progress.value)
+    alpha = swap
+    translationY = HeroSwapDrift.toPx() * (1f - swap)
 }
 
 internal fun playbackLineAvailabilityText(playlist: AnimePlayList): String =

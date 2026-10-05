@@ -11,7 +11,8 @@ internal data class DetailHeroPresentation(
     val mainHeroInteractive: Boolean
 )
 
-internal const val DETAIL_RELATED_PREVIEW_DWELL_MS = 10_000L
+internal const val DETAIL_RELATED_PREVIEW_DWELL_MS =
+    com.jing.sakura.home.PREVIEW_DIM_DELAY_MS + com.jing.sakura.home.PREVIEW_START_AFTER_DIM_DELAY_MS
 internal const val DETAIL_RELATED_PREVIEW_LIMIT_MS = 60_000L
 
 internal fun detailRelatedBrowsePolicy(

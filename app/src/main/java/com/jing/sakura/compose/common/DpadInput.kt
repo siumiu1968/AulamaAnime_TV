@@ -18,6 +18,12 @@ private val DirectionalDpadKeys = setOf(
     NativeKeyEvent.KEYCODE_DPAD_DOWN
 )
 
+/** Left/right only, for carousels that should glide rather than skip while a key is held. */
+val HorizontalDpadKeys: Set<Int> = setOf(
+    NativeKeyEvent.KEYCODE_DPAD_LEFT,
+    NativeKeyEvent.KEYCODE_DPAD_RIGHT
+)
+
 private val VerticalDpadKeys = setOf(
     NativeKeyEvent.KEYCODE_DPAD_UP,
     NativeKeyEvent.KEYCODE_DPAD_DOWN
