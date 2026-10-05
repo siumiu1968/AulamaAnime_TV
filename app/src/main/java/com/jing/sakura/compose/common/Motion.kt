@@ -1,6 +1,9 @@
 package com.jing.sakura.compose.common
 
 import android.provider.Settings
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
@@ -16,6 +19,33 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+
+/**
+ * Shared motion tokens. Everything here is meant to be driven through graphicsLayer or draw
+ * lambdas, so focus feedback stays smooth on Android 5/6 TV boxes without relayout per frame.
+ */
+object AulamaMotion {
+    /** Decelerating curve for elements arriving or gaining focus. */
+    val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+    val Standard = FastOutSlowInEasing
+
+    const val FocusInMillis = 220
+    const val FocusOutMillis = 160
+    const val PressMillis = 90
+    const val BackdropMillis = 720
+
+    const val ChoiceFocusScale = 1.05f
+    const val PressedScale = 0.97f
+
+    fun focusSpec(focused: Boolean, reducedMotion: Boolean): AnimationSpec<Float> = tween(
+        durationMillis = when {
+            reducedMotion -> 0
+            focused -> FocusInMillis
+            else -> FocusOutMillis
+        },
+        easing = if (focused) EmphasizedDecelerate else Standard
+    )
+}
 
 @Composable
 fun rememberReducedMotion(): Boolean {
