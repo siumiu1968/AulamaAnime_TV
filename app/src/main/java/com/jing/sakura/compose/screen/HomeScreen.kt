@@ -6,7 +6,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
@@ -61,6 +60,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -118,6 +118,10 @@ import com.jing.sakura.category.AnimeCategoryActivity
 import com.jing.sakura.compose.common.AulamaCardShape
 import com.jing.sakura.compose.common.AulamaAccountAvatar
 import com.jing.sakura.compose.common.AulamaAnimeBrandMark
+import com.jing.sakura.compose.common.AulamaMotion
+import com.jing.sakura.compose.common.HorizontalDpadKeys
+import com.jing.sakura.compose.common.rememberDpadRepeatGate
+import com.jing.sakura.compose.common.rememberCarouselGlide
 import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.CinematicArtworkBackdrop
 import com.jing.sakura.compose.common.AutoMarqueeText
@@ -130,7 +134,9 @@ import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.lightweightEntrance
 import com.jing.sakura.compose.common.ChangeSourceDialog
 import com.jing.sakura.compose.common.ErrorTip
-import com.jing.sakura.compose.common.HeroPreviewPlayer
+import com.jing.sakura.compose.common.RetainedHeroPreview
+import com.jing.sakura.compose.common.rememberPreviewAnticipation
+import com.jing.sakura.compose.common.rememberPreviewReveal
 import com.jing.sakura.compose.common.LoadingOverlay
 import com.jing.sakura.compose.common.PosterRatingBadge
 import com.jing.sakura.compose.common.NewEpisodeBadge
@@ -150,9 +156,11 @@ import com.jing.sakura.data.NamedValue
 import com.jing.sakura.data.Resource
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.history.HistoryActivity
+import com.jing.sakura.home.HOME_UP_NEXT_TITLE
 import com.jing.sakura.home.HomeViewModel
 import com.jing.sakura.home.PREVIEW_DIM_DELAY_MS
 import com.jing.sakura.home.PREVIEW_START_AFTER_DIM_DELAY_MS
+import com.jing.sakura.home.PREVIEW_TYPICAL_LOAD_MS
 import com.jing.sakura.home.HERO_MANUAL_RESUME_DELAY_MS
 import com.jing.sakura.home.HERO_ROTATION_INTERVAL_MS
 import com.jing.sakura.home.HeroPreviewState
@@ -283,13 +291,7 @@ fun HomeScreen(
         featuredIdentityTokens
     ) {
         buildList {
-            val recommendationRow = recommendations.distinctAnime()
-                .filterNot { anime ->
-                    anime.identityTokens().any(featuredIdentityTokens::contains)
-                }
-            if (recommendationRow.isNotEmpty()) {
-                add(NamedValue("為你推薦", recommendationRow))
-            }
+            // Resuming is the most common reason to open the app, so it sits right under the hero.
             addAll(
                 syncedRows
                     .filterNot {
@@ -298,6 +300,13 @@ fun HomeScreen(
                     }
                     .map { it.copy(value = it.value.distinctAnime()) }
             )
+            val recommendationRow = recommendations.distinctAnime()
+                .filterNot { anime ->
+                    anime.identityTokens().any(featuredIdentityTokens::contains)
+                }
+            if (recommendationRow.isNotEmpty()) {
+                add(NamedValue("為你推薦", recommendationRow))
+            }
             todayUpdates.takeIf(List<AnimeData>::isNotEmpty)
                 ?.let { add(NamedValue("今日更新", it.distinctAnime())) }
             if (theaterItems.isNotEmpty()) {
@@ -396,12 +405,12 @@ fun HomeScreen(
     val heroActionFocus = remember { FocusRequester() }
     val heroHeight by animateDpAsState(
         targetValue = if (focusedRowIndex == null) 304.dp else 146.dp,
-        animationSpec = tween(320),
+        animationSpec = AulamaMotion.settleSpring(reducedMotion),
         label = "home-hero-height"
     )
     val rowShelfTop by animateDpAsState(
         targetValue = if (focusedRowIndex == null) 404.dp else 218.dp,
-        animationSpec = tween(320),
+        animationSpec = AulamaMotion.settleSpring(reducedMotion),
         label = "home-row-shelf-top"
     )
     val selectedHeroId = hero?.id
@@ -421,6 +430,12 @@ fun HomeScreen(
         readySourceId = readyPreview?.navigateToPlayerArg?.sourceId,
         focusedAnimeId = selectedHeroId,
         focusedSourceId = selectedHeroSourceId
+    )
+    val previewReveal = rememberPreviewReveal(previewActive, reducedMotion)
+    val previewAnticipation = rememberPreviewAnticipation(
+        waiting = previewEnabled && previewIdle && focusedRowIndex != null,
+        waitMillis = PREVIEW_START_AFTER_DIM_DELAY_MS + PREVIEW_TYPICAL_LOAD_MS,
+        reducedMotion = reducedMotion
     )
     val topChromeAlpha by animateFloatAsState(
         targetValue = if (previewActive) 0.28f else 1f,
@@ -540,19 +555,14 @@ fun HomeScreen(
             displayedRowIndex = target
             focusedRowIndex = target
             rowTransitionAlpha.snapTo(0.72f)
-            rowTransitionOffset.snapTo(if (delta > 0) 12f else -12f)
+            rowTransitionOffset.snapTo(if (delta > 0) 18f else -18f)
+            // The incoming row lands on a spring so consecutive presses chain smoothly.
             coroutineScope {
                 launch {
-                    rowTransitionAlpha.animateTo(
-                        1f,
-                        tween(180, easing = FastOutSlowInEasing)
-                    )
+                    rowTransitionAlpha.animateTo(1f, AulamaMotion.fade(200, reducedMotion))
                 }
                 launch {
-                    rowTransitionOffset.animateTo(
-                        0f,
-                        tween(180, easing = FastOutSlowInEasing)
-                    )
+                    rowTransitionOffset.animateTo(0f, AulamaMotion.settleSpring(reducedMotion))
                 }
             }
         }
@@ -652,7 +662,7 @@ fun HomeScreen(
         viewModel.cancelHeroPreview()
         val resumeEpisode = rows
             .getOrNull(focusedRowIndex ?: -1)
-            ?.takeIf { it.name == "繼續觀看" }
+            ?.takeIf { it.name == HOME_UP_NEXT_TITLE }
             ?.let { anime.currentEpisode }
             .orEmpty()
         DetailActivity.startActivity(
@@ -684,31 +694,30 @@ fun HomeScreen(
                 false
             }
     ) {
-        readyPreview?.let { spec ->
-            HeroPreviewPlayer(
-                spec = spec,
-                onReady = { previewFirstFrameReady = true },
-                onError = {
-                    previewFirstFrameReady = false
-                    previewArmed = false
-                    viewModel.cancelHeroPreview()
-                },
-                onEnded = {
-                    previewIdle = true
-                    previewArmed = false
-                    previewFirstFrameReady = false
-                    viewModel.cancelHeroPreview()
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = if (previewActive) 1f else 0f }
-            )
-        }
+        RetainedHeroPreview(
+            spec = readyPreview,
+            reveal = previewReveal,
+            retainWhileFading = isScreenResumed,
+            onReady = { previewFirstFrameReady = true },
+            onError = {
+                previewFirstFrameReady = false
+                previewArmed = false
+                viewModel.cancelHeroPreview()
+            },
+            onEnded = {
+                previewIdle = true
+                previewArmed = false
+                previewFirstFrameReady = false
+                viewModel.cancelHeroPreview()
+            },
+            modifier = Modifier.fillMaxSize()
+        )
         CinematicBackdrop(
             hero = hero,
             accent = heroAccent,
             revealArtwork = previewIdle,
-            previewActive = previewActive
+            previewReveal = previewReveal,
+            anticipation = previewAnticipation
         )
 
         HeroPanel(
@@ -724,6 +733,7 @@ fun HomeScreen(
             selectedIndex = heroIndex,
             actionFocusRequester = heroActionFocus,
             transitionDirection = heroTransitionDirection,
+            previewReveal = { previewReveal.value },
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(top = 72.dp)
@@ -931,14 +941,16 @@ private fun CinematicBackdrop(
     hero: AnimeData?,
     accent: Color,
     revealArtwork: Boolean,
-    previewActive: Boolean
+    previewReveal: State<Float>,
+    anticipation: State<Float>
 ) {
     CinematicArtworkBackdrop(
         imageUrl = hero?.imageUrl.orEmpty(),
         imageKey = hero?.let { "${it.sourceId}:${it.id}:${it.imageUrl}" }.orEmpty(),
         accent = accent,
         artworkAlpha = if (revealArtwork) 1f else 0.96f,
-        previewActive = previewActive
+        previewReveal = { previewReveal.value },
+        anticipation = { anticipation.value }
     )
 }
 
@@ -955,6 +967,7 @@ private fun HeroPanel(
     actionFocusRequester: FocusRequester,
     transitionDirection: Int,
     modifier: Modifier = Modifier,
+    previewReveal: () -> Float = { 0f },
     onMove: (Int) -> Unit,
     onFocused: () -> Unit,
     onOpen: () -> Unit
@@ -1036,7 +1049,11 @@ private fun HeroPanel(
                             style = MaterialTheme.typography.bodyLarge.copy(
                                 fontSize = if (compact) 14.sp else 16.sp,
                                 lineHeight = if (compact) 19.sp else 21.sp
-                            )
+                            ),
+                            // Like a trailer billboard: the synopsis steps aside for the video.
+                            modifier = Modifier.graphicsLayer {
+                                alpha = 1f - AulamaMotion.unit(previewReveal())
+                            }
                         )
                     }
                 }
@@ -1275,6 +1292,13 @@ private fun MediaRow(
     }
     var rowFocused by remember { mutableStateOf(false) }
     var dimUnselected by remember { mutableStateOf(false) }
+    val reducedMotion = rememberReducedMotion()
+    val glide = rememberCarouselGlide(rowState, itemWidth = 148.dp, spacing = 18.dp)
+    // Throttle auto-repeat so a held key glides at a readable pace instead of racing ahead.
+    val consumeRapidRepeat = rememberDpadRepeatGate(
+        minIntervalMs = 110L,
+        gatedKeys = HorizontalDpadKeys
+    )
     val moveEvents = remember(videoIdentity) {
         MutableSharedFlow<Int>(
             extraBufferCapacity = 1,
@@ -1284,8 +1308,18 @@ private fun MediaRow(
     val selectedVideo = videos[virtualCarouselLogicalIndex(selectedVirtualIndex, videos.size)]
     val focusFrameOffset by animateDpAsState(
         targetValue = if (loopEnabled) 0.dp else (selectedVirtualIndex * 166).dp,
-        animationSpec = tween(durationMillis = 165, easing = LinearOutSlowInEasing),
+        animationSpec = AulamaMotion.focusSpring(reducedMotion),
         label = "home-row-focus-frame-offset"
+    )
+    val frameLift by animateFloatAsState(
+        targetValue = if (rowFocused) 1f else 0f,
+        animationSpec = AulamaMotion.focusSpring(reducedMotion),
+        label = "home-row-frame-lift"
+    )
+    val labelsAlpha = animateFloatAsState(
+        targetValue = if (rowFocused) 1f else 0f,
+        animationSpec = AulamaMotion.fade(AulamaMotion.LabelFadeMillis, reducedMotion),
+        label = "home-row-labels"
     )
     val selectedAccent = rememberArtworkAccent(
         imageUrl = selectedVideo.imageUrl,
@@ -1326,9 +1360,9 @@ private fun MediaRow(
                 }
                 selectedVirtualIndex = move.targetIndex
                 onSelectionChanged(move.logicalIndex)
-                rowState.animateScrollToItem(move.targetIndex)
+                glide.glideTo(move.targetIndex, reducedMotion)
                 move.recenterIndex?.let { recenteredIndex ->
-                    rowState.scrollToItem(recenteredIndex)
+                    glide.jumpTo(recenteredIndex)
                     selectedVirtualIndex = recenteredIndex
                 }
             } else {
@@ -1383,6 +1417,7 @@ private fun MediaRow(
                     rowFocused = state.isFocused || state.hasFocus
                 }
                 .onPreviewKeyEvent { event ->
+                    if (consumeRapidRepeat(event)) return@onPreviewKeyEvent true
                     when {
                         event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
                             dimUnselected = false
@@ -1460,33 +1495,50 @@ private fun MediaRow(
                         ),
                         label = "home-row-card-alpha"
                     )
+                    val selected = rowFocused && itemIndex == selectedVirtualIndex
+                    // tvOS-style lift: the incoming poster grows as it slides under the frame
+                    // while the outgoing one settles back, both on interruptible springs.
+                    val lift by animateFloatAsState(
+                        targetValue = if (selected) 1f else 0f,
+                        animationSpec = AulamaMotion.focusSpring(reducedMotion),
+                        label = "home-row-card-lift"
+                    )
                     CarouselPoster(
                         imageUrl = video.imageUrl,
                         title = video.title,
                         subTitle = video.currentEpisode,
                         newEpisodeBadge = video.newEpisodeBadge,
                         rating = video.rating,
-                        showLabels = rowFocused,
-                        selected = rowFocused && itemIndex == selectedVirtualIndex,
+                        labelsAlpha = { labelsAlpha.value },
+                        selected = selected,
                         modifier = Modifier
                             .requiredSize(width = 148.dp, height = 208.dp)
-                            .graphicsLayer { alpha = cardAlpha }
+                            .graphicsLayer {
+                                alpha = cardAlpha
+                                val scale = 1f + (AulamaMotion.PosterFocusScale - 1f) * lift
+                                scaleX = scale
+                                scaleY = scale
+                            }
                     )
                 }
             }
-            if (rowFocused) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(start = 42.dp, top = 6.dp)
-                        .graphicsLayer { translationX = focusFrameOffset.toPx() }
-                        .requiredSize(width = 148.dp, height = 208.dp)
-                        .border(
-                            BorderStroke(2.dp, selectedAccent),
-                            CarouselCardShape
-                        )
-                )
-            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 42.dp, top = 6.dp)
+                    .graphicsLayer {
+                        translationX = focusFrameOffset.toPx()
+                        val scale = 1f + (AulamaMotion.PosterFocusScale - 1f) * frameLift
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = AulamaMotion.unit(frameLift)
+                    }
+                    .requiredSize(width = 148.dp, height = 208.dp)
+                    .border(
+                        BorderStroke(2.dp, selectedAccent),
+                        CarouselCardShape
+                    )
+            )
         }
     }
 }
@@ -1523,7 +1575,7 @@ private fun CarouselPoster(
     subTitle: String,
     newEpisodeBadge: String,
     rating: String,
-    showLabels: Boolean,
+    labelsAlpha: () -> Float,
     selected: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -1545,40 +1597,43 @@ private fun CarouselPoster(
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
-        if (showLabels) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                Color.Transparent,
-                                Color(0x18000000),
-                                Color(0x66000000),
-                                Color(0xF2050810)
-                            )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = AulamaMotion.unit(labelsAlpha()) }
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.Transparent,
+                            Color(0x18000000),
+                            Color(0x66000000),
+                            Color(0xF2050810)
                         )
                     )
-            )
-        }
-        PosterRatingBadge(rating, Modifier.align(Alignment.TopStart).padding(9.dp))
-        if (showLabels) {
-            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(12.dp)) {
-                AutoMarqueeText(
-                    text = displayTitle,
-                    color = AulamaTvColors.TextPrimary,
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold),
-                    enabled = selected,
-                    modifier = Modifier.fillMaxWidth()
                 )
-                if (newEpisodeBadge.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    NewEpisodeBadge(label = newEpisodeBadge)
-                } else if (displaySubtitle.isNotBlank()) {
-                    androidx.tv.material3.Text(text = displaySubtitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        color = Color.White.copy(alpha = 0.8f),
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp))
-                }
+        )
+        PosterRatingBadge(rating, Modifier.align(Alignment.TopStart).padding(9.dp))
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .graphicsLayer { alpha = AulamaMotion.unit(labelsAlpha()) }
+                .padding(12.dp)
+        ) {
+            AutoMarqueeText(
+                text = displayTitle,
+                color = AulamaTvColors.TextPrimary,
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold),
+                enabled = selected,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (newEpisodeBadge.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                NewEpisodeBadge(label = newEpisodeBadge)
+            } else if (displaySubtitle.isNotBlank()) {
+                androidx.tv.material3.Text(text = displaySubtitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    color = Color.White.copy(alpha = 0.8f),
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp))
             }
         }
     }

@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.annotation.MainThread
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.jing.sakura.auth.AnimeRatingPayload
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.FavoritePayload
 import com.jing.sakura.auth.GuestLibraryStore
@@ -53,6 +54,15 @@ class DetailPageViewModel constructor(
 
     private var loadDataJob: Job? = null
 
+    private val _episodeProgress = MutableStateFlow<Map<Int, Float>>(emptyMap())
+    /** Watched fraction per episode number, for the progress fill on each episode tile. */
+    val episodeProgress: StateFlow<Map<Int, Float>> = _episodeProgress
+    @Volatile
+    private var remoteHistoryItem: TvHistoryItem? = null
+
+    private val _ratingState = MutableStateFlow(DetailRatingState())
+    val ratingState: StateFlow<DetailRatingState> = _ratingState
+
     private val _favoriteUiState = MutableStateFlow(FavoriteUiState())
     val favoriteUiState: StateFlow<FavoriteUiState> = _favoriteUiState
 
@@ -75,6 +85,7 @@ class DetailPageViewModel constructor(
     init {
         loadData()
         loadFavoriteState()
+        loadRating()
     }
 
     fun loadData() {
@@ -121,7 +132,9 @@ class DetailPageViewModel constructor(
                     )
                 )
                 val localHistory = localHistoryJob.await()
-                val remoteHistory = cloudHistoryJob.await()?.toLocalHistory(data)
+                val remoteItem = cloudHistoryJob.await()
+                remoteHistoryItem = remoteItem
+                val remoteHistory = remoteItem?.toLocalHistory(data)
                 val history = listOfNotNull(localHistory, remoteHistory)
                     .maxByOrNull(VideoHistoryEntity::updateTime)
                 if (remoteHistory != null &&
@@ -130,6 +143,7 @@ class DetailPageViewModel constructor(
                     videoHistoryDao.saveHistory(remoteHistory)
                 }
                 history?.let { _latestProgress.emit(Resource.Success(it)) }
+                refreshEpisodeProgress()
                 _detailPageData.emit(
                     Resource.Success(
                         data.copy(lastPlayEpisodePosition = data.positionFor(history?.episodeId))
@@ -289,11 +303,60 @@ class DetailPageViewModel constructor(
     }
 
     fun fetchHistory() {
-        viewModelScope.launch(Dispatchers.Default) {
+        viewModelScope.launch(Dispatchers.IO) {
             videoHistoryDao.queryLastHistoryOfAnimeId(animeId, sourceId)?.let {
                 _latestProgress.emit(Resource.Success(it))
             }
+            refreshEpisodeProgress()
         }
+    }
+
+    private fun refreshEpisodeProgress() {
+        _episodeProgress.value = buildEpisodeProgress(
+            localHistory = videoHistoryDao.queryHistoryOfAnime(animeId, sourceId),
+            remoteHistory = remoteHistoryItem
+        )
+    }
+
+    private fun loadRating() {
+        if (authRepository.session.value == null) return
+        _ratingState.value = DetailRatingState(available = true)
+        viewModelScope.launch(Dispatchers.IO) {
+            val score = runCatching { authRepository.fetchMyRating(animeId) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+                ?: 0
+            _ratingState.value = _ratingState.value.copy(score = score)
+        }
+    }
+
+    /** Saves the viewer's stars to the same Aulama ID store the web and finale sheet use. */
+    suspend fun saveRating(detail: AnimeDetailPageData, score: Int): Boolean {
+        if (!_ratingState.value.available) return false
+        _ratingState.value = _ratingState.value.copy(saving = true)
+        val favorite = detail.toFavoritePayload()
+        val saved = withContext(Dispatchers.IO) {
+            runCatching {
+                authRepository.saveRating(
+                    AnimeRatingPayload(
+                        animeId = detail.animeId.ifBlank { animeId },
+                        animeTitle = detail.animeName,
+                        poster = detail.imageUrl,
+                        rating = score,
+                        tags = favorite.tags,
+                        year = favorite.year,
+                        sourceRating = favorite.providerRating,
+                        sourceTypeId = sourceId,
+                        summary = detail.description
+                    )
+                )
+            }.onFailure { if (it is CancellationException) throw it }.getOrDefault(false)
+        }
+        _ratingState.value = _ratingState.value.copy(
+            score = if (saved) score else _ratingState.value.score,
+            saving = false
+        )
+        return saved
     }
 
     fun toggleFavorite(detail: AnimeDetailPageData) {
@@ -459,6 +522,13 @@ internal class DetailRelatedPreviewRequestOwnership {
 
     fun owns(requestGeneration: Long): Boolean = requestGeneration == generation
 }
+
+/** The viewer's own star rating; only available with an Aulama ID. */
+data class DetailRatingState(
+    val available: Boolean = false,
+    val score: Int = 0,
+    val saving: Boolean = false
+)
 
 data class FavoriteUiState(
     val isFavorite: Boolean = false,

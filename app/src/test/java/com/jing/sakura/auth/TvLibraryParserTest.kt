@@ -281,4 +281,43 @@ class TvLibraryParserTest {
         assertEquals(utc, hongKong)
         assertEquals("2026-07-14T10:00:00.125Z", CloudTimestamp.formatEpochMs(utc))
     }
+    @Test
+    fun mapsSeasonCompletionForTheEndOfSeasonSheet() {
+        val payload = TvLibraryParser.parseAnimeDetail(
+            """
+                {
+                  "ok": true,
+                  "item": {
+                    "id": "cycani:42",
+                    "title": "完結作品",
+                    "completion": {
+                      "sourceStatus": "全12集",
+                      "finished": true,
+                      "sourceUpdatedAt": "2026-07-14T10:00:00.000Z",
+                      "expectedEpisodes": 12
+                    }
+                  }
+                }
+            """.trimIndent()
+        )
+
+        assertEquals("全12集", payload.completion.sourceStatus)
+        assertTrue(payload.completion.finished)
+        assertEquals(12, payload.completion.expectedEpisodes)
+        assertEquals(CloudTimestamp.parseEpochMs("2026-07-14T10:00:00.000Z"), payload.completion.sourceUpdatedAtEpochMs)
+    }
+
+    @Test
+    fun readsTheViewersOwnRatingAcrossIdForms() {
+        val body = """
+            {"ok":true,"items":[
+              {"animeId":"cycani:7","rating":4},
+              {"animeId":"9","rating":9}
+            ]}
+        """.trimIndent()
+
+        assertEquals(4, TvLibraryParser.parseRating(body, "7"))
+        assertEquals(null, TvLibraryParser.parseRating(body, "9"))
+        assertEquals(null, TvLibraryParser.parseRating(body, "missing"))
+    }
 }

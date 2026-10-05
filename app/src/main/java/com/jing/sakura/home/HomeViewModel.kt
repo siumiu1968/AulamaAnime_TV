@@ -539,13 +539,14 @@ class HomeViewModel(
                     remoteHistory = payload.historyItems,
                     localHistory = localHistory
                 )
+                val upNext = buildHomeUpNext(
+                    inProgress = payload.continueWatching,
+                    favorites = favorites,
+                    lastWatchedAt = lastWatchedLookup(payload.historyItems, localHistory)
+                )
+                // Favourites and the full history live in 我的片庫; 首頁 keeps one resume shelf.
                 _syncedRows.value = buildList {
-                    if (payload.continueWatching.isNotEmpty()) {
-                        add(NamedValue("繼續觀看", payload.continueWatching))
-                    }
-                    if (favorites.isNotEmpty()) {
-                        add(NamedValue("我的收藏", favorites))
-                    }
+                    if (upNext.isNotEmpty()) add(NamedValue(HOME_UP_NEXT_TITLE, upNext))
                 }
             }
             .onFailure { Log.e("tv-library-sync", "載入帳戶收藏及紀錄失敗", it) }
@@ -566,11 +567,13 @@ class HomeViewModel(
             remoteHistory = emptyList(),
             localHistory = localHistory
         )
+        val upNext = buildHomeUpNext(
+            inProgress = recent,
+            favorites = favoriteAnime,
+            lastWatchedAt = lastWatchedLookup(emptyList(), localHistory)
+        )
         _syncedRows.value = buildList {
-            if (recent.isNotEmpty()) add(NamedValue("繼續觀看", recent))
-            favoriteAnime
-                .takeIf(List<AnimeData>::isNotEmpty)
-                ?.let { add(NamedValue("我的收藏", it)) }
+            if (upNext.isNotEmpty()) add(NamedValue(HOME_UP_NEXT_TITLE, upNext))
         }
         runCatching { authRepository.fetchPublicTheaterItems() }
             .onSuccess { _theaterItems.value = it }

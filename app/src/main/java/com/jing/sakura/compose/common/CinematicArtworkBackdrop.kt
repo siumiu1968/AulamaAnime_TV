@@ -7,7 +7,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -24,12 +23,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
@@ -43,9 +44,14 @@ fun CinematicArtworkBackdrop(
     imageKey: String = imageUrl,
     artworkAlpha: Float = 1f,
     previewActive: Boolean = false,
-    transitionDurationMillis: Int = 620
+    transitionDurationMillis: Int = 620,
+    previewReveal: (() -> Float)? = null,
+    anticipation: () -> Float = { 0f }
 ) {
     val reducedMotion = rememberReducedMotion()
+    // Callers that only know "active" still get a cross-fade instead of a hard cut.
+    val fallbackReveal = rememberPreviewReveal(previewActive, reducedMotion)
+    val reveal: () -> Float = previewReveal ?: { fallbackReveal.value }
     val target = remember(imageKey, imageUrl) {
         imageUrl.takeIf(String::isNotBlank)?.let {
             CinematicArtworkState(key = imageKey, imageUrl = it)
@@ -115,125 +121,146 @@ fun CinematicArtworkBackdrop(
                 )
             }
 
-        AnimatedContent(
-            targetState = ready,
-            transitionSpec = {
-                fadeIn(tween(duration, easing = FastOutSlowInEasing))
-                    .togetherWith(fadeOut(tween(duration, easing = FastOutSlowInEasing)))
-            },
-            label = "cinematic-artwork-backdrop"
-        ) { state ->
-            if (state == null) return@AnimatedContent
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                val artworkWidth = minOf(maxWidth, maxHeight * state.aspectRatio)
-                val featherFraction = if (artworkWidth.value > 0f) {
-                    (ArtworkFeatherWidth.value / artworkWidth.value).coerceIn(0.09f, 0.22f)
-                } else {
-                    0.15f
+        // Scale and dissolve live on a parent layer: the feathered artwork below is a cached
+        // hardware layer, so pushing in or fading it costs a composite, not a re-render.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val dissolve = reveal()
+                    val scale = 1f + 0.03f * anticipation() + 0.045f * dissolve
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = ArtworkPushInOrigin
+                    alpha = 1f - AulamaMotion.unit(dissolve)
+                    compositingStrategy = CompositingStrategy.ModulateAlpha
                 }
-                AsyncImage(
-                    model = rememberPosterImageRequest(
-                        imageUrl = state.imageUrl,
-                        widthPx = 960,
-                        heightPx = 1_360
-                    ),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    alignment = Alignment.BottomEnd,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .fillMaxHeight()
-                        .width(artworkWidth)
-                        .graphicsLayer {
-                            alpha = if (previewActive) 0f else artworkAlpha
-                            compositingStrategy = CompositingStrategy.Offscreen
-                        }
-                        .drawWithContent {
-                            drawContent()
-                            drawRect(
-                                brush = Brush.horizontalGradient(
-                                    colorStops = arrayOf(
-                                        0f to Color.Transparent,
-                                        featherFraction * 0.17f to Color.Black.copy(alpha = 0.06f),
-                                        featherFraction * 0.33f to Color.Black.copy(alpha = 0.22f),
-                                        featherFraction * 0.53f to Color.Black.copy(alpha = 0.58f),
-                                        featherFraction * 0.77f to Color.Black.copy(alpha = 0.86f),
-                                        featherFraction to Color.Black,
-                                        1f to Color.Black
-                                    )
-                                ),
-                                blendMode = BlendMode.DstIn
-                            )
-                        }
-                )
+        ) {
+            AnimatedContent(
+                targetState = ready,
+                transitionSpec = {
+                    fadeIn(tween(duration, easing = FastOutSlowInEasing))
+                        .togetherWith(fadeOut(tween(duration, easing = FastOutSlowInEasing)))
+                },
+                label = "cinematic-artwork-backdrop"
+            ) { state ->
+                if (state == null) return@AnimatedContent
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val artworkWidth = minOf(maxWidth, maxHeight * state.aspectRatio)
+                    val featherFraction = if (artworkWidth.value > 0f) {
+                        (ArtworkFeatherWidth.value / artworkWidth.value).coerceIn(0.09f, 0.22f)
+                    } else {
+                        0.15f
+                    }
+                    AsyncImage(
+                        model = rememberPosterImageRequest(
+                            imageUrl = state.imageUrl,
+                            widthPx = 960,
+                            heightPx = 1_360
+                        ),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        alignment = Alignment.BottomEnd,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .fillMaxHeight()
+                            .width(artworkWidth)
+                            .graphicsLayer {
+                                alpha = artworkAlpha
+                                compositingStrategy = CompositingStrategy.Offscreen
+                            }
+                            .drawWithContent {
+                                drawContent()
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        colorStops = arrayOf(
+                                            0f to Color.Transparent,
+                                            featherFraction * 0.17f to Color.Black.copy(alpha = 0.06f),
+                                            featherFraction * 0.33f to Color.Black.copy(alpha = 0.22f),
+                                            featherFraction * 0.53f to Color.Black.copy(alpha = 0.58f),
+                                            featherFraction * 0.77f to Color.Black.copy(alpha = 0.86f),
+                                            featherFraction to Color.Black,
+                                            1f to Color.Black
+                                        )
+                                    ),
+                                    blendMode = BlendMode.DstIn
+                                )
+                            }
+                    )
+                }
             }
         }
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.horizontalGradient(
-                        colorStops = if (previewActive) {
-                            arrayOf(0f to Color.Transparent, 1f to Color.Transparent)
-                        } else {
-                            arrayOf(
-                                0f to AulamaTvColors.Background,
-                                (artworkStartFraction - 0.16f).coerceIn(0f, 0.62f) to AulamaTvColors.Background,
-                                (artworkStartFraction - 0.11f).coerceIn(0.01f, 0.67f) to AulamaTvColors.Background.copy(alpha = 0.94f),
-                                (artworkStartFraction - 0.05f).coerceIn(0.02f, 0.73f) to AulamaTvColors.Background.copy(alpha = 0.68f),
-                                (artworkStartFraction + 0.01f).coerceIn(0.03f, 0.79f) to AulamaTvColors.Background.copy(alpha = 0.34f),
-                                (artworkStartFraction + 0.07f).coerceIn(0.04f, 0.85f) to AulamaTvColors.Background.copy(alpha = 0.12f),
-                                (artworkStartFraction + 0.12f).coerceIn(0.05f, 0.90f) to AulamaTvColors.Background.copy(alpha = 0.03f),
-                                (artworkStartFraction + 0.16f).coerceIn(0.06f, 0.94f) to Color.Transparent,
-                                1f to Color.Transparent
-                            )
-                        }
-                    )
-                )
-                .background(
-                    Brush.verticalGradient(
+                .drawWithCache {
+                    val coverHorizontal = Brush.horizontalGradient(
                         colorStops = arrayOf(
-                            0f to AulamaTvColors.Background.copy(
-                                alpha = if (previewActive) 0.18f else 0.16f
-                            ),
-                            0.72f to Color.Transparent,
-                            1f to AulamaTvColors.Background.copy(
-                                alpha = if (previewActive) 0.50f else 0.55f
-                            )
+                            0f to AulamaTvColors.Background,
+                            (artworkStartFraction - 0.16f).coerceIn(0f, 0.62f) to AulamaTvColors.Background,
+                            (artworkStartFraction - 0.11f).coerceIn(0.01f, 0.67f) to AulamaTvColors.Background.copy(alpha = 0.94f),
+                            (artworkStartFraction - 0.05f).coerceIn(0.02f, 0.73f) to AulamaTvColors.Background.copy(alpha = 0.68f),
+                            (artworkStartFraction + 0.01f).coerceIn(0.03f, 0.79f) to AulamaTvColors.Background.copy(alpha = 0.34f),
+                            (artworkStartFraction + 0.07f).coerceIn(0.04f, 0.85f) to AulamaTvColors.Background.copy(alpha = 0.12f),
+                            (artworkStartFraction + 0.12f).coerceIn(0.05f, 0.90f) to AulamaTvColors.Background.copy(alpha = 0.03f),
+                            (artworkStartFraction + 0.16f).coerceIn(0.06f, 0.94f) to Color.Transparent,
+                            1f to Color.Transparent
                         )
                     )
-                )
+                    val coverVertical = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0f to AulamaTvColors.Background.copy(alpha = 0.16f),
+                            0.72f to Color.Transparent,
+                            1f to AulamaTvColors.Background.copy(alpha = 0.55f)
+                        )
+                    )
+                    val previewHorizontal = previewHorizontalScrim()
+                    val previewVertical = previewVerticalScrim()
+                    onDrawBehind {
+                        // Cross-fade the cover scrims into the lighter video vignette.
+                        val progress = AulamaMotion.unit(reveal())
+                        if (progress < 1f) {
+                            drawRect(coverHorizontal, alpha = 1f - progress)
+                            drawRect(coverVertical, alpha = 1f - progress)
+                        }
+                        if (progress > 0f) {
+                            drawRect(previewHorizontal, alpha = progress)
+                            drawRect(previewVertical, alpha = progress)
+                        }
+                    }
+                }
         )
 
         // Restore a restrained colour bloom on top of the dark copy-area mask.
         // The earlier bloom sits behind an opaque mask and therefore disappears
         // on most TVs. This narrow band ends inside the poster feather, so the
         // artwork keeps its original colours while its light can travel left.
-        if (!previewActive) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .drawBehind {
-                        drawRect(
-                            brush = Brush.horizontalGradient(
-                                colorStops = arrayOf(
-                                    0f to Color.Transparent,
-                                    (artworkStartFraction - 0.32f).coerceIn(0.01f, 0.54f) to Color.Transparent,
-                                    (artworkStartFraction - 0.21f).coerceIn(0.02f, 0.65f) to accent.copy(alpha = 0.012f),
-                                    (artworkStartFraction - 0.13f).coerceIn(0.03f, 0.73f) to accent.copy(alpha = 0.032f),
-                                    (artworkStartFraction - 0.07f).coerceIn(0.04f, 0.79f) to accent.copy(alpha = 0.070f),
-                                    (artworkStartFraction - 0.02f).coerceIn(0.05f, 0.84f) to accent.copy(alpha = 0.135f),
-                                    (artworkStartFraction + 0.02f).coerceIn(0.06f, 0.88f) to accent.copy(alpha = 0.105f),
-                                    (artworkStartFraction + 0.05f).coerceIn(0.07f, 0.91f) to accent.copy(alpha = 0.040f),
-                                    (artworkStartFraction + 0.08f).coerceIn(0.08f, 0.94f) to Color.Transparent,
-                                    1f to Color.Transparent
-                                )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawBehind {
+                    val bloomAlpha = 1f - AulamaMotion.unit(reveal())
+                    if (bloomAlpha <= 0f) return@drawBehind
+                    drawRect(
+                        alpha = bloomAlpha,
+                        brush = Brush.horizontalGradient(
+                            colorStops = arrayOf(
+                                0f to Color.Transparent,
+                                (artworkStartFraction - 0.32f).coerceIn(0.01f, 0.54f) to Color.Transparent,
+                                (artworkStartFraction - 0.21f).coerceIn(0.02f, 0.65f) to accent.copy(alpha = 0.012f),
+                                (artworkStartFraction - 0.13f).coerceIn(0.03f, 0.73f) to accent.copy(alpha = 0.032f),
+                                (artworkStartFraction - 0.07f).coerceIn(0.04f, 0.79f) to accent.copy(alpha = 0.070f),
+                                (artworkStartFraction - 0.02f).coerceIn(0.05f, 0.84f) to accent.copy(alpha = 0.135f),
+                                (artworkStartFraction + 0.02f).coerceIn(0.06f, 0.88f) to accent.copy(alpha = 0.105f),
+                                (artworkStartFraction + 0.05f).coerceIn(0.07f, 0.91f) to accent.copy(alpha = 0.040f),
+                                (artworkStartFraction + 0.08f).coerceIn(0.08f, 0.94f) to Color.Transparent,
+                                1f to Color.Transparent
                             )
                         )
-                    }
-            )
-        }
+                    )
+                }
+        )
     }
 }
 
@@ -244,6 +271,7 @@ private data class CinematicArtworkState(
 )
 
 private const val DefaultArtworkAspectRatio = 2f / 3f
+private val ArtworkPushInOrigin = TransformOrigin(0.78f, 0.42f)
 private val ArtworkFeatherWidth = 116.dp
 
 internal fun cinematicArtworkAspectRatio(width: Int, height: Int): Float =

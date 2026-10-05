@@ -85,7 +85,8 @@ object TvLibraryParser {
                 sourceTypeId = item.primitiveString("sourceTypeId"),
                 updatedAt = item.primitiveString("updatedAt"),
                 updatedAtEpochMs = CloudTimestamp.parseEpochMs(item.primitiveString("updatedAt")),
-                viewedEpisodeIndexes = item.episodeProgressIndexes()
+                viewedEpisodeIndexes = item.episodeProgressIndexes(),
+                episodeProgress = item.episodeProgressRatios()
             )
         }
             .sortedByDescending(TvHistoryItem::updatedAtEpochMs)
@@ -138,6 +139,7 @@ object TvLibraryParser {
                 }
             }
         val info = item.objectOrNull("info")
+        val completion = item.objectOrNull("completion")
         return TvAnimeDetailPayload(
             catalogItem = catalogItem,
             episodeLabels = episodeLabels,
@@ -150,9 +152,43 @@ object TvLibraryParser {
             },
             related = RecommendationParser.parseItems(item.array("related")),
             recommendations = RecommendationParser.parseItems(item.array("recommendations")),
-            personalizedRecommendations = item.boolean("personalizedRecommendations")
+            personalizedRecommendations = item.boolean("personalizedRecommendations"),
+            completion = SeriesCompletion(
+                sourceStatus = completion?.primitiveString("sourceStatus").orEmpty()
+                    .ifBlank { item.primitiveString("status") }
+                    .ifBlank { catalogItem?.currentEpisode.orEmpty() }
+                    .trim(),
+                finished = completion?.boolean("finished") == true,
+                sourceUpdatedAtEpochMs = CloudTimestamp.parseEpochMs(
+                    completion?.primitiveString("sourceUpdatedAt").orEmpty()
+                ),
+                expectedEpisodes = completion?.primitiveString("expectedEpisodes")
+                    ?.toDoubleOrNull()
+                    ?.takeIf { it.isFinite() && it > 0.0 }
+                    ?.toInt()
+                    ?: 0
+            )
         )
     }
+
+    /** Reads the account's saved rating for [animeId] out of `GET /ratings`. */
+    fun parseRating(body: String, animeId: String): Int? {
+        val root = runCatching { JsonParser.parseString(body) }
+            .getOrNull()
+            ?.takeIf(JsonElement::isJsonObject)
+            ?.asJsonObject
+            ?: return null
+        val wanted = normalizedRatingId(animeId)
+        return root.array("items")
+            .mapNotNull { it.takeIf(JsonElement::isJsonObject)?.asJsonObject }
+            .firstOrNull { normalizedRatingId(it.primitiveString("animeId")) == wanted }
+            ?.primitiveString("rating")
+            ?.toDoubleOrNull()
+            ?.toInt()
+            ?.takeIf { it in 1..5 }
+    }
+
+    private fun normalizedRatingId(id: String): String = id.trim().lowercase().removePrefix("cycani:")
 
     private fun com.google.gson.JsonObject.array(key: String): JsonArray =
         get(key)?.takeIf(JsonElement::isJsonArray)?.asJsonArray ?: JsonArray()
@@ -199,6 +235,27 @@ object TvLibraryParser {
                 (key.toIntOrNull() ?: nestedIndex)?.takeIf { it >= 0 }
             }
             .toSet()
+
+    /** Watched fraction per episode index; a completed episode counts as fully watched. */
+    private fun JsonObject.episodeProgressRatios(): Map<Int, Float> =
+        objectOrNull("episodeProgress")
+            ?.entrySet()
+            .orEmpty()
+            .mapNotNull { (key, value) ->
+                val episode = value.takeIf(JsonElement::isJsonObject)?.asJsonObject
+                    ?: return@mapNotNull null
+                val index = (key.toIntOrNull() ?: episode.primitiveString("episodeIndex").toIntOrNull())
+                    ?.takeIf { it >= 0 }
+                    ?: return@mapNotNull null
+                val duration = episode.nonNegativeDouble("duration")
+                val ratio = when {
+                    episode.boolean("completed") -> 1f
+                    duration > 0.0 -> (episode.nonNegativeDouble("currentTime") / duration).toFloat().coerceIn(0f, 1f)
+                    else -> 0f
+                }
+                index to ratio
+            }
+            .toMap()
 
     private fun Int?.orZeroEpisodeCount(): Int = this?.coerceIn(0, 5_000) ?: 0
 

@@ -3,6 +3,7 @@ package com.jing.sakura.player
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.jing.sakura.auth.AnimeRatingPayload
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.CloudTimestamp
 import com.jing.sakura.auth.PlaybackHistoryPayload
@@ -84,6 +85,13 @@ class VideoPlayerViewModel(
 
     private var pendingRemoteResumeMs = anime.resumePositionMs
 
+    private val _seasonFinale = MutableStateFlow<SeasonFinaleContent?>(null)
+    /** Rating and next-watch content, loaded only while the season's last episode plays. */
+    val seasonFinale: StateFlow<SeasonFinaleContent?>
+        get() = _seasonFinale
+    private var seasonFinaleJob: Job? = null
+    private var seasonFinaleShownEpisodeId: String? = null
+
 
     init {
         viewModelScope.launch {
@@ -94,6 +102,7 @@ class VideoPlayerViewModel(
                     _playbackSegments.emit(null)
                     fetchVideoUrl(episode)
                     fetchPlaybackSegments(episode, index)
+                    prepareSeasonFinale(index)
                 }
             }
         }
@@ -215,6 +224,79 @@ class VideoPlayerViewModel(
                 Log.w(TAG, "Ignoring stale playback segments response")
             }
         }
+    }
+
+    private fun prepareSeasonFinale(index: Int) {
+        if (index != _playList.lastIndex || authRepository.session.value == null) return
+        if (_seasonFinale.value != null || seasonFinaleJob?.isActive == true) return
+        seasonFinaleJob = viewModelScope.launch(Dispatchers.IO) {
+            val detail = runCatching { authRepository.fetchTvAnimeDetail(anime.animeId) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+                ?: return@launch
+            val savedRating = runCatching { authRepository.fetchMyRating(anime.animeId) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+                ?: 0
+            val catalogItem = detail.catalogItem
+            _seasonFinale.value = SeasonFinaleContent(
+                animeId = anime.animeId,
+                title = anime.animeName.ifBlank { catalogItem?.title.orEmpty() },
+                posterUrl = anime.coverUrl.ifBlank { catalogItem?.imageUrl.orEmpty() },
+                completion = detail.completion,
+                savedRating = savedRating,
+                nextWatch = SeasonFinalePolicy.nextWatchCandidates(
+                    selfId = anime.animeId,
+                    related = detail.related,
+                    recommendations = detail.recommendations
+                ),
+                catalogItem = catalogItem
+            )
+        }
+    }
+
+    /** True once per playback when the season's final episode reaches its credits. */
+    fun shouldOfferSeasonFinale(positionMs: Long, durationMs: Long): Boolean {
+        val content = _seasonFinale.value ?: return false
+        val episodeId = playingEpisode?.episodeId ?: return false
+        if (seasonFinaleShownEpisodeId == episodeId) return false
+        return SeasonFinalePolicy.shouldOffer(
+            completion = content.completion,
+            playIndex = _playIndex.value,
+            episodeCount = _playList.size,
+            positionMs = positionMs,
+            durationMs = durationMs,
+            nowEpochMs = System.currentTimeMillis()
+        )
+    }
+
+    fun markSeasonFinaleShown() {
+        seasonFinaleShownEpisodeId = playingEpisode?.episodeId
+    }
+
+    suspend fun saveSeasonRating(score: Int): Boolean {
+        val content = _seasonFinale.value ?: return false
+        val item = content.catalogItem
+        val saved = withContext(Dispatchers.IO) {
+            authRepository.saveRating(
+                AnimeRatingPayload(
+                    animeId = content.animeId,
+                    animeTitle = content.title,
+                    poster = content.posterUrl,
+                    rating = score,
+                    tags = item?.tags.orEmpty()
+                        .split('、', ',', '，', '/', '|')
+                        .map(String::trim)
+                        .filter(String::isNotEmpty),
+                    year = item?.year.orEmpty(),
+                    sourceRating = item?.rating?.toDoubleOrNull() ?: 0.0,
+                    sourceTypeId = anime.sourceId,
+                    summary = item?.description.orEmpty()
+                )
+            )
+        }
+        if (saved) _seasonFinale.value = content.copy(savedRating = score)
+        return saved
     }
 
     fun playEpisodeOfIndex(index: Int) {

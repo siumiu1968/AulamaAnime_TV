@@ -43,6 +43,7 @@
     <string name="player_skip_intro">跳過片頭</string>
     <string name="player_skip_outro">跳過片尾</string>
     <string name="player_next_episode">下一集</string>
+    <string name="player_next_episode_numbered">下一集・第%1$d集</string>
     <string name="player_continue_outro">繼續播放</string>
     <string name="player_fast_4k">4K 快速</string>
     <string name="player_fast_4k_on">4K 快速・已開啟</string>
