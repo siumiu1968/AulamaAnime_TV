@@ -16,7 +16,7 @@ android {
         minSdk = 21
         targetSdk = 34
         versionCode = 1039
-        versionName = "3.3.0"
+        versionName = "3.3.0-beta.1"
 
     }
     packaging {

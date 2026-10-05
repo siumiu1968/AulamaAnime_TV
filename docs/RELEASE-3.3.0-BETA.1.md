@@ -1,4 +1,6 @@
-# Aulama Anime TV 3.3.0
+# Aulama Anime TV 3.3.0 Beta 1（搶先版）
+
+> 搶先版供公開測試，正式版發佈前內容仍可能調整。
 
 ## 更新重點
 
@@ -27,6 +29,6 @@
 
 ## 安裝
 
-下載 Release 內的 `aulama-anime-tv-v3.3.0.apk`，傳送到 Android TV、Google TV 或 Android 電視盒子覆蓋安裝即可。由舊版升級會保留原有 App 資料。
+下載 Release 內的 `aulama-anime-tv-v3.3.0-beta.1.apk`，傳送到 Android TV、Google TV 或 Android 電視盒子覆蓋安裝即可。由舊版升級會保留原有 App 資料。
 
 最低支援 Android 5.0（API 21）。
