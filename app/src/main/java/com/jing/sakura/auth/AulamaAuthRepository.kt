@@ -486,6 +486,31 @@ class AulamaAuthRepository(
         return executeAuthenticatedMutation(request)
     }
 
+    /** The signed-in viewer's own rating for [animeId], or null when unrated or signed out. */
+    suspend fun fetchMyRating(animeId: String): Int? {
+        if (animeId.isBlank()) return null
+        val body = authenticatedBody("/ratings") ?: return null
+        return TvLibraryParser.parseRating(body, animeId)
+    }
+
+    /** Saves a 1–5 star rating to the same store the web uses, so it feeds recommendations. */
+    suspend fun saveRating(payload: AnimeRatingPayload): Boolean {
+        val session = _session.value ?: return false
+        val body = JsonObject().apply {
+            addProperty("animeId", payload.animeId)
+            addProperty("animeTitle", payload.animeTitle)
+            addProperty("poster", payload.poster)
+            addProperty("rating", payload.rating.coerceIn(1, 5))
+            add("tags", JsonArray().apply { payload.tags.forEach(::add) })
+            addProperty("year", payload.year)
+            addProperty("sourceRating", payload.sourceRating)
+            addProperty("sourceTypeId", payload.sourceTypeId)
+            addProperty("summary", payload.summary)
+        }.toString().toRequestBody(JSON_MEDIA_TYPE)
+        val request = authenticatedRequest("$API_BASE/ratings", session).post(body).build()
+        return executeAuthenticatedMutation(request)
+    }
+
     suspend fun deleteFavorite(animeId: String): Boolean {
         val session = _session.value ?: return false
         val url = API_BASE.toHttpUrl().newBuilder()

@@ -5,7 +5,6 @@ package com.jing.sakura.compose.screen
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -106,6 +105,10 @@ import com.jing.sakura.data.AnimeData
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.extend.secondsToMinuteAndSecondText
 import com.jing.sakura.history.HistoryViewModel
+import com.jing.sakura.history.LibrarySection
+import com.jing.sakura.history.LibraryShelf
+import com.jing.sakura.history.buildLibraryShelves
+import com.jing.sakura.home.lastWatchedLookup
 import com.jing.sakura.room.VideoHistoryEntity
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -148,23 +151,12 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
         }
     }
     val rows = remember(library.continueWatching, library.completedWatching, library.favorites, historyByAnime) {
-        buildList {
-            if (library.continueWatching.isNotEmpty()) {
-                add(
-                    LibraryRow(
-                        title = "繼續觀看",
-                        videos = library.continueWatching,
-                        historyByAnime = historyByAnime
-                    )
-                )
-            }
-            if (library.completedWatching.isNotEmpty()) {
-                add(LibraryRow(title = "已看完", videos = library.completedWatching, historyByAnime = historyByAnime, showProgress = false))
-            }
-            if (library.favorites.isNotEmpty()) {
-                add(LibraryRow(title = "我的收藏", videos = library.favorites))
-            }
-        }
+        buildLibraryShelves(
+            inProgress = library.continueWatching,
+            completed = library.completedWatching,
+            favorites = library.favorites,
+            lastWatchedAt = lastWatchedLookup(emptyList(), historyByAnime.values.toList())
+        ).map { shelf -> LibraryRow(shelf = shelf, historyByAnime = historyByAnime) }
     }
     val hasContent = rows.isNotEmpty()
     val showInitialLoading = loading && !hasContent
@@ -188,7 +180,7 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
 
     val rowFocusRequester = remember { FocusRequester() }
     val rowSelectionKeys = remember { mutableStateMapOf<String, String>() }
-    var displayedRowTitle by remember { mutableStateOf(rows.first().title) }
+    var displayedRowKey by remember { mutableStateOf(rows.first().key) }
     var highlightedAnime by remember { mutableStateOf(rows.first().videos.first()) }
     val detailKey = highlightedAnime.let { historyKey(it.id, it.sourceId) }
     val heroAnime = animeDetails[detailKey] ?: highlightedAnime
@@ -198,6 +190,7 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
         animationSpec = tween(520, easing = FastOutSlowInEasing),
         label = "library-accent"
     )
+    val reducedMotion = rememberReducedMotion()
     val rowTransitionAlpha = remember { Animatable(1f) }
     val rowTransitionOffset = remember { Animatable(0f) }
     val rowMoveEvents = remember {
@@ -207,26 +200,26 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
         )
     }
     val displayedRowIndex = restoredLibraryIdentityIndex(
-        selectedKey = displayedRowTitle,
-        availableKeys = rows.map(LibraryRow::title)
+        selectedKey = displayedRowKey,
+        availableKeys = rows.map(LibraryRow::key)
     )
     val activeRow = rows[displayedRowIndex]
     val nextRow = rows.getOrNull(displayedRowIndex + 1)
     val selectedIndex = restoredLibraryIdentityIndex(
-        selectedKey = rowSelectionKeys[activeRow.title],
+        selectedKey = rowSelectionKeys[activeRow.key],
         availableKeys = activeRow.videos.map { historyKey(it.id, it.sourceId) }
     )
     val latestRows by rememberUpdatedState(rows)
 
     LaunchedEffect(rows) {
         val restoredRowIndex = restoredLibraryIdentityIndex(
-            selectedKey = displayedRowTitle,
-            availableKeys = rows.map(LibraryRow::title)
+            selectedKey = displayedRowKey,
+            availableKeys = rows.map(LibraryRow::key)
         )
         val row = rows[restoredRowIndex]
-        displayedRowTitle = row.title
+        displayedRowKey = row.key
         val preferred = restoredLibraryIdentityIndex(
-            selectedKey = rowSelectionKeys[row.title],
+            selectedKey = rowSelectionKeys[row.key],
             availableKeys = row.videos.map { historyKey(it.id, it.sourceId) }
         )
         highlightedAnime = row.videos[preferred]
@@ -246,46 +239,34 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
         rowMoveEvents.collect { delta ->
             val currentRows = latestRows
             val current = restoredLibraryIdentityIndex(
-                selectedKey = displayedRowTitle,
-                availableKeys = currentRows.map(LibraryRow::title)
+                selectedKey = displayedRowKey,
+                availableKeys = currentRows.map(LibraryRow::key)
             )
             val target = nextLibraryRowIndex(current, delta, currentRows.size) ?: return@collect
             coroutineScope {
                 launch {
-                    rowTransitionAlpha.animateTo(
-                        0.04f,
-                        tween(125, easing = FastOutSlowInEasing)
-                    )
+                    rowTransitionAlpha.animateTo(0.72f, tween(90, easing = FastOutSlowInEasing))
                 }
                 launch {
                     rowTransitionOffset.animateTo(
-                        if (delta > 0) -30f else 30f,
-                        tween(125, easing = FastOutSlowInEasing)
+                        if (delta > 0) -12f else 12f,
+                        tween(90, easing = FastOutSlowInEasing)
                     )
                 }
             }
             val targetRow = currentRows[target]
-            displayedRowTitle = targetRow.title
+            displayedRowKey = targetRow.key
             val targetIndex = restoredLibraryIdentityIndex(
-                selectedKey = rowSelectionKeys[targetRow.title],
+                selectedKey = rowSelectionKeys[targetRow.key],
                 availableKeys = targetRow.videos.map { historyKey(it.id, it.sourceId) }
             )
             highlightedAnime = targetRow.videos[targetIndex]
-            rowTransitionAlpha.snapTo(0.04f)
-            rowTransitionOffset.snapTo(if (delta > 0) 30f else -30f)
+            rowTransitionAlpha.snapTo(0.72f)
+            rowTransitionOffset.snapTo(if (delta > 0) 18f else -18f)
+            // Same hand-off as 首頁: a brief dip, then the new shelf settles on a spring.
             coroutineScope {
-                launch {
-                    rowTransitionAlpha.animateTo(
-                        1f,
-                        tween(225, easing = LinearOutSlowInEasing)
-                    )
-                }
-                launch {
-                    rowTransitionOffset.animateTo(
-                        0f,
-                        tween(225, easing = LinearOutSlowInEasing)
-                    )
-                }
+                launch { rowTransitionAlpha.animateTo(1f, AulamaMotion.fade(200, reducedMotion)) }
+                launch { rowTransitionOffset.animateTo(0f, AulamaMotion.settleSpring(reducedMotion)) }
             }
             runCatching { rowFocusRequester.requestFocus() }
         }
@@ -293,7 +274,7 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
     val openDetail: (AnimeData) -> Unit = { anime ->
         val resumeEpisode = rows
             .getOrNull(displayedRowIndex)
-            ?.takeIf { it.title == "繼續觀看" }
+            ?.takeIf { it.shelf.section == LibrarySection.History && it.shelf.showProgress }
             ?.historyByAnime
             ?.get(historyKey(anime.id, anime.sourceId))
             ?.lastEpisodeName
@@ -345,7 +326,7 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
                     initialSelectedIndex = selectedIndex,
                     focusRequester = rowFocusRequester,
                     onSelectionChanged = { _, anime ->
-                        rowSelectionKeys[activeRow.title] = historyKey(anime.id, anime.sourceId)
+                        rowSelectionKeys[activeRow.key] = historyKey(anime.id, anime.sourceId)
                         highlightedAnime = anime
                     },
                     onMoveRow = { delta ->
@@ -361,7 +342,7 @@ fun VideoHistoryScreen(viewModel: HistoryViewModel) {
                     onOpen = openDetail
                 )
                 nextRow?.let {
-                    LibraryNextRowHeading(title = it.title)
+                    LibraryNextRowHeading(shelf = it.shelf)
                 }
             }
         }
@@ -429,8 +410,8 @@ private fun LibraryTopBar(
             )
             Text(
                 text = localizedText(
-                    if (guestMode) "本機紀錄與收藏 · 登入後可跨裝置同步"
-                    else "雲端紀錄與收藏"
+                    if (guestMode) "本機紀錄與收藏 · 按觀看時間分組 · 登入後可跨裝置同步"
+                    else "雲端紀錄與收藏 · 按觀看時間分組"
                 ),
                 color = Color.White.copy(alpha = 0.70f),
                 style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp)
@@ -537,9 +518,9 @@ private fun LibraryMediaRow(
     onOpen: (AnimeData) -> Unit
 ) {
     val videos = row.videos
-    val identity = remember(row.title, videos) {
+    val identity = remember(row.key, videos) {
         virtualCarouselIdentity(
-            rowKey = row.title,
+            rowKey = row.key,
             itemKeys = videos.map { historyKey(it.id, it.sourceId) }
         )
     }
@@ -635,14 +616,9 @@ private fun LibraryMediaRow(
                 .padding(horizontal = 42.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = localizedText(row.title),
-                color = Color.White,
-                maxLines = 1,
-                style = MaterialTheme.typography.headlineSmall.copy(
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.SemiBold
-                ),
+            LibraryShelfTitle(
+                section = row.shelf.section,
+                title = row.title,
                 modifier = Modifier.weight(1f)
             )
             Text(
@@ -861,19 +837,54 @@ private fun LibraryPosterCard(
 }
 
 @Composable
-private fun LibraryNextRowHeading(title: String) {
-    Text(
-        text = localizedText(title),
-        color = Color.White,
-        maxLines = 1,
-        style = MaterialTheme.typography.headlineSmall.copy(
-            fontSize = 22.sp,
-            fontWeight = FontWeight.SemiBold
-        ),
+private fun LibraryNextRowHeading(shelf: LibraryShelf) {
+    LibraryShelfTitle(
+        section = shelf.section,
+        title = shelf.title,
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 42.dp, top = 8.dp, end = 42.dp)
     )
+}
+
+/** Shelf title with its section as a small tag, e.g. 「觀看紀錄」最近觀看 or 「我的收藏」2026年10月. */
+@Composable
+private fun LibraryShelfTitle(
+    section: LibrarySection,
+    title: String,
+    modifier: Modifier = Modifier
+) {
+    val tint = when (section) {
+        LibrarySection.History -> AulamaTvColors.Cyan
+        LibrarySection.Favorites -> AulamaTvColors.Pink
+    }
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = localizedText(section.label),
+            color = tint,
+            maxLines = 1,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(tint.copy(alpha = 0.14f))
+                .border(BorderStroke(1.dp, tint.copy(alpha = 0.32f)), RoundedCornerShape(6.dp))
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = localizedText(title),
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.headlineSmall.copy(
+                fontSize = 22.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        )
+    }
 }
 
 @Composable
@@ -922,11 +933,14 @@ private fun LibraryRefreshButton(
 }
 
 private data class LibraryRow(
-    val title: String,
-    val videos: List<AnimeData>,
-    val historyByAnime: Map<String, VideoHistoryEntity> = emptyMap(),
-    val showProgress: Boolean = true
-)
+    val shelf: LibraryShelf,
+    val historyByAnime: Map<String, VideoHistoryEntity> = emptyMap()
+) {
+    val key: String get() = shelf.key
+    val title: String get() = shelf.title
+    val videos: List<AnimeData> get() = shelf.videos
+    val showProgress: Boolean get() = shelf.showProgress
+}
 
 private val LibraryPosterShape = RoundedCornerShape(10.dp)
 

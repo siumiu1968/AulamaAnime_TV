@@ -97,6 +97,21 @@ class CountdownActionButton @JvmOverloads constructor(
         invalidate()
     }
 
+    /** Stops the countdown without emptying the bar, for while the prompt fades away. */
+    fun freezeCountdown() {
+        animator?.cancel()
+        animator = null
+        invalidate()
+    }
+
+    /** Empties a bar left over from a frozen countdown when no countdown is running. */
+    fun clearIdleProgress() {
+        if (animator == null && progress != 0f) {
+            progress = 0f
+            invalidate()
+        }
+    }
+
     fun pauseCountdown() {
         animator?.takeIf { it.isStarted && !it.isPaused }?.pause()
     }
@@ -123,28 +138,19 @@ class CountdownActionButton @JvmOverloads constructor(
         canvas.drawPath(capsulePath, surfacePaint)
 
         if (progress > 0f) {
+            val fillEdge = bounds.left + bounds.width() * progress
             val save = canvas.save()
             canvas.clipPath(capsulePath)
-            canvas.clipRect(
-                bounds.left,
-                bounds.top,
-                bounds.left + bounds.width() * progress,
-                bounds.bottom
-            )
-            surfacePaint.shader = LinearGradient(
-                0f,
-                0f,
-                width.toFloat(),
-                0f,
-                intArrayOf(
-                    0xFF4AD8FF.toInt(),
-                    0xFF7A68FF.toInt(),
-                    0xFFFF4E91.toInt()
-                ),
-                null,
-                Shader.TileMode.CLAMP
-            )
+            canvas.clipRect(bounds.left, bounds.top, fillEdge, bounds.bottom)
+            surfacePaint.shader = fillShader()
             canvas.drawPath(capsulePath, surfacePaint)
+            if (progress < 1f) {
+                // A soft glow riding the leading edge makes the bar read as charging.
+                val glowWidth = dp(GLOW_WIDTH_DP)
+                canvas.translate(fillEdge - glowWidth, 0f)
+                surfacePaint.shader = glowShader(glowWidth)
+                canvas.drawRect(0f, bounds.top, glowWidth, bounds.bottom, surfacePaint)
+            }
             canvas.restoreToCount(save)
             surfacePaint.shader = null
         }
@@ -166,6 +172,46 @@ class CountdownActionButton @JvmOverloads constructor(
         labelPaint.clearShadowLayer()
     }
 
+    private var cachedFillShader: Shader? = null
+    private var cachedFillWidth = -1
+    private var cachedGlowShader: Shader? = null
+    private var cachedGlowWidth = -1f
+
+    // Shaders are cached so the countdown does not allocate on every frame on older TV boxes.
+    private fun fillShader(): Shader {
+        val cached = cachedFillShader
+        if (cached != null && cachedFillWidth == width) return cached
+        return LinearGradient(
+            0f,
+            0f,
+            width.toFloat(),
+            0f,
+            intArrayOf(0xFF4AD8FF.toInt(), 0xFF7A68FF.toInt(), 0xFFFF4E91.toInt()),
+            null,
+            Shader.TileMode.CLAMP
+        ).also {
+            cachedFillShader = it
+            cachedFillWidth = width
+        }
+    }
+
+    private fun glowShader(glowWidth: Float): Shader {
+        val cached = cachedGlowShader
+        if (cached != null && cachedGlowWidth == glowWidth) return cached
+        return LinearGradient(
+            0f,
+            0f,
+            glowWidth,
+            0f,
+            intArrayOf(0x00FFFFFF, 0x66FFFFFF, 0x00FFFFFF),
+            floatArrayOf(0f, 0.85f, 1f),
+            Shader.TileMode.CLAMP
+        ).also {
+            cachedGlowShader = it
+            cachedGlowWidth = glowWidth
+        }
+    }
+
     override fun drawableStateChanged() {
         super.drawableStateChanged()
         invalidate()
@@ -177,4 +223,8 @@ class CountdownActionButton @JvmOverloads constructor(
     }
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
+
+    private companion object {
+        const val GLOW_WIDTH_DP = 26f
+    }
 }

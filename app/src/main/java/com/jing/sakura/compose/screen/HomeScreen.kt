@@ -156,6 +156,7 @@ import com.jing.sakura.data.NamedValue
 import com.jing.sakura.data.Resource
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.history.HistoryActivity
+import com.jing.sakura.home.HOME_UP_NEXT_TITLE
 import com.jing.sakura.home.HomeViewModel
 import com.jing.sakura.home.PREVIEW_DIM_DELAY_MS
 import com.jing.sakura.home.PREVIEW_START_AFTER_DIM_DELAY_MS
@@ -290,13 +291,7 @@ fun HomeScreen(
         featuredIdentityTokens
     ) {
         buildList {
-            val recommendationRow = recommendations.distinctAnime()
-                .filterNot { anime ->
-                    anime.identityTokens().any(featuredIdentityTokens::contains)
-                }
-            if (recommendationRow.isNotEmpty()) {
-                add(NamedValue("為你推薦", recommendationRow))
-            }
+            // Resuming is the most common reason to open the app, so it sits right under the hero.
             addAll(
                 syncedRows
                     .filterNot {
@@ -305,6 +300,13 @@ fun HomeScreen(
                     }
                     .map { it.copy(value = it.value.distinctAnime()) }
             )
+            val recommendationRow = recommendations.distinctAnime()
+                .filterNot { anime ->
+                    anime.identityTokens().any(featuredIdentityTokens::contains)
+                }
+            if (recommendationRow.isNotEmpty()) {
+                add(NamedValue("為你推薦", recommendationRow))
+            }
             todayUpdates.takeIf(List<AnimeData>::isNotEmpty)
                 ?.let { add(NamedValue("今日更新", it.distinctAnime())) }
             if (theaterItems.isNotEmpty()) {
@@ -660,7 +662,7 @@ fun HomeScreen(
         viewModel.cancelHeroPreview()
         val resumeEpisode = rows
             .getOrNull(focusedRowIndex ?: -1)
-            ?.takeIf { it.name == "繼續觀看" }
+            ?.takeIf { it.name == HOME_UP_NEXT_TITLE }
             ?.let { anime.currentEpisode }
             .orEmpty()
         DetailActivity.startActivity(

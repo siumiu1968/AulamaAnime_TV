@@ -50,6 +50,8 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -155,6 +157,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.coroutineScope
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import com.jing.sakura.auth.favoriteEpisodeNumber
+import com.jing.sakura.detail.DetailRatingState
+import com.jing.sakura.compose.common.ratingWord
+import com.jing.sakura.compose.common.RatingStar
 
 private val DetailHeroHeight = 346.dp
 private val RelatedSectionHeight = 318.dp
@@ -231,6 +241,8 @@ private fun DetailContent(
     val history = viewModel.latestProgress.collectAsState().value.getOrNull()
     val detailAccent = rememberArtworkAccent(detail.imageUrl)
     val favoriteUiState = viewModel.favoriteUiState.collectAsState().value
+    val episodeProgress = viewModel.episodeProgress.collectAsState().value
+    val ratingState = viewModel.ratingState.collectAsState().value
     var reverseEpisodes by remember { mutableStateOf(false) }
     var showLinePicker by remember { mutableStateOf(false) }
     var resumeFocusSignal by remember { mutableStateOf(0) }
@@ -543,6 +555,8 @@ private fun DetailContent(
             isFavorite = favoriteUiState.isFavorite,
             favoriteEnabled = !favoriteUiState.isLoading && !favoriteUiState.isUpdating,
             onFavoriteClick = { viewModel.toggleFavorite(detail) },
+            ratingState = ratingState,
+            onSaveRating = { score -> viewModel.saveRating(detail, score) },
             primaryActionFocusRequester = primaryActionFocusRequester,
             downFocusRequester = focusRequesters.line.takeIf { hasEpisodes },
             isInteractive = heroPresentation.mainHeroInteractive,
@@ -616,6 +630,7 @@ private fun DetailContent(
                             episodes = playlist.episodeList,
                             initiallyFocusedIndex = initialIndex,
                             currentEpisodeId = history?.episodeId,
+                            episodeProgress = episodeProgress,
                             reverseEpisodes = reverseEpisodes,
                             lineFocusRequester = focusRequesters.line,
                             orderFocusRequester = focusRequesters.order,
@@ -1033,6 +1048,8 @@ private fun DetailHero(
     isFavorite: Boolean,
     favoriteEnabled: Boolean,
     onFavoriteClick: () -> Unit,
+    ratingState: DetailRatingState,
+    onSaveRating: suspend (Int) -> Boolean,
     primaryActionFocusRequester: FocusRequester,
     downFocusRequester: FocusRequester?,
     isInteractive: Boolean,
@@ -1043,7 +1060,8 @@ private fun DetailHero(
     val displayTitle = localizedText(detail.animeName)
     val displayDescription = localizedText(detail.description).trim()
     val episodeCount = detail.playLists.maxOfOrNull { it.episodeList.size } ?: 0
-    val metadata = compactDetailMetadata(detail.infoList, episodeCount)
+    val metadata = compactDetailMetadataParts(detail.infoList, episodeCount)
+    val providerRating = remember(detail.infoList) { detailProviderRating(detail.infoList) }
     val titleLayout = remember(displayTitle) { DetailTitleLayoutPolicy.forTitle(displayTitle) }
     val onNavigateDown: (() -> Unit)? = downFocusRequester?.let { requester ->
         {
@@ -1052,6 +1070,7 @@ private fun DetailHero(
         }
     }
     var showDescription by remember { mutableStateOf(false) }
+    var showRating by remember { mutableStateOf(false) }
 
     FocusGroup(
         modifier = modifier.onPreviewKeyEvent { event ->
@@ -1098,18 +1117,8 @@ private fun DetailHero(
                     ),
                     color = accent
                 )
-                if (metadata.isNotBlank()) {
-                    Text(
-                        text = metadata,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontSize = 15.sp,
-                            lineHeight = 20.sp,
-                            fontWeight = FontWeight.Medium
-                        ),
-                        color = AulamaTvColors.TextSecondary
-                    )
+                if (metadata.isNotEmpty() || providerRating.isNotBlank()) {
+                    DetailMetadataChips(parts = metadata, providerRating = providerRating)
                 }
                 if (displayDescription.isNotBlank()) {
                     Text(
@@ -1128,16 +1137,22 @@ private fun DetailHero(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     onPlayClick?.let { play ->
+                        val resumeNumber = history?.let { favoriteEpisodeNumber(it.lastEpisodeName) } ?: 0
                         DetailActionButton(
-                            label = if (history == null) "立即播放" else "繼續播放",
+                            label = when {
+                                history == null -> "立即播放"
+                                resumeNumber > 0 -> "繼續 · 第${resumeNumber}集"
+                                else -> "繼續播放"
+                            },
                             icon = Icons.Default.PlayArrow,
                             accent = accent,
                             prominent = true,
                             enabled = isInteractive,
                             onClick = play,
                             onNavigateDown = onNavigateDown,
+                            progress = history?.let { watched -> { watchedFraction(watched) } },
                             modifier = Modifier
-                                .width(142.dp)
+                                .width(if (history == null) 142.dp else 162.dp)
                                 .focusRequester(primaryActionFocusRequester)
                                 .focusProperties {
                                     canFocus = isInteractive
@@ -1178,6 +1193,23 @@ private fun DetailHero(
                             }
                             .restorableFocus()
                     )
+                    if (ratingState.available) {
+                        DetailActionButton(
+                            label = if (ratingState.score > 0) "★ ${ratingState.score}" else "評分",
+                            icon = if (ratingState.score > 0) Icons.Default.Star else Icons.Default.StarBorder,
+                            accent = AulamaTvColors.Amber,
+                            enabled = isInteractive && !ratingState.saving,
+                            onClick = { showRating = true },
+                            onNavigateDown = onNavigateDown,
+                            modifier = Modifier
+                                .width(98.dp)
+                                .focusProperties {
+                                    canFocus = isInteractive
+                                    downFocusRequester?.let { down = it }
+                                }
+                                .restorableFocus()
+                        )
+                    }
                 }
                 history?.let {
                     PlaybackProgressLine(history = it, accent = accent)
@@ -1192,6 +1224,15 @@ private fun DetailHero(
             description = displayDescription,
             accent = accent,
             onDismiss = { showDescription = false }
+        )
+    }
+    if (showRating && isInteractive) {
+        RatingDialog(
+            title = displayTitle,
+            currentScore = ratingState.score,
+            accent = accent,
+            onSave = onSaveRating,
+            onDismiss = { showRating = false }
         )
     }
 }
@@ -1287,13 +1328,15 @@ private fun DetailActionButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     prominent: Boolean = false,
-    onNavigateDown: (() -> Unit)? = null
+    onNavigateDown: (() -> Unit)? = null,
+    progress: (() -> Float)? = null
 ) {
     SpringFocusButton(
         onClick = onClick,
         enabled = enabled,
         accent = accent,
         prominent = prominent,
+        progress = progress,
         cornerRadius = 7.dp,
         contentPadding = PaddingValues(horizontal = 14.dp),
         modifier = modifier
@@ -1355,7 +1398,7 @@ private fun DetailPoster(
 }
 
 @Composable
-private fun compactDetailMetadata(infoList: List<String>, episodeCount: Int): String {
+private fun compactDetailMetadataParts(infoList: List<String>, episodeCount: Int): List<String> {
     val localized = mutableListOf<String>()
     for (rawInfo in infoList) {
         for (rawPart in rawInfo.split('•', '・', '|')) {
@@ -1391,41 +1434,212 @@ private fun compactDetailMetadata(infoList: List<String>, episodeCount: Int): St
         selected += localized.take(3)
     }
     if (episodeCount > 0) selected += localizedText("$episodeCount 集")
-    return selected.distinct().joinToString("  •  ")
+    return selected.distinct()
+}
+
+/** The source's own score (e.g. 評分：8.1), shown as a ★ chip like the web's rating badge. */
+private fun detailProviderRating(infoList: List<String>): String = infoList
+    .asSequence()
+    .map(String::trim)
+    .firstOrNull { it.startsWith("評分") || it.startsWith("评分") }
+    ?.let { DETAIL_RATING_PATTERN.find(it.substringAfter('：', it.substringAfter(':', "")))?.value }
+    ?.takeIf { (it.toDoubleOrNull() ?: 0.0) > 0.0 }
+    .orEmpty()
+
+private val DETAIL_RATING_PATTERN = Regex("""\d+(?:\.\d+)?""")
+
+private enum class MetadataTone { Neutral, Finished, Airing }
+
+private fun metadataTone(part: String): MetadataTone = when {
+    part.contains("完結") || part.contains("完结") || part.contains("全集") -> MetadataTone.Finished
+    part.contains("更新") || part.contains("連載") || part.contains("连载") -> MetadataTone.Airing
+    else -> MetadataTone.Neutral
+}
+
+/** Metadata as small chips, with airing status and the score highlighted, as on the web. */
+@Composable
+private fun DetailMetadataChips(parts: List<String>, providerRating: String) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (providerRating.isNotBlank()) {
+            DetailMetaChip(text = "★ $providerRating", tint = AulamaTvColors.Amber, emphasized = true)
+        }
+        parts.take(5).forEach { part ->
+            when (metadataTone(part)) {
+                MetadataTone.Finished -> DetailMetaChip(part, AulamaTvColors.Green, emphasized = true)
+                MetadataTone.Airing -> DetailMetaChip(part, AulamaTvColors.Cyan, emphasized = true)
+                MetadataTone.Neutral -> DetailMetaChip(part, AulamaTvColors.TextSecondary, emphasized = false)
+            }
+        }
+    }
 }
 
 @Composable
-private fun PlaybackProgressLine(history: VideoHistoryEntity, accent: Color) {
-    val progress = if (history.videoDuration > 0L) {
+private fun DetailMetaChip(text: String, tint: Color, emphasized: Boolean) {
+    val shape = RoundedCornerShape(6.dp)
+    Text(
+        text = text,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        color = if (emphasized) tint else AulamaTvColors.TextPrimary.copy(alpha = 0.86f),
+        style = MaterialTheme.typography.labelLarge.copy(
+            fontSize = 13.sp,
+            lineHeight = 16.sp,
+            fontWeight = if (emphasized) FontWeight.Bold else FontWeight.Medium
+        ),
+        modifier = Modifier
+            .widthIn(max = 180.dp)
+            .clip(shape)
+            .background(if (emphasized) tint.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.07f))
+            .border(1.dp, if (emphasized) tint.copy(alpha = 0.34f) else Color.White.copy(alpha = 0.1f), shape)
+            .padding(horizontal = 9.dp, vertical = 4.dp)
+    )
+}
+
+private fun watchedFraction(history: VideoHistoryEntity): Float =
+    if (history.videoDuration > 0L) {
         (history.lastPlayTime.toFloat() / history.videoDuration.toFloat()).coerceIn(0f, 1f)
     } else {
         0f
     }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+
+@Composable
+private fun PlaybackProgressLine(history: VideoHistoryEntity, accent: Color) {
+    // The bar now lives inside the resume button; this line says where and how long is left.
+    val remainingMinutes = ((history.videoDuration - history.lastPlayTime).coerceAtLeast(0L) / 60_000L)
+    val detail = if (history.videoDuration > 0L && remainingMinutes > 0L) {
+        "上次看到 ${history.lastEpisodeName} · 還剩 $remainingMinutes 分鐘"
+    } else {
+        "上次看到 ${history.lastEpisodeName}  " +
+            "${(history.lastPlayTime / 1000).secondsToMinuteAndSecondText()} / " +
+            (history.videoDuration / 1000).secondsToMinuteAndSecondText()
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(accent)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = localizedText(
-                "上次看到 ${history.lastEpisodeName}  " +
-                    "${(history.lastPlayTime / 1000).secondsToMinuteAndSecondText()} / " +
-                    (history.videoDuration / 1000).secondsToMinuteAndSecondText()
-            ),
+            text = localizedText(detail),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp),
             color = AulamaTvColors.TextSecondary
         )
+    }
+}
+
+/** Star rating for this title; saved to the viewer's Aulama ID like the web's rating row. */
+@Composable
+private fun RatingDialog(
+    title: String,
+    currentScore: Int,
+    accent: Color,
+    onSave: suspend (Int) -> Boolean,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var focusedScore by remember { mutableStateOf(currentScore) }
+    var saving by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
+    val initialStar = remember { FocusRequester() }
+    Dialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Box(
             modifier = Modifier
-                .width(340.dp)
-                .height(3.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(AulamaTvColors.Outline)
+                .fillMaxSize()
+                .background(Color(0xD905070C)),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .fillMaxWidth(progress)
-                    .fillMaxHeight()
-                    .background(accent)
-            )
+                    .widthIn(min = 420.dp, max = 560.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(AulamaTvColors.SurfaceRaised)
+                    .background(
+                        Brush.verticalGradient(listOf(accent.copy(alpha = 0.14f), Color.Transparent))
+                    )
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(18.dp))
+                    .padding(horizontal = 32.dp, vertical = 26.dp)
+            ) {
+                Text(
+                    text = title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = accent,
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = localizedText("你會俾呢套幾多粒星？"),
+                    color = AulamaTvColors.TextPrimary,
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontSize = 23.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (score in 1..5) {
+                        RatingStar(
+                            lit = score <= focusedScore,
+                            enabled = !saving,
+                            onFocused = { focusedScore = score },
+                            onSelect = {
+                                saving = true
+                                failed = false
+                                scope.launch {
+                                    val saved = runCatching { onSave(score) }.getOrDefault(false)
+                                    saving = false
+                                    if (saved) onDismiss() else failed = true
+                                }
+                            },
+                            modifier = if (score == (currentScore.takeIf { it in 1..5 } ?: 3)) {
+                                Modifier.focusRequester(initialStar)
+                            } else {
+                                Modifier
+                            }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = localizedText(
+                        when {
+                            saving -> "儲存中…"
+                            failed -> "評分未能儲存，請再試一次。"
+                            focusedScore > 0 -> "$focusedScore 星 · ${ratingWord(focusedScore)} · 按 OK 儲存"
+                            else -> ""
+                        }
+                    ),
+                    color = if (failed) AulamaTvColors.Pink else AulamaTvColors.Amber,
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = localizedText("評分會同步到網頁版，令推薦更合口味 · 按返回鍵取消"),
+                    color = AulamaTvColors.TextSecondary,
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp)
+                )
+            }
+        }
+        LaunchedEffect(Unit) {
+            delay(60)
+            runCatching { initialStar.requestFocus() }
         }
     }
 }
@@ -1437,6 +1651,7 @@ private fun EpisodeSection(
     episodes: List<AnimePlayListEpisode>,
     initiallyFocusedIndex: Int,
     currentEpisodeId: String?,
+    episodeProgress: Map<Int, Float>,
     reverseEpisodes: Boolean,
     lineFocusRequester: FocusRequester,
     orderFocusRequester: FocusRequester,
@@ -1619,6 +1834,7 @@ private fun EpisodeSection(
                         EpisodeTile(
                             label = episode.episode,
                             isCurrent = episode.episodeId == currentEpisodeId,
+                            progress = episodeProgress[favoriteEpisodeNumber(episode.episode)] ?: 0f,
                             modifier = episodeModifier,
                             onClick = { onEpisodeClick(episodeIndex, episode) }
                         )
@@ -1804,6 +2020,7 @@ private fun OrderControl(
 private fun EpisodeTile(
     label: String,
     isCurrent: Boolean,
+    progress: Float,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -1846,12 +2063,28 @@ private fun EpisodeTile(
                     lineHeight = 18.sp,
                     fontWeight = FontWeight.Black
                 ),
-                color = if (focused) Color(0xFF041014) else AulamaTvColors.TextPrimary,
+                color = when {
+                    focused -> Color(0xFF041014)
+                    progress >= 1f && !isCurrent -> AulamaTvColors.TextSecondary
+                    else -> AulamaTvColors.TextPrimary
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = if (isCurrent) 4.dp else 0.dp)
+                    .padding(bottom = if (isCurrent || progress > 0f) 4.dp else 0.dp)
             )
-            if (isCurrent) {
+            if (progress > 0f) {
+                // Like the web's episode battery: how much of each episode has been watched.
+                EpisodeProgressBar(
+                    progress = progress,
+                    focused = focused,
+                    isCurrent = isCurrent,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 4.dp, end = 4.dp, bottom = 1.dp)
+                        .fillMaxWidth()
+                        .height(3.dp)
+                )
+            } else if (isCurrent) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1865,6 +2098,32 @@ private fun EpisodeTile(
             }
         }
     }
+}
+
+@Composable
+private fun EpisodeProgressBar(
+    progress: Float,
+    focused: Boolean,
+    isCurrent: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val track = if (focused) Color(0x33041014) else Color.White.copy(alpha = 0.14f)
+    val fill = when {
+        focused -> Color(0xFF041014)
+        isCurrent -> AulamaTvColors.Cyan
+        else -> AulamaTvColors.Cyan.copy(alpha = 0.55f)
+    }
+    Box(
+        modifier = modifier.drawBehind {
+            val radius = CornerRadius(size.height / 2f)
+            drawRoundRect(color = track, cornerRadius = radius)
+            drawRoundRect(
+                color = fill,
+                size = Size(size.width * progress.coerceIn(0f, 1f), size.height),
+                cornerRadius = radius
+            )
+        }
+    )
 }
 
 @Composable

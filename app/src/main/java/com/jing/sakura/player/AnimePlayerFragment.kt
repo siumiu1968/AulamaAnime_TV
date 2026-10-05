@@ -2,6 +2,7 @@ package com.jing.sakura.player
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -11,8 +12,14 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
+import android.view.animation.PathInterpolator
 import android.widget.TextView
 import androidx.annotation.OptIn
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.graphics.drawable.toDrawable
 import androidx.core.content.res.ResourcesCompat
 import androidx.leanback.R as LeanbackR
@@ -40,8 +47,12 @@ import androidx.media3.effect.Presentation
 import androidx.media3.ui.leanback.LeanbackPlayerAdapter
 import com.jing.sakura.R
 import com.jing.sakura.SakuraApplication
+import com.jing.sakura.auth.favoriteEpisodeNumber
 import com.jing.sakura.compose.common.TvLanguage
 import com.jing.sakura.compose.common.TvLanguagePreferences
+import com.jing.sakura.compose.theme.setAulamaTvContent
+import com.jing.sakura.detail.DetailActivity
+import com.jing.sakura.home.MainActivity
 import com.jing.sakura.data.Resource
 import com.jing.sakura.extend.secondsToMinuteAndSecondText
 import com.jing.sakura.extend.showLongToast
@@ -71,6 +82,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var glue: ProgressTransportControlGlue<LeanbackPlayerAdapter>? = null
     private var current4kMode = Tv4kMode.OFF
     private var skipSegmentActions: View? = null
+    private var skipActionsExiting = false
     private var skipSegmentButton: CountdownActionButton? = null
     private var continueOutroButton: TextView? = null
     private var activePlaybackSkip: ActivePlaybackSkip? = null
@@ -84,6 +96,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var skipFocusWasAutomatic = false
     private var focusBindAttempts = 0
     private var playerHeader: View? = null
+    private var playerHeaderScrim: View? = null
     private var playerHeaderTitle: TextView? = null
     private var playerHeaderEpisode: TextView? = null
     private var speedBoostIndicator: SpeedBoostOverlay? = null
@@ -96,6 +109,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var pendingSourceFallback: PlaybackSourceFallback? = null
     private val failedPlaylistIndexes = mutableSetOf<Int>()
     private var fallbackEpisodeLabel = ""
+    private var seasonFinaleView: ComposeView? = null
+    private var seasonFinaleVisible = false
 
     private val hideTransientSkipRunnable = Runnable {
         if (skipUiState.onTransientActionTimeout()) {
@@ -104,11 +119,14 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private val hideHeaderRunnable = Runnable {
-        playerHeader?.animate()
-            ?.alpha(0f)
-            ?.setDuration(180L)
-            ?.withEndAction { playerHeader?.visibility = View.GONE }
-            ?.start()
+        listOfNotNull(playerHeader, playerHeaderScrim).forEach { chrome ->
+            chrome.animate()
+                .alpha(0f)
+                .setDuration(HEADER_FADE_OUT_MS)
+                .setInterpolator(DecelerateInterpolator())
+                .withEndAction { chrome.visibility = View.GONE }
+                .start()
+        }
     }
 
     private val hideControlsRunnable = Runnable {
@@ -277,9 +295,14 @@ class AnimePlayerFragment : VideoSupportFragment() {
         continueOutroButton?.typeface = roundedFont
         setSkipActionsFocusable(false)
         playerHeader = requireActivity().findViewById(R.id.player_header)
+        playerHeaderScrim = requireActivity().findViewById(R.id.player_header_scrim)
         playerHeaderTitle = requireActivity().findViewById(R.id.player_header_title)
         playerHeaderEpisode = requireActivity().findViewById(R.id.player_header_episode)
+        playerHeaderTitle?.typeface = roundedFont
         speedBoostIndicator = requireActivity().findViewById(R.id.player_speed_boost)
+        seasonFinaleView = requireActivity().findViewById<ComposeView>(R.id.player_season_finale).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        }
         view.post {
             bindPlaybackFocusTargets()
             PlayerProgressStyler.apply(view)
@@ -315,6 +338,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     override fun onStop() {
+        // The season is over and the sheet is a terminal state: leaving the app closes the player.
+        if (seasonFinaleVisible) activity?.finish()
         clearSkipState()
         cancelControlsAutoHide()
         applyCenterKeyAction(centerKeyController.cancel())
@@ -681,6 +706,33 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     fun handlePlaybackKeyEvent(event: KeyEvent): Boolean {
+        if (seasonFinaleVisible) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                if (event.action == KeyEvent.ACTION_UP) activity?.finish()
+                return true
+            }
+            // Everything else belongs to the sheet's own focus targets.
+            return false
+        }
+        if (
+            event.keyCode == KeyEvent.KEYCODE_BACK &&
+            event.action == KeyEvent.ACTION_UP &&
+            !areTransportControlsVisible() &&
+            skipSegmentButton?.hasFocus() != true &&
+            continueOutroButton?.hasFocus() != true
+        ) {
+            // Leaving during the final episode's credits counts as finishing the season.
+            val localPlayer = player
+            if (
+                localPlayer != null &&
+                showSeasonFinaleIfEligible(
+                    positionMs = localPlayer.currentPosition.coerceAtLeast(0L),
+                    durationMs = localPlayer.contentDuration.coerceAtLeast(0L)
+                )
+            ) {
+                return true
+            }
+        }
         if (isCenterKey(event.keyCode) && centerKeyController.isActive) return handleCenterKey(event)
         if (handleTransientSkipPromptKey(event)) return true
         updateControlsAutoHideFor(event)
@@ -840,18 +892,30 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
     private fun hidePlayerChromeForBoost() {
         glue?.host?.hideControlsOverlay(false)
+        hidePlayerHeaderNow()
+    }
+
+    private fun hidePlayerHeaderNow() {
         playerHeader?.removeCallbacks(hideHeaderRunnable)
-        playerHeader?.animate()?.cancel()
-        playerHeader?.alpha = 0f
-        playerHeader?.visibility = View.GONE
+        listOfNotNull(playerHeader, playerHeaderScrim).forEach { chrome ->
+            chrome.animate().cancel()
+            chrome.alpha = 0f
+            chrome.visibility = View.GONE
+        }
     }
 
     private fun showPlayerHeader() {
         val header = playerHeader ?: return
         header.removeCallbacks(hideHeaderRunnable)
-        header.animate().cancel()
-        header.visibility = View.VISIBLE
-        header.animate().alpha(1f).setDuration(140L).start()
+        listOfNotNull(header, playerHeaderScrim).forEach { chrome ->
+            chrome.animate().cancel()
+            chrome.visibility = View.VISIBLE
+            chrome.animate()
+                .alpha(1f)
+                .setDuration(HEADER_FADE_IN_MS)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        }
         header.postDelayed(hideHeaderRunnable, PLAYER_HEADER_VISIBLE_MS)
     }
 
@@ -901,7 +965,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
             isTransportControlFocused() -> PlaybackSkipFocusZone.TRANSPORT
             else -> return false
         }
-        val actionsVisible = skipSegmentActions?.visibility == View.VISIBLE
+        val actionsVisible = areSkipActionsShown()
         if (
             zone == PlaybackSkipFocusZone.TRANSPORT &&
             (!actionsVisible || direction != PlaybackSkipDirection.UP)
@@ -1047,7 +1111,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
             .scaleX(if (hasFocus) PlaybackSkipLayoutPolicy.FOCUS_SCALE else 1f)
             .scaleY(if (hasFocus) PlaybackSkipLayoutPolicy.FOCUS_SCALE else 1f)
             .translationZ(if (hasFocus) 6f * resources.displayMetrics.density else 0f)
-            .setDuration(120L)
+            // A slight overshoot on the way up reads like the spring focus used elsewhere.
+            .setInterpolator(if (hasFocus) OvershootInterpolator(1.6f) else DecelerateInterpolator())
+            .setDuration(if (hasFocus) 220L else 160L)
             .start()
         target.invalidate()
     }
@@ -1067,6 +1133,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         skipSegmentActions = null
         skipSegmentButton = null
         continueOutroButton = null
+        seasonFinaleView = null
         primaryControlsDock = null
         playbackProgress = null
         lastPrimaryControl = null
@@ -1074,6 +1141,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         skipFocusWasAutomatic = false
         focusBindAttempts = 0
         playerHeader = null
+        playerHeaderScrim = null
         playerHeaderTitle = null
         playerHeaderEpisode = null
         speedBoostIndicator = null
@@ -1111,23 +1179,17 @@ class AnimePlayerFragment : VideoSupportFragment() {
             hideSkipUi(allowPlayerControlsRestore = false)
             return
         }
-        button.text = getString(
-            when {
-                active.type == ActivePlaybackSkip.Type.INTRO -> R.string.player_skip_intro
-                active.advancesEpisode -> R.string.player_next_episode
-                else -> R.string.player_skip_outro
-            }
-        )
+        button.text = when {
+            active.type == ActivePlaybackSkip.Type.INTRO -> getString(R.string.player_skip_intro)
+            active.advancesEpisode -> nextEpisodeLabel()
+            else -> getString(R.string.player_skip_outro)
+        }
         continueOutroButton?.visibility = if (active.advancesEpisode) View.VISIBLE else View.GONE
         if (skipSegmentButton?.hasFocus() != true && continueOutroButton?.hasFocus() != true) {
             setSkipActionsFocusable(false)
         }
         val actions = skipSegmentActions ?: return
-        if (actions.visibility != View.VISIBLE) {
-            actions.alpha = 0f
-            actions.visibility = View.VISIBLE
-            actions.animate().alpha(1f).setDuration(180L).start()
-        }
+        if (!areSkipActionsShown()) revealSkipActions(actions, button)
         if (decision.shouldRequestInitialFocus) {
             lastTransportFocus = requireActivity().currentFocus
             skipFocusWasAutomatic = true
@@ -1153,25 +1215,76 @@ class AnimePlayerFragment : VideoSupportFragment() {
         val shouldRestoreTransport = skipSegmentButton?.hasFocus() == true ||
             continueOutroButton?.hasFocus() == true
         val restoreWithoutShowingControls = skipFocusWasAutomatic
-        skipSegmentButton?.cancelCountdown()
-        skipSegmentActions?.apply {
-            animate().cancel()
-            visibility = View.GONE
-        }
-        skipSegmentButton?.apply {
-            clearFocus()
-        }
-        continueOutroButton?.apply {
-            visibility = View.GONE
-            clearFocus()
-        }
+        // Keep the filled bar while the prompt fades, so it never flashes back to empty.
+        skipSegmentButton?.freezeCountdown()
+        skipSegmentButton?.clearFocus()
+        continueOutroButton?.clearFocus()
         setSkipActionsFocusable(false)
+        dismissSkipActions()
         if (shouldRestoreTransport) {
             restoreTransportFocus(
                 showControls = allowPlayerControlsRestore && !restoreWithoutShowingControls
             )
         } else {
             skipFocusWasAutomatic = false
+        }
+    }
+
+    private fun areSkipActionsShown(): Boolean =
+        skipSegmentActions?.visibility == View.VISIBLE && !skipActionsExiting
+
+    /** Rises into place on a decelerating curve, like a tvOS prompt, instead of popping in. */
+    private fun revealSkipActions(actions: View, button: CountdownActionButton) {
+        actions.animate().cancel()
+        button.clearIdleProgress()
+        if (actions.visibility != View.VISIBLE) {
+            actions.alpha = 0f
+            actions.translationY = SKIP_ACTIONS_RISE_DP * resources.displayMetrics.density
+        }
+        // Interrupting a fade-out simply turns it around from where it is.
+        skipActionsExiting = false
+        actions.visibility = View.VISIBLE
+        actions.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(SKIP_ACTIONS_ENTER_MS)
+            .setInterpolator(EmphasizedDecelerateInterpolator)
+            .start()
+    }
+
+    private fun dismissSkipActions() {
+        val actions = skipSegmentActions ?: return
+        actions.animate().cancel()
+        if (actions.visibility != View.VISIBLE || !actions.isAttachedToWindow) {
+            finishSkipActionsExit(actions)
+            return
+        }
+        skipActionsExiting = true
+        actions.animate()
+            .alpha(0f)
+            .translationY(SKIP_ACTIONS_SINK_DP * resources.displayMetrics.density)
+            .setDuration(SKIP_ACTIONS_EXIT_MS)
+            .setInterpolator(AccelerateInterpolator())
+            .withEndAction { if (skipActionsExiting) finishSkipActionsExit(actions) }
+            .start()
+    }
+
+    private fun finishSkipActionsExit(actions: View) {
+        skipActionsExiting = false
+        actions.visibility = View.GONE
+        actions.alpha = 1f
+        actions.translationY = 0f
+        continueOutroButton?.visibility = View.GONE
+        skipSegmentButton?.cancelCountdown()
+    }
+
+    private fun nextEpisodeLabel(): String {
+        val next = viewModel.playList.getOrNull(viewModel.playIndex + 1)?.episode.orEmpty()
+        val number = favoriteEpisodeNumber(next)
+        return if (number > 0) {
+            getString(R.string.player_next_episode_numbered, number)
+        } else {
+            getString(R.string.player_next_episode)
         }
     }
 
@@ -1185,8 +1298,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun scheduleSkipUiExit() {
-        val actions = skipSegmentActions
-        if (actions?.visibility != View.VISIBLE) {
+        if (!areSkipActionsShown()) {
             skipExitGrace.clear()
             skipUiState.update(null)
             skipPromptKeyController.reset()
@@ -1230,15 +1342,62 @@ class AnimePlayerFragment : VideoSupportFragment() {
         if (handledEndedEpisodeIndex == episodeIndex) return
         handledEndedEpisodeIndex = episodeIndex
         val hasNextEpisode = viewModel.hasNextEpisode()
+        val positionMs = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        val durationMs = player?.contentDuration?.coerceAtLeast(0L) ?: 0L
         clearSkipState()
         viewModel.completeCurrentEpisode {
             if (!isAdded || viewModel.playIndex != episodeIndex) return@completeCurrentEpisode
             if (hasNextEpisode) {
                 viewModel.playNextEpisodeAdjacent()
-            } else {
+            } else if (!showSeasonFinaleIfEligible(positionMs, durationMs)) {
                 requireActivity().finish()
             }
         }
+    }
+
+    /**
+     * Shows the rating and what-to-watch-next sheet over the paused last frame when the season's
+     * final episode has reached its credits. Returns false when it does not apply.
+     */
+    private fun showSeasonFinaleIfEligible(positionMs: Long, durationMs: Long): Boolean {
+        if (seasonFinaleVisible) return true
+        if (!viewModel.shouldOfferSeasonFinale(positionMs, durationMs)) return false
+        val content = viewModel.seasonFinale.value ?: return false
+        val host = seasonFinaleView ?: return false
+        viewModel.markSeasonFinaleShown()
+        seasonFinaleVisible = true
+        player?.pause()
+        clearSkipState()
+        cancelControlsAutoHide()
+        view?.removeCallbacks(centerLongPressRunnable)
+        applyCenterKeyAction(centerKeyController.cancel())
+        glue?.host?.hideControlsOverlay(false)
+        hidePlayerHeaderNow()
+        host.visibility = View.VISIBLE
+        host.setAulamaTvContent {
+            SeasonFinaleSheet(
+                content = content,
+                onSaveRating = viewModel::saveSeasonRating,
+                onOpenAnime = { anime ->
+                    activity?.let { hostActivity ->
+                        DetailActivity.startActivity(hostActivity, anime)
+                        hostActivity.finish()
+                    }
+                },
+                onHome = {
+                    activity?.let { hostActivity ->
+                        hostActivity.startActivity(
+                            Intent(hostActivity, MainActivity::class.java).addFlags(
+                                Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            )
+                        )
+                        hostActivity.finish()
+                    }
+                }
+            )
+        }
+        host.post { host.requestFocus() }
+        return true
     }
 
     private fun playbackStateName(playbackState: Int): String = when (playbackState) {
@@ -1261,8 +1420,15 @@ class AnimePlayerFragment : VideoSupportFragment() {
         private const val FAST_4K_HEIGHT = 2160
         private const val FOUR_K_DOWNGRADE_COOLDOWN_MS = 5_000L
         private const val PLAYER_HEADER_VISIBLE_MS = 4_500L
+        private const val HEADER_FADE_IN_MS = 220L
+        private const val HEADER_FADE_OUT_MS = 360L
         private const val TEMPORARY_BOOST_SPEED = 2f
         private const val FOCUS_BIND_RETRY_MS = 120L
         private const val MAX_FOCUS_BIND_ATTEMPTS = 6
+        private const val SKIP_ACTIONS_ENTER_MS = 320L
+        private const val SKIP_ACTIONS_EXIT_MS = 180L
+        private const val SKIP_ACTIONS_RISE_DP = 18f
+        private const val SKIP_ACTIONS_SINK_DP = 8f
+        private val EmphasizedDecelerateInterpolator = PathInterpolator(0.05f, 0.7f, 0.1f, 1f)
     }
 }

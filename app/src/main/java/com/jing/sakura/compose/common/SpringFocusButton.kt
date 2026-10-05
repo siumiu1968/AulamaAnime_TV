@@ -50,6 +50,9 @@ private val SpringButtonClickKeys = intArrayOf(
 )
 
 private val SpringButtonOnAccent = Color(0xFF061014)
+private val SpringButtonTrack = Color(0x26000000)
+/** Deep cyan reads on the white resting button; the web also marks resuming in cyan. */
+private val SpringButtonResume = Color(0xFF0E9AA8)
 
 /**
  * Button whose focus feedback behaves like tvOS: it lifts on a spring, its fill and outline
@@ -60,6 +63,8 @@ private val SpringButtonOnAccent = Color(0xFF061014)
  * briefly disabled, e.g. while a favourite request is in flight, keeps the user's focus.
  *
  * @param prominent the screen's primary action: drawn as a bright, filled button at rest.
+ * @param progress optional watched fraction, drawn as a thin bar along the bottom edge
+ *   (Netflix-style "resume" button).
  */
 @Composable
 fun SpringFocusButton(
@@ -71,6 +76,7 @@ fun SpringFocusButton(
     cornerRadius: Dp = 8.dp,
     focusedScale: Float = 1.06f,
     contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp),
+    progress: (() -> Float)? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     val reducedMotion = rememberReducedMotion()
@@ -90,6 +96,7 @@ fun SpringFocusButton(
         animationSpec = tween(if (reducedMotion) 0 else AulamaMotion.PressMillis),
         label = "spring-button-press"
     )
+    val readWatched = progress
     val restContainer = if (prominent) Color.White.copy(alpha = 0.92f) else AulamaTvColors.SurfaceRaised
     val restContent = if (prominent) SpringButtonOnAccent else AulamaTvColors.TextPrimary
     val contentColor by animateColorAsState(
@@ -125,6 +132,26 @@ fun SpringFocusButton(
                     cornerRadius = CornerRadius(radius - inset),
                     style = Stroke(stroke)
                 )
+                val watched = readWatched?.invoke()?.coerceIn(0f, 1f) ?: 0f
+                if (watched > 0f) {
+                    val barHeight = 3.dp.toPx()
+                    val barInset = 12.dp.toPx()
+                    val barWidth = size.width - barInset * 2f
+                    val barTop = size.height - 7.dp.toPx()
+                    val barRadius = CornerRadius(barHeight / 2f)
+                    drawRoundRect(
+                        color = lerp(SpringButtonTrack, SpringButtonOnAccent.copy(alpha = 0.22f), progress),
+                        topLeft = Offset(barInset, barTop),
+                        size = Size(barWidth, barHeight),
+                        cornerRadius = barRadius
+                    )
+                    drawRoundRect(
+                        color = lerp(SpringButtonResume, SpringButtonOnAccent, progress),
+                        topLeft = Offset(barInset, barTop),
+                        size = Size(barWidth * watched, barHeight),
+                        cornerRadius = barRadius
+                    )
+                }
             }
             .semantics(mergeDescendants = true) {
                 role = Role.Button

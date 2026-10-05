@@ -40,7 +40,8 @@ data class TvHistoryItem(
     val sourceTypeId: String = "",
     val updatedAt: String = "",
     val updatedAtEpochMs: Long = 0L,
-    val viewedEpisodeIndexes: Set<Int> = emptySet()
+    val viewedEpisodeIndexes: Set<Int> = emptySet(),
+    val episodeProgress: Map<Int, Float> = emptyMap()
 )
 
 data class TvAnimeDetailPayload(
@@ -50,7 +51,29 @@ data class TvAnimeDetailPayload(
     val infoList: List<String> = emptyList(),
     val related: List<com.jing.sakura.data.AnimeData> = emptyList(),
     val recommendations: List<com.jing.sakura.data.AnimeData> = emptyList(),
-    val personalizedRecommendations: Boolean = false
+    val personalizedRecommendations: Boolean = false,
+    val completion: SeriesCompletion = SeriesCompletion()
+)
+
+/** Upstream airing state of a title, as the web uses it to decide when a season has ended. */
+data class SeriesCompletion(
+    val sourceStatus: String = "",
+    val finished: Boolean = false,
+    val sourceUpdatedAtEpochMs: Long = 0L,
+    val expectedEpisodes: Int = 0
+)
+
+/** A viewer's own 1–5 star rating, shared with the web through the same Aulama ID. */
+data class AnimeRatingPayload(
+    val animeId: String,
+    val animeTitle: String,
+    val poster: String,
+    val rating: Int,
+    val tags: List<String> = emptyList(),
+    val year: String = "",
+    val sourceRating: Double = 0.0,
+    val sourceTypeId: String = "",
+    val summary: String = ""
 )
 
 data class PlaybackHistoryPayload(
