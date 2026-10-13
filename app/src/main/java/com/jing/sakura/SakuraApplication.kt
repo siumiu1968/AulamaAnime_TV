@@ -179,7 +179,12 @@ class SakuraApplication : Application(), ImageLoaderFactory {
         single { SecureAuthStorage(get()) }
         single { GuestModeStorage(get()) }
         single { GuestLibraryStore(get()) }
-        single { AulamaAuthRepository(get(qualifier(KoinOkHttpClient.AULAMA)), get()) }
+        single {
+            AulamaAuthRepository(
+                get(qualifier(KoinOkHttpClient.AULAMA)),
+                get<SecureAuthStorage>()
+            )
+        }
         single { PlaybackHistorySyncQueue(get()) }
         single { SearchHistorySyncQueue(get()) }
         single {

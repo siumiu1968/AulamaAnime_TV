@@ -57,6 +57,29 @@ jobs:
           fi
           mv "$APK" "$APK_NAME"
           printf 'apk_name=%s\n' "$APK_NAME" >> "$GITHUB_OUTPUT"
+      - name: Enable Android emulator acceleration
+        run: sudo chmod a+rw /dev/kvm
+      - name: Smoke-test signed release APK on Android TV
+        uses: reactivecircus/android-emulator-runner@4c44018e59b437e86cdfc41da381398f93ed8808 # v2
+        env:
+          SMOKE_APK: ${{ steps.apk.outputs.apk_name }}
+        with:
+          api-level: 28
+          target: android-tv
+          arch: x86
+          profile: tv_720p
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -memory 2048 -cores 2
+          disable-animations: true
+          script: python3 scripts/smoke_release_apk.py "$SMOKE_APK"
+      - name: Upload Android TV startup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-tv-release-startup-${{ github.run_id }}
+          path: app/build/release-startup-smoke/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
