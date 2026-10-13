@@ -143,6 +143,7 @@ object TvLibraryParser {
         return TvAnimeDetailPayload(
             catalogItem = catalogItem,
             episodeLabels = episodeLabels,
+            cycaniPlayLists = parseCycaniPlayLists(item),
             providerEpisodeCounts = providerEpisodeCounts,
             infoList = buildList {
                 addInfo("地區", info?.primitiveString("area").orEmpty())
@@ -169,6 +170,38 @@ object TvLibraryParser {
                     ?: 0
             )
         )
+    }
+
+    private fun parseCycaniPlayLists(item: JsonObject): List<TvCycaniPlayList> {
+        val episodesBySource = item.array("episodes")
+            .mapNotNull { it.takeIf(JsonElement::isJsonObject)?.asJsonObject }
+            .filter { it.primitiveString("webSectionId").matches(CYCANI_SECTION_ID) }
+            .take(5_000)
+            .groupBy { it.primitiveString("webSourceCode").ifBlank { "cycani" } }
+        val lines = item.array("playLists")
+            .mapNotNull { it.takeIf(JsonElement::isJsonObject)?.asJsonObject }
+            .associateByTo(linkedMapOf()) { it.primitiveString("code") }
+        val orderedCodes = (lines.keys + episodesBySource.keys).distinct()
+        return orderedCodes.mapNotNull { code ->
+            val rows = episodesBySource[code].orEmpty()
+            val episodes = rows.mapIndexed { index, episode ->
+                TvCycaniEpisode(
+                    sectionId = episode.primitiveString("webSectionId"),
+                    label = episode.primitiveString("label")
+                        .ifBlank { episode.primitiveString("title") }
+                        .ifBlank { "第${index + 1}集" }
+                )
+            }.distinctBy(TvCycaniEpisode::sectionId)
+            episodes.takeIf(List<TvCycaniEpisode>::isNotEmpty)?.let {
+                TvCycaniPlayList(
+                    sourceCode = code,
+                    name = lines[code]?.primitiveString("name").orEmpty()
+                        .ifBlank { rows.first().primitiveString("sourceLine") }
+                        .ifBlank { code },
+                    episodes = it
+                )
+            }
+        }
     }
 
     /** Reads the account's saved rating for [animeId] out of `GET /ratings`. */
@@ -270,4 +303,5 @@ object TvLibraryParser {
         "sakura",
         "age"
     )
+    private val CYCANI_SECTION_ID = Regex("\\d{1,12}")
 }

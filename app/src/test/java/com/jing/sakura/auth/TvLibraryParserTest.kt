@@ -274,6 +274,132 @@ class TvLibraryParserTest {
     }
 
     @Test
+    fun mapsCurrentCycaniDetailWithTheRealSectionIdsForMainPlayback() {
+        val payload = TvLibraryParser.parseAnimeDetail(
+            """
+                {"ok":true,"item":{
+                  "id":"cw:3939",
+                  "title":"轉生哥布林有問題嗎？",
+                  "year":"2026",
+                  "episodes":[
+                    {"id":"52401","webVideoId":"3939","webSectionId":"52401","webSourceCode":"cychub","label":"第01集","sourceLine":"CYC_Main"},
+                    {"id":"52479","webVideoId":"3939","webSectionId":"52479","webSourceCode":"cychub","label":"第02集","sourceLine":"CYC_Main"},
+                    {"id":"52516","webVideoId":"3939","webSectionId":"52516","webSourceCode":"cychub","label":"第03集","sourceLine":"CYC_Main"}
+                  ],
+                  "playLists":[{"code":"cychub","name":"CYC_Main","count":3}],
+                  "providerEpisodeCounts":{"cycani":3,"girigiri_cht":3}
+                }}
+            """.trimIndent()
+        )
+
+        assertEquals("cw:3939", payload.catalogItem?.id)
+        assertEquals("2026", payload.catalogItem?.year)
+        assertEquals(listOf("第01集", "第02集", "第03集"), payload.episodeLabels)
+        val main = payload.cycaniPlayLists.single()
+        assertEquals("cychub", main.sourceCode)
+        assertEquals("CYC_Main", main.name)
+        assertEquals(listOf("52401", "52479", "52516"), main.episodes.map { it.sectionId })
+        assertEquals(listOf("第01集", "第02集", "第03集"), main.episodes.map { it.label })
+        assertEquals(3, payload.providerEpisodeCounts["girigiri_cht"])
+    }
+
+    @Test
+    fun groupsCurrentSectionsInPlaylistOrderAndKeepsDistinctSectionsWithIdenticalLabels() {
+        val payload = TvLibraryParser.parseAnimeDetail(
+            """
+                {"ok":true,"item":{
+                  "id":"cw:3939","title":"測試動畫",
+                  "episodes":[
+                    {"webSectionId":"61001","webSourceCode":"alt","label":"第01集","sourceLine":"Alternate"},
+                    {"webSectionId":"52401","webSourceCode":"cychub","label":"第01集","sourceLine":"Unordered main name"},
+                    {"webSectionId":"52479","webSourceCode":"cychub","label":"第01集","sourceLine":"Unordered main name"},
+                    {"webSectionId":"52401","webSourceCode":"cychub","label":"重複資料","sourceLine":"Unordered main name"},
+                    {"webSectionId":"61002","webSourceCode":"alt","label":"第02集","sourceLine":"Alternate"}
+                  ],
+                  "playLists":[
+                    {"code":"cychub","name":"CYC_Main","count":2},
+                    {"code":"alt","name":"另一主線","count":2}
+                  ]
+                }}
+            """.trimIndent()
+        )
+
+        assertEquals(listOf("cychub", "alt"), payload.cycaniPlayLists.map { it.sourceCode })
+        assertEquals(listOf("CYC_Main", "另一主線"), payload.cycaniPlayLists.map { it.name })
+        assertEquals(listOf("52401", "52479"), payload.cycaniPlayLists.first().episodes.map { it.sectionId })
+        assertEquals(listOf("第01集", "第01集"), payload.cycaniPlayLists.first().episodes.map { it.label })
+        assertEquals(listOf("61001", "61002"), payload.cycaniPlayLists.last().episodes.map { it.sectionId })
+    }
+
+    @Test
+    fun excludesProviderPlaceholdersAndMalformedSectionsWithoutLosingBackupEpisodeCounts() {
+        val payload = TvLibraryParser.parseAnimeDetail(
+            """
+                {"ok":true,"item":{
+                  "id":"cw:3939","title":"測試動畫",
+                  "episodes":[
+                    {"id":"52401","webSectionId":52401,"webSourceCode":"cychub","label":"第01集"},
+                    {"id":"provider-only-2","label":"第02集"},
+                    {"id":"52479","webSourceCode":"cychub","label":"有 ID 但沒有 section ID"},
+                    {"webSectionId":"-1","webSourceCode":"cychub","label":"負數 ID"},
+                    {"webSectionId":"1.5","webSourceCode":"cychub","label":"小數 ID"},
+                    {"webSectionId":"1234567890123","webSourceCode":"cychub","label":"過長 ID"},
+                    {"webSectionId":"../52479","webSourceCode":"cychub","label":"非法 ID"},
+                    {"webSectionId":{},"webSourceCode":"cychub","label":"錯誤 ID 類型"},
+                    {"webSectionId":null,"webSourceCode":"cychub","label":"沒有 ID"},
+                    {"webSectionId":"52479","webSourceCode":"cychub","label":{},"title":"第02集"},
+                    {"webSectionId":"52516","webSourceCode":"cychub","label":"","title":""},
+                    null,
+                    "malformed episode"
+                  ],
+                  "playLists":[{"code":"cychub","name":"CYC_Main","count":2}],
+                  "providerEpisodeCounts":{"cycani":2,"girigiri_cht":8,"age":5}
+                }}
+            """.trimIndent()
+        )
+
+        val main = payload.cycaniPlayLists.single()
+        assertEquals(listOf("52401", "52479", "52516"), main.episodes.map { it.sectionId })
+        assertEquals(listOf("第01集", "第02集", "第3集"), main.episodes.map { it.label })
+        assertEquals(8, payload.providerEpisodeCounts["girigiri_cht"])
+        assertEquals(5, payload.providerEpisodeCounts["age"])
+    }
+
+    @Test
+    fun usesSourceLineAndNumberedLabelWhenCurrentSectionMetadataIsMissing() {
+        val payload = TvLibraryParser.parseAnimeDetail(
+            """
+                {"ok":true,"item":{
+                  "id":"cw:3939","title":"測試動畫",
+                  "episodes":[{"webSectionId":"52401","sourceLine":"CYC_Main"}]
+                }}
+            """.trimIndent()
+        )
+
+        val main = payload.cycaniPlayLists.single()
+        assertEquals("cycani", main.sourceCode)
+        assertEquals("CYC_Main", main.name)
+        assertEquals(listOf(TvCycaniEpisode("52401", "第1集")), main.episodes)
+    }
+
+    @Test
+    fun providerOnlyDetailHasNoMainCycaniPlaylist() {
+        val payload = TvLibraryParser.parseAnimeDetail(
+            """
+                {"ok":true,"item":{
+                  "id":"gg:GV27102","title":"只有後備線路的動畫",
+                  "episodes":[{"label":"第01集"},{"label":"第02集"}],
+                  "providerEpisodeCounts":{"girigiri_cht":2},
+                  "playLists":[{"code":"girigiri_cht","name":"主線路B（繁中）","count":2}]
+                }}
+            """.trimIndent()
+        )
+
+        assertTrue(payload.cycaniPlayLists.isEmpty())
+        assertEquals(2, payload.providerEpisodeCounts["girigiri_cht"])
+    }
+
+    @Test
     fun parsesCloudTimestampsWithFractionAndTimezone() {
         val utc = CloudTimestamp.parseEpochMs("2026-07-14T10:00:00.125Z")
         val hongKong = CloudTimestamp.parseEpochMs("2026-07-14T18:00:00.125+08:00")

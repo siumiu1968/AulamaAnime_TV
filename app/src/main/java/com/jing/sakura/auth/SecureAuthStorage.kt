@@ -21,11 +21,18 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import javax.security.auth.x500.X500Principal
 
-class SecureAuthStorage(private val context: Context) {
+interface AulamaAuthStorage {
+    fun loadSession(): AuthSession?
+    fun saveSession(session: AuthSession)
+    fun clearSession()
+    fun stableDeviceId(): String
+}
+
+class SecureAuthStorage(private val context: Context) : AulamaAuthStorage {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val gson = Gson()
 
-    fun loadSession(): AuthSession? {
+    override fun loadSession(): AuthSession? {
         val encrypted = preferences.getString(KEY_SESSION, null) ?: return null
         return runCatching {
             gson.fromJson(decrypt(encrypted), AuthSession::class.java)
@@ -35,11 +42,11 @@ class SecureAuthStorage(private val context: Context) {
         }
     }
 
-    fun saveSession(session: AuthSession) {
+    override fun saveSession(session: AuthSession) {
         preferences.edit().putString(KEY_SESSION, encrypt(gson.toJson(session))).apply()
     }
 
-    fun clearSession() {
+    override fun clearSession() {
         preferences.edit().remove(KEY_SESSION).apply()
     }
 
@@ -53,7 +60,7 @@ class SecureAuthStorage(private val context: Context) {
         }
     }
 
-    fun stableDeviceId(): String {
+    override fun stableDeviceId(): String {
         preferences.getString(KEY_DEVICE_ID, null)?.let { return it }
         val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
         val seed = androidId?.takeIf { it.isNotBlank() && it != "9774d56d682e549c" }

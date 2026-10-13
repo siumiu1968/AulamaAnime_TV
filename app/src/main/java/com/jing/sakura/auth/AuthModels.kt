@@ -47,12 +47,24 @@ data class TvHistoryItem(
 data class TvAnimeDetailPayload(
     val catalogItem: com.jing.sakura.data.AnimeData? = null,
     val episodeLabels: List<String> = emptyList(),
+    val cycaniPlayLists: List<TvCycaniPlayList> = emptyList(),
     val providerEpisodeCounts: Map<String, Int> = emptyMap(),
     val infoList: List<String> = emptyList(),
     val related: List<com.jing.sakura.data.AnimeData> = emptyList(),
     val recommendations: List<com.jing.sakura.data.AnimeData> = emptyList(),
     val personalizedRecommendations: Boolean = false,
     val completion: SeriesCompletion = SeriesCompletion()
+)
+
+data class TvCycaniEpisode(
+    val sectionId: String,
+    val label: String
+)
+
+data class TvCycaniPlayList(
+    val sourceCode: String,
+    val name: String,
+    val episodes: List<TvCycaniEpisode>
 )
 
 /** Upstream airing state of a title, as the web uses it to decide when a season has ended. */

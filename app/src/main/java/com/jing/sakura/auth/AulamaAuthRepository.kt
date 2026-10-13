@@ -37,7 +37,7 @@ import java.util.Calendar
 
 class AulamaAuthRepository(
     initialClient: OkHttpClient,
-    private val storage: SecureAuthStorage
+    private val storage: AulamaAuthStorage
 ) {
     private data class RegionRouteTransport(
         val client: OkHttpClient,

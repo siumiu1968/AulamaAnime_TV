@@ -1,6 +1,5 @@
 package com.jing.sakura.repo
 
-import android.util.Base64
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -31,6 +30,8 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import okio.ByteString.Companion.decodeBase64
+import okio.ByteString.Companion.encodeUtf8
 import java.util.Calendar
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
@@ -168,9 +169,32 @@ class CycaniSource(
     private suspend fun fetchAulamaCatalogDetailPage(animeId: String): AnimeDetailPageData {
         val repository = authRepository
             ?: throw IllegalStateException("暫時未能載入動畫詳情")
+        if (repository.session.value == null) {
+            throw IllegalStateException("請先登入 Aulama ID 再載入此動畫")
+        }
         val detail = repository.fetchTvAnimeDetail(animeId)
         val item = detail.catalogItem
             ?: throw IllegalStateException("暫時未能載入動畫詳情")
+        val mainPlayLists = detail.cycaniPlayLists.mapIndexed { index, line ->
+            AnimePlayList(
+                name = if (index == 0) "主線路A" else "主線路A（${localizeText(line.name)}）",
+                episodeList = line.episodes.map { episode ->
+                    AnimePlayListEpisode(
+                        episode = localizeText(episode.label),
+                        episodeId = encodeEpisodePayload(
+                            EpisodePayload(
+                                url = "",
+                                needParse = false,
+                                webSectionId = episode.sectionId,
+                                episodeLabel = episode.label,
+                                sourceLine = line.name
+                            )
+                        )
+                    )
+                },
+                defaultPlayList = index == 0
+            )
+        }
         val providers = detail.providerEpisodeCounts.map { (providerId, episodeCount) ->
             AulamaPlaybackProvider(
                 id = providerId,
@@ -181,7 +205,7 @@ class CycaniSource(
                 reason = ""
             )
         }
-        val playLists = ExternalPlaybackPlaylistPolicy.playlists(
+        val externalPlayLists = ExternalPlaybackPlaylistPolicy.playlists(
             catalogAnimeId = animeId,
             providers = providers,
             canonicalEpisodeLabels = detail.episodeLabels
@@ -203,9 +227,10 @@ class CycaniSource(
                         )
                     )
                 },
-                defaultPlayList = index == 0
+                defaultPlayList = mainPlayLists.isEmpty() && index == 0
             )
         }
+        val playLists = mainPlayLists + externalPlayLists
         if (playLists.isEmpty()) {
             throw IllegalStateException("此動畫暫時未有可播放線路")
         }
@@ -607,6 +632,8 @@ class CycaniSource(
                     )
                 )
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Resource.Error(e.message ?: trad("加载视频失败"))
         }
@@ -954,20 +981,16 @@ class CycaniSource(
             addProperty("xa", payload.externalAnimeId)
             addProperty("xi", payload.externalEpisodeIndex)
         }.toString()
-        return PAYLOAD_PREFIX + Base64.encodeToString(
-            raw.toByteArray(Charsets.UTF_8),
-            Base64.NO_WRAP
-        )
+        return PAYLOAD_PREFIX + raw.encodeUtf8().base64()
     }
 
     private fun decodeEpisodePayload(episodeId: String): EpisodePayload {
         if (!episodeId.startsWith(PAYLOAD_PREFIX)) {
             return EpisodePayload(url = episodeId, needParse = false)
         }
-        val raw = String(
-            Base64.decode(episodeId.removePrefix(PAYLOAD_PREFIX), Base64.DEFAULT),
-            Charsets.UTF_8
-        )
+        val raw = requireNotNull(episodeId.removePrefix(PAYLOAD_PREFIX).decodeBase64()) {
+            "播放集數資料無效"
+        }.utf8()
         val json = JsonParser.parseString(raw).asJsonObject
         return EpisodePayload(
             url = json.string("u"),
@@ -1088,4 +1111,4 @@ internal suspend fun <T> retryPlaybackProvidersOnce(
 }
 
 internal fun usesAuthenticatedAulamaDetail(animeId: String): Boolean =
-    animeId.startsWith("gg:", ignoreCase = true)
+    animeId.isNotBlank() && !animeId.all { it in '0'..'9' }
