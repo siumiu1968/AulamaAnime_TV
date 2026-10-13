@@ -83,7 +83,7 @@ class CycaniCatalogPlaybackTest {
         val result = source.fetchVideoUrl("cw:3939", main.episodeList.first().episodeId)
 
         assertTrue(result is Resource.Success)
-        val video = (result as Resource.Success).data
+        val video = checkNotNull(result.getOrNull())
         assertEquals("https://media.example/goblin-01.mp4", video.url)
         assertEquals("https://www.cycani.org/", video.headers["Referer"])
         assertEquals("https://www.cycani.org", video.headers["Origin"])
@@ -103,7 +103,7 @@ class CycaniCatalogPlaybackTest {
         assertTrue(result is Resource.Success)
         assertEquals(
             "https://aulama.org/anime/api/cycani/sections/52516/manifest.m3u8",
-            (result as Resource.Success).data.url
+            checkNotNull(result.getOrNull()).url
         )
         assertCatalogAndSectionRequests("cw:3939", "52516")
     }
@@ -119,7 +119,7 @@ class CycaniCatalogPlaybackTest {
 
         assertTrue(result is Resource.Success)
         assertEquals(id, detail.animeId)
-        assertEquals("https://media.example/future-01.mp4", (result as Resource.Success).data.url)
+        assertEquals("https://media.example/future-01.mp4", checkNotNull(result.getOrNull()).url)
         assertCatalogAndSectionRequests(id, "52401")
     }
 
@@ -132,7 +132,7 @@ class CycaniCatalogPlaybackTest {
         val result = source.fetchVideoUrl("12781", legacyPayload)
 
         assertTrue(result is Resource.Success)
-        assertEquals("https://media.example/legacy-01.mp4", (result as Resource.Success).data.url)
+        assertEquals("https://media.example/legacy-01.mp4", checkNotNull(result.getOrNull()).url)
         assertEquals(0, server.requestCount)
     }
 
