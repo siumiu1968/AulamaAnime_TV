@@ -14,6 +14,7 @@ import coil.ImageLoaderFactory
 import coil.memory.MemoryCache
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.AuthViewModel
+import com.jing.sakura.auth.withAulamaApiSession
 import com.jing.sakura.auth.GuestLibraryStore
 import com.jing.sakura.auth.GuestModeStorage
 import com.jing.sakura.auth.PlaybackHistorySyncQueue
@@ -325,7 +326,17 @@ class SakuraApplication : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader = ImageLoader(this).newBuilder()
-        .okHttpClient(basicOkhttpClient().addInterceptor(com.jing.sakura.http.PosterFallbackInterceptor()).build())
+        .okHttpClient(OkHttpClient.Builder()
+            .connectTimeout(5L, TimeUnit.SECONDS)
+            .readTimeout(20L, TimeUnit.SECONDS)
+            .addNetworkInterceptor { chain ->
+                val session = if (::applicationKoin.isInitialized) {
+                    applicationKoin.get<AulamaAuthRepository>().session.value
+                } else null
+                chain.proceed(chain.request().withAulamaApiSession(session))
+            }
+            .addInterceptor(com.jing.sakura.http.PosterFallbackInterceptor())
+            .build())
         .allowHardware(true)
         .memoryCache {
             MemoryCache.Builder(this)

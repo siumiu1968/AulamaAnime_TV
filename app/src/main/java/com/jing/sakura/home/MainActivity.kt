@@ -166,6 +166,7 @@ class MainActivity : ComponentActivity() {
                         RegionBlockedScreen(
                             countryCode = regionBlock.countryCode,
                             retrying = regionRetrying.value,
+                            onExit = { finish() },
                             onRetry = {
                                 if (!regionRetrying.value) {
                                     composeScope.launch {

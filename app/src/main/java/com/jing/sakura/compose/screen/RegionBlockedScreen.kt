@@ -1,6 +1,5 @@
 package com.jing.sakura.compose.screen
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +18,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -32,6 +32,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.jing.sakura.compose.common.AulamaActionButton
@@ -80,13 +82,21 @@ internal fun regionBlockCopy(countryCode: String, language: TvLanguage): RegionB
 fun RegionBlockedScreen(
     countryCode: String,
     retrying: Boolean,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onExit: () -> Unit
 ) {
-    BackHandler(enabled = true) {}
     val language = LocalTvLanguage.current
     val copy = regionBlockCopy(countryCode, language)
     val retryFocusRequester = remember { FocusRequester() }
 
+    Dialog(
+        onDismissRequest = onExit,
+        properties = DialogProperties(
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -222,6 +232,13 @@ fun RegionBlockedScreen(
         }
     }
     LaunchedEffect(retrying) {
-        if (!retrying) retryFocusRequester.requestFocus()
+        if (retrying) {
+            retryFocusRequester.freeFocus()
+        } else {
+            withFrameNanos { }
+            retryFocusRequester.requestFocus()
+            retryFocusRequester.captureFocus()
+        }
+    }
     }
 }

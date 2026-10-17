@@ -141,6 +141,7 @@ class AulamaAuthRepository(
                 .header("Accept", "application/json")
                 .get()
                 .build()
+                .withAulamaApiSession(_session.value)
             withContext(Dispatchers.IO) {
                 val transport = if (forceFreshConnection) {
                     replaceRegionRouteTransport()
@@ -744,7 +745,9 @@ class AulamaAuthRepository(
     ): T {
         val transport = regionRouteTransport
         return withContext(Dispatchers.IO) {
-            transport.client.executeWithCoroutine(request.taggedFor(transport)).use { response ->
+            transport.client.executeWithCoroutine(
+                request.withAulamaApiSession(_session.value).taggedFor(transport)
+            ).use { response ->
                 handler(response, response.body?.string().orEmpty())
             }
         }
