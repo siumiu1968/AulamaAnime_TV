@@ -24,6 +24,7 @@ class PlaybackSegmentsParserTest {
 
         assertEquals(8_500L, segments?.introStartMs)
         assertEquals(96_000L, segments?.introEndMs)
+        assertEquals(32_300L, PlaybackSegmentsParser.parse("""{"item":{"introStart":32.3}}""")?.introStartMs)
         val intro = PlaybackSkipPolicy.activeSkip(segments, 20_000L, hasNextEpisode = true)
         assertEquals(ActivePlaybackSkip.Type.INTRO, intro?.type)
         assertFalse(intro?.advancesEpisode ?: true)

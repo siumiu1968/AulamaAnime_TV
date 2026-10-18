@@ -4,6 +4,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import okio.ByteString.Companion.decodeBase64
 import java.util.Locale
+import kotlin.math.roundToLong
 
 internal fun canEditPlaybackSegments(role: String?, permitted: Boolean): Boolean =
     role?.trim()?.lowercase() == "super_admin" && permitted
@@ -62,12 +63,13 @@ internal data class SegmentEditorSnapshot(val all: SegmentDraft, val current: Se
             fun obj(parent: JsonObject?, key: String) = parent?.get(key)?.takeIf { it.isJsonObject }?.asJsonObject
             fun draft(value: JsonObject?) = SegmentDraft(SegmentMarker.entries.associateWith { marker ->
                 value?.get(marker.key)?.takeUnless { it.isJsonNull }?.asDouble
-                    ?.takeIf { it.isFinite() && it >= 0 }?.let { (it * 1000).toLong() }
+                    ?.takeIf { it.isFinite() && it >= 0 }?.let { (it * 1000).roundToLong() }
             })
             val raw = obj(root, "rawSegments")
-            val effective = obj(root, "effectiveSegments") ?: obj(root, "item")
+            val item = obj(root, "item")
+            val effective = obj(root, "effectiveSegments") ?: item
             return SegmentEditorSnapshot(
-                all = draft(obj(raw, "all") ?: effective),
+                all = draft(obj(raw, "all") ?: obj(item, "baseSegments") ?: item),
                 current = draft(obj(raw, "provider") ?: effective),
                 canEdit = obj(root, "permissions")?.get("canEdit")?.asBoolean == true
             )

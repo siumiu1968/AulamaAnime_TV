@@ -23,6 +23,16 @@ class SegmentEditorModelsTest {
         assertNull(empty.all.error(1_000_000))
     }
 
+    @Test fun legacyAllScopeUsesBaseTimingsRatherThanProviderOffset() {
+        val snapshot = SegmentEditorSnapshot.parse("""{"item":{"introStart":15,"introEnd":105,
+            "baseSegments":{"introStart":10,"introEnd":100}},
+            "effectiveSegments":{"introStart":15,"introEnd":105},"permissions":{"canEdit":true}}""")
+        assertEquals(10_000L, snapshot.all[SegmentMarker.INTRO_START])
+        assertEquals(15_000L, snapshot.current[SegmentMarker.INTRO_START])
+        val tenths = SegmentEditorSnapshot.parse("""{"item":{"introStart":32.3},"permissions":{"canEdit":true}}""")
+        assertEquals("00:32.3", segmentTimeLabel(tenths.all[SegmentMarker.INTRO_START]))
+    }
+
     @Test fun providerFallbackUsesEffectiveTimingsAndRecognizesEveryTvLine() {
         val snapshot = SegmentEditorSnapshot.parse("""{"rawSegments":{"all":{"introStart":1}},
             "effectiveSegments":{"introStart":3.1},"permissions":{"canEdit":false}}""")

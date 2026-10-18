@@ -9,6 +9,7 @@ import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.FavoritePayload
 import com.jing.sakura.auth.GuestLibraryStore
 import com.jing.sakura.auth.TvHistoryItem
+import com.jing.sakura.auth.TvAnimeDetailPayload
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimeDetailPageData
 import com.jing.sakura.data.Resource
@@ -26,10 +27,10 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Collections
@@ -59,7 +60,15 @@ class DetailPageViewModel constructor(
         get() = _latestProgress
 
     private var loadDataJob: Job? = null
+    private var relatedRetryJob: Job? = null
     private var historyRefreshJob: Job? = null
+
+    private val _relatedLoadState = MutableStateFlow<DetailRelatedLoadState>(
+        if (authRepository.session.value != null &&
+            detailCache.peek(sourceId, animeId)?.needsEnrichment(System.currentTimeMillis()) != false
+        ) DetailRelatedLoadState.Loading else DetailRelatedLoadState.Complete
+    )
+    val relatedLoadState: StateFlow<DetailRelatedLoadState> = _relatedLoadState
 
     private val _episodeProgress = MutableStateFlow<Map<Int, Float>>(emptyMap())
     /** Watched fraction per episode number, for the progress fill on each episode tile. */
@@ -77,6 +86,7 @@ class DetailPageViewModel constructor(
     val favoriteErrors = favoriteErrorChannel.receiveAsFlow()
 
     private var favoriteJob: Job? = null
+    private var ratingJob: Job? = null
 
     private val _relatedDescriptions = MutableStateFlow<Map<String, String>>(emptyMap())
     val relatedDescriptions: StateFlow<Map<String, String>> = _relatedDescriptions
@@ -97,10 +107,14 @@ class DetailPageViewModel constructor(
 
     fun loadData() {
         loadDataJob?.cancel()
+        relatedRetryJob?.cancel()
         loadDataJob = viewModelScope.launch(Dispatchers.IO) {
-            val startedAt = System.nanoTime()
             val cached = detailCache.get(sourceId, animeId)
             val needsCoreRefresh = cached == null || cached.isBehind(expectedEpisodes)
+            val needsRelatedRefresh = authRepository.session.value != null &&
+                cached?.needsEnrichment(System.currentTimeMillis()) != false
+            _relatedLoadState.value = if (needsRelatedRefresh) DetailRelatedLoadState.Loading
+                else DetailRelatedLoadState.Complete
             var visibleData = if (cached?.isBehind(expectedEpisodes) == true) null
                 else cached?.detail ?: _detailPageData.value.getOrNull()
             if (visibleData != null) _detailPageData.emit(Resource.Success(visibleData))
@@ -119,18 +133,16 @@ class DetailPageViewModel constructor(
                     if (authRepository.session.value == null) {
                         null
                     } else {
-                        runCatching { authRepository.fetchTvHistoryItem(animeId) }.getOrNull()
+                        runCatching { authRepository.fetchTvHistoryItem(animeId) }
+                            .onFailure { if (it is CancellationException) throw it }
+                            .getOrNull()
                     }
                 }
                 val cloudDetailJob = async {
-                    if (authRepository.session.value == null ||
-                        cached?.needsEnrichment(System.currentTimeMillis()) == false
-                    ) {
-                        null
-                    } else {
-                        runCatching { authRepository.fetchTvAnimeDetail(animeId) }.getOrNull()
-                            ?.takeIf { it.catalogItem != null }
-                    }
+                    if (needsRelatedRefresh) fetchDetailSection {
+                        authRepository.fetchTvAnimeDetail(animeId)
+                            .takeIf { it.catalogItem != null }
+                    } else null
                 }
                 val freshSourceData = if (needsCoreRefresh) repository.fetchDetailPage(animeId, sourceId)
                     else checkNotNull(cached).detail
@@ -138,10 +150,6 @@ class DetailPageViewModel constructor(
                 val sourceData = cached?.mergeCore(freshSourceData, sourceId) ?: freshSourceData
                 val localHistory = localHistoryJob.await()
                 if (needsCoreRefresh) detailCache.put(sourceId, sourceData, cached?.enrichedAt ?: 0L, coreCheckedAt)
-                if (visibleData == null) {
-                    // Let the first artwork loading screen settle; cached visits skip it entirely.
-                    delay((450L - (System.nanoTime() - startedAt) / 1_000_000L).coerceAtLeast(0L))
-                }
                 visibleData = sourceData
                 _detailPageData.emit(
                     Resource.Success(
@@ -150,20 +158,21 @@ class DetailPageViewModel constructor(
                 )
                 refreshEpisodeProgress()
                 // Watch state is independent of the slower public recommendation enrichment.
-                val history = applyCloudHistory(sourceData, cloudHistoryJob.await())
-                val cloudDetail = cloudDetailJob.await()
-                val data = if (cloudDetail == null) sourceData else sourceData.copy(
-                    otherAnimeList = mergeRelatedAnime(
-                        cloud = cloudDetail.related,
-                        source = if (needsCoreRefresh) freshSourceData.otherAnimeList else emptyList(),
-                        fallbackSourceId = sourceId
+                launch {
+                    val history = applyCloudHistory(sourceData, cloudHistoryJob.await())
+                    _detailPageData.update { current ->
+                        current.getOrNull()?.let { data ->
+                            Resource.Success(data.copy(lastPlayEpisodePosition = data.positionFor(history?.episodeId)))
+                        } ?: current
+                    }
+                }
+                cloudDetailJob.await()?.let { result ->
+                    applyRelatedEnrichment(
+                        result = result,
+                        fallbackRelated = if (needsCoreRefresh) freshSourceData.otherAnimeList else emptyList(),
+                        coreCheckedAt = coreCheckedAt
                     )
-                )
-                if (cloudDetail != null) detailCache.put(sourceId, data, System.currentTimeMillis(), coreCheckedAt)
-                visibleData = data
-                _detailPageData.emit(Resource.Success(data.copy(
-                    lastPlayEpisodePosition = data.positionFor(history?.episodeId)
-                )))
+                }
             } catch (ex: Exception) {
                 if (ex is CancellationException) {
                     throw ex
@@ -172,8 +181,52 @@ class DetailPageViewModel constructor(
 
                 val message = "請求資料失敗：" + ex.message
                 if (visibleData == null) _detailPageData.emit(Resource.Error(message))
+                if (_relatedLoadState.value is DetailRelatedLoadState.Loading) {
+                    _relatedLoadState.value = DetailRelatedLoadState.Error()
+                }
             }
         }
+    }
+
+    fun retryRelated() {
+        if (_relatedLoadState.value !is DetailRelatedLoadState.Error || relatedRetryJob?.isActive == true) return
+        val detail = _detailPageData.value.getOrNull() ?: return
+        _relatedLoadState.value = DetailRelatedLoadState.Loading
+        relatedRetryJob = viewModelScope.launch(Dispatchers.IO) {
+            val cached = detailCache.get(sourceId, animeId)
+            applyRelatedEnrichment(
+                result = fetchDetailSection {
+                    authRepository.fetchTvAnimeDetail(animeId).takeIf { it.catalogItem != null }
+                },
+                fallbackRelated = detail.otherAnimeList,
+                coreCheckedAt = cached?.savedAt ?: System.currentTimeMillis()
+            )
+        }
+    }
+
+    private fun applyRelatedEnrichment(
+        result: Result<TvAnimeDetailPayload>,
+        fallbackRelated: List<AnimeData>,
+        coreCheckedAt: Long
+    ) {
+        val cloudDetail = result.getOrNull()
+        if (cloudDetail == null) {
+            _relatedLoadState.value = DetailRelatedLoadState.Error()
+            return
+        }
+        _detailPageData.update { current ->
+            current.getOrNull()?.let { data ->
+                Resource.Success(data.copy(otherAnimeList = mergeRelatedAnime(
+                    cloud = cloudDetail.related,
+                    source = fallbackRelated,
+                    fallbackSourceId = sourceId
+                )))
+            } ?: current
+        }
+        _detailPageData.value.getOrNull()?.let { data ->
+            detailCache.put(sourceId, data, System.currentTimeMillis(), coreCheckedAt)
+        }
+        _relatedLoadState.value = DetailRelatedLoadState.Complete
     }
 
     fun loadRelatedDescription(anime: AnimeData) {
@@ -355,21 +408,24 @@ class DetailPageViewModel constructor(
         )
     }
 
-    private fun loadRating() {
-        if (authRepository.session.value == null) return
-        _ratingState.value = DetailRatingState(available = true)
-        viewModelScope.launch(Dispatchers.IO) {
-            val score = runCatching { authRepository.fetchMyRating(animeId) }
-                .onFailure { if (it is CancellationException) throw it }
-                .getOrNull()
-                ?: return@launch
-            _ratingState.value = _ratingState.value.copy(score = score)
+    fun loadRating() {
+        if (authRepository.session.value == null || ratingJob?.isActive == true) return
+        _ratingState.value = _ratingState.value.copy(available = true, loading = true, loadFailed = false)
+        ratingJob = viewModelScope.launch(Dispatchers.IO) {
+            val result = fetchDetailSection { authRepository.fetchMyRating(animeId) }
+            _ratingState.update { current ->
+                current.copy(
+                    score = result.getOrNull() ?: current.score,
+                    loading = false,
+                    loadFailed = result.isFailure
+                )
+            }
         }
     }
 
     /** Saves the viewer's stars to the same Aulama ID store the web and finale sheet use. */
     suspend fun saveRating(detail: AnimeDetailPageData, score: Int): Boolean {
-        if (!_ratingState.value.available) return false
+        if (!_ratingState.value.available || _ratingState.value.loading || _ratingState.value.loadFailed) return false
         _ratingState.value = _ratingState.value.copy(saving = true)
         val favorite = detail.toFavoritePayload()
         val saved = withContext(Dispatchers.IO) {
@@ -399,6 +455,10 @@ class DetailPageViewModel constructor(
     fun toggleFavorite(detail: AnimeDetailPageData) {
         val current = _favoriteUiState.value
         if (current.isLoading || current.isUpdating) return
+        if (current.loadFailed) {
+            loadFavoriteState()
+            return
+        }
 
         val shouldFavorite = !current.isFavorite
         _favoriteUiState.value = current.copy(isUpdating = true)
@@ -439,26 +499,20 @@ class DetailPageViewModel constructor(
 
     private fun loadFavoriteState() {
         favoriteJob?.cancel()
+        _favoriteUiState.value = _favoriteUiState.value.copy(isLoading = true, loadFailed = false)
         favoriteJob = viewModelScope.launch(Dispatchers.IO) {
-            if (authRepository.session.value == null) {
-                _favoriteUiState.value = FavoriteUiState(
-                    isFavorite = guestLibraryStore.contains(animeId, sourceId),
-                    isLoading = false
-                )
-                return@launch
+            val result = fetchDetailSection {
+                if (authRepository.session.value == null) guestLibraryStore.contains(animeId, sourceId)
+                else authRepository.fetchFavorites().any { it.id == animeId }
             }
-            _favoriteUiState.value = FavoriteUiState(isLoading = true)
-            runCatching { authRepository.fetchFavorites() }
-                .onSuccess { favorites ->
-                    _favoriteUiState.value = FavoriteUiState(
-                        isFavorite = favorites.any { it.id == animeId },
-                        isLoading = false
-                    )
-                }
-                .onFailure {
-                    _favoriteUiState.value = FavoriteUiState(isLoading = false)
-                    favoriteErrorChannel.send("未能讀取收藏狀態，請稍後再試")
-                }
+            _favoriteUiState.update { current ->
+                current.copy(
+                    isFavorite = result.getOrNull() ?: current.isFavorite,
+                    isLoading = false,
+                    loadFailed = result.isFailure
+                )
+            }
+            if (result.isFailure) favoriteErrorChannel.send("未能讀取收藏狀態，請重新載入")
         }
     }
 
@@ -564,11 +618,14 @@ internal class DetailRelatedPreviewRequestOwnership {
 data class DetailRatingState(
     val available: Boolean = false,
     val score: Int = 0,
-    val saving: Boolean = false
+    val saving: Boolean = false,
+    val loading: Boolean = false,
+    val loadFailed: Boolean = false
 )
 
 data class FavoriteUiState(
     val isFavorite: Boolean = false,
     val isLoading: Boolean = true,
-    val isUpdating: Boolean = false
+    val isUpdating: Boolean = false,
+    val loadFailed: Boolean = false
 )

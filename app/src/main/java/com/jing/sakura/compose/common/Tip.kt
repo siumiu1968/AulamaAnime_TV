@@ -3,6 +3,7 @@
 package com.jing.sakura.compose.common
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -43,6 +44,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -119,6 +121,11 @@ fun Loading(text: String = "") {
                 )
             }
         }
+        LoadingTipsFooter(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 62.dp, end = 62.dp, bottom = 32.dp)
+        )
     }
 }
 
@@ -251,6 +258,7 @@ fun ArtworkLoading(
         Column(
             modifier = Modifier
                 .align(Alignment.CenterStart)
+                .testTag("artwork-loading-main")
                 .width(540.dp)
                 .padding(start = 62.dp)
                 .lightweightEntrance(
@@ -307,6 +315,47 @@ fun ArtworkLoading(
                 Spacer(Modifier.height(22.dp))
             }
             AulamaLoadingPulse(accent = accent, reducedMotion = reducedMotion)
+        }
+        LoadingTipsFooter(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 62.dp, end = 62.dp, bottom = 32.dp)
+        )
+    }
+}
+
+@Composable
+internal fun LoadingTipsFooter(modifier: Modifier = Modifier) {
+    var tip by remember { mutableStateOf(sharedLoadingTipDeck.next()) }
+    val reducedMotion = rememberReducedMotion()
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(LOADING_TIP_INTERVAL_MS)
+            tip = sharedLoadingTipDeck.next()
+        }
+    }
+    Crossfade(
+        targetState = tip,
+        animationSpec = tween(if (reducedMotion) 0 else 220),
+        label = "loading-tip",
+        modifier = modifier.widthIn(max = 690.dp).height(86.dp)
+    ) { item ->
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text(
+                text = localizedText(item.sourceName?.let { "小知識 · $it" } ?: "輕鬆一下"),
+                color = AulamaTvColors.TextSecondary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = localizedText(item.text),
+                modifier = Modifier.testTag("loading-tip-text"),
+                color = AulamaTvColors.TextPrimary,
+                fontSize = 18.sp,
+                lineHeight = 25.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

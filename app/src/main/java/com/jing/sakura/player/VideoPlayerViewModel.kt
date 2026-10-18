@@ -389,9 +389,10 @@ class VideoPlayerViewModel(
         }
     }
 
-    fun stopSaveHistory() {
+    fun stopSaveHistory(persist: Boolean = true) {
         _saveHistoryJob?.cancel()
         _saveHistoryJob = null
+        if (!persist) return
         val snapshot = buildHistorySnapshot() ?: return
         if (snapshot.accountKey.isNotBlank()) {
             historySyncQueue.enqueue(snapshot.accountKey, snapshot.payload)

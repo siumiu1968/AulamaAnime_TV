@@ -114,6 +114,7 @@ import com.jing.sakura.R
 import com.jing.sakura.compose.common.AulamaCardShape
 import com.jing.sakura.compose.common.AulamaFocusScale
 import com.jing.sakura.compose.common.AulamaTvColors
+import com.jing.sakura.compose.common.AulamaLoadingPulse
 import com.jing.sakura.compose.common.ArtworkLoading
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.FocusGroup
@@ -139,6 +140,7 @@ import com.jing.sakura.data.AnimePlayListEpisode
 import com.jing.sakura.data.Resource
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.detail.DetailPageViewModel
+import com.jing.sakura.detail.DetailRelatedLoadState
 import com.jing.sakura.detail.relatedAnimeKey
 import com.jing.sakura.home.HeroPreviewState
 import com.jing.sakura.home.previewCardAlpha
@@ -248,6 +250,11 @@ private fun DetailContent(
     val favoriteUiState = viewModel.favoriteUiState.collectAsState().value
     val episodeProgress = viewModel.episodeProgress.collectAsState().value
     val ratingState = viewModel.ratingState.collectAsState().value
+    val relatedLoadState = viewModel.relatedLoadState.collectAsState().value
+    val hasRelatedSection = detail.otherAnimeList.isNotEmpty() ||
+        relatedLoadState !is DetailRelatedLoadState.Complete
+    val relatedRetryFocusRequester = remember(detail.animeId) { FocusRequester() }
+    var relatedStatusFocused by remember(detail.animeId) { mutableStateOf(false) }
     var reverseEpisodes by remember { mutableStateOf(false) }
     var showLinePicker by remember { mutableStateOf(false) }
     var resumeFocusSignal by remember { mutableStateOf(0) }
@@ -407,13 +414,13 @@ private fun DetailContent(
         )
     }
 
-    val focusRequesters = remember(detail.animeId, detail.otherAnimeList.isEmpty()) {
+    val focusRequesters = remember(detail.animeId, hasRelatedSection) {
         DetailPageRowFocusRequesters(
             hero = FocusRequester(),
             line = FocusRequester(),
             order = FocusRequester(),
             playlist = FocusRequester(),
-            related = detail.otherAnimeList.takeIf(List<AnimeData>::isNotEmpty)?.let { FocusRequester() }
+            related = if (hasRelatedSection) FocusRequester() else null
         )
     }
     val primaryActionFocusRequester = remember(detail.animeId) { FocusRequester() }
@@ -421,12 +428,22 @@ private fun DetailContent(
     val detailListState = rememberLazyListState()
     val horizontalBringIntoViewSpec = LocalBringIntoViewSpec.current
     val hasEpisodes = !displayedPlaylist?.episodeList.isNullOrEmpty()
-    val hasDetailRows = hasEpisodes || detail.otherAnimeList.isNotEmpty()
+    val hasDetailRows = hasEpisodes || hasRelatedSection
     val relatedRowIndex = detailRelatedRowIndex(if (hasEpisodes) 1 else 0)
     val upperViewportScrollOffsetPx = with(LocalDensity.current) {
         relatedBrowsePolicy.upperViewportScrollOffsetDp.dp.roundToPx()
     }
     var heroHasFocus by remember(detail.animeId) { mutableStateOf(false) }
+
+    LaunchedEffect(hasRelatedSection) {
+        if (!hasRelatedSection && relatedStatusFocused) {
+            withFrameNanos { }
+            runCatching {
+                if (hasEpisodes) focusRequesters.playlist.requestFocus()
+                else primaryActionFocusRequester.requestFocus()
+            }
+        }
+    }
 
     fun requestUpperViewport() {
         if (
@@ -558,9 +575,17 @@ private fun DetailContent(
             history = history,
             onPlayClick = onPrimaryPlay,
             isFavorite = favoriteUiState.isFavorite,
+            favoriteLabel = when {
+                favoriteUiState.isLoading -> "收藏載入中"
+                favoriteUiState.isUpdating -> "收藏更新中"
+                favoriteUiState.loadFailed -> "重試收藏"
+                favoriteUiState.isFavorite -> "已收藏"
+                else -> "收藏"
+            },
             favoriteEnabled = !favoriteUiState.isLoading && !favoriteUiState.isUpdating,
             onFavoriteClick = { viewModel.toggleFavorite(detail) },
             ratingState = ratingState,
+            onRetryRating = viewModel::loadRating,
             onSaveRating = { score -> viewModel.saveRating(detail, score) },
             primaryActionFocusRequester = primaryActionFocusRequester,
             downFocusRequester = focusRequesters.line.takeIf { hasEpisodes },
@@ -715,14 +740,51 @@ private fun DetailContent(
                 }
             }
 
-            if (detail.otherAnimeList.isNotEmpty()) {
+            if (hasRelatedSection) {
                 item(key = "related") {
+                  Column {
+                    if (relatedLoadState !is DetailRelatedLoadState.Complete) {
+                        DetailRelatedStatus(
+                            state = relatedLoadState,
+                            hasExistingItems = detail.otherAnimeList.isNotEmpty(),
+                            onRetry = {
+                                viewModel.retryRelated()
+                                scope.launch {
+                                    withFrameNanos { }
+                                    runCatching { focusRequesters.related?.requestFocus() }
+                                }
+                            },
+                            onNavigateUp = {
+                                requestUpperViewport()
+                                runCatching {
+                                    if (hasEpisodes) focusRequesters.playlist.requestFocus()
+                                    else primaryActionFocusRequester.requestFocus()
+                                }
+                            },
+                            onNavigateDown = {
+                                if (detail.otherAnimeList.isNotEmpty()) {
+                                    runCatching { focusRequesters.related?.requestFocus() }
+                                }
+                            },
+                            modifier = Modifier
+                                .focusRequester(
+                                    if (detail.otherAnimeList.isEmpty()) focusRequesters.related!!
+                                    else relatedRetryFocusRequester
+                                )
+                                .onFocusChanged { relatedStatusFocused = it.isFocused || it.hasFocus }
+                        )
+                    }
+                    if (detail.otherAnimeList.isNotEmpty()) {
                     RelatedAnimeSection(
                         videos = detail.otherAnimeList,
                         previewEnabled = previewEnabled,
                         previewActive = relatedPreviewActive,
                         horizontalBringIntoViewSpec = horizontalBringIntoViewSpec,
-                        onNavigateUp = {
+                        onNavigateUp = navigateUp@{
+                            if (relatedLoadState is DetailRelatedLoadState.Error) {
+                                runCatching { relatedRetryFocusRequester.requestFocus() }
+                                return@navigateUp
+                            }
                             relatedPreviewArmed = false
                             relatedPreviewFirstFrameReady = false
                             viewModel.cancelRelatedPreview()
@@ -818,6 +880,8 @@ private fun DetailContent(
                         },
                         modifier = Modifier.focusRequester(focusRequesters.related!!)
                     )
+                    }
+                  }
                 }
             }
             }
@@ -1051,9 +1115,11 @@ private fun DetailHero(
     history: VideoHistoryEntity?,
     onPlayClick: (() -> Unit)?,
     isFavorite: Boolean,
+    favoriteLabel: String,
     favoriteEnabled: Boolean,
     onFavoriteClick: () -> Unit,
     ratingState: DetailRatingState,
+    onRetryRating: () -> Unit,
     onSaveRating: suspend (Int) -> Boolean,
     primaryActionFocusRequester: FocusRequester,
     downFocusRequester: FocusRequester?,
@@ -1184,14 +1250,14 @@ private fun DetailHero(
                         )
                     }
                     DetailActionButton(
-                        label = if (isFavorite) "已收藏" else "收藏",
+                        label = favoriteLabel,
                         icon = if (isFavorite) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
                         accent = if (isFavorite) AulamaTvColors.Cyan else AulamaTvColors.Amber,
                         enabled = isInteractive && favoriteEnabled,
                         onClick = onFavoriteClick,
                         onNavigateDown = onNavigateDown,
                         modifier = Modifier
-                            .width(116.dp)
+                            .width(if (favoriteLabel.length > 4) 140.dp else 116.dp)
                             .focusProperties {
                                 canFocus = isInteractive
                                 downFocusRequester?.let { down = it }
@@ -1200,14 +1266,20 @@ private fun DetailHero(
                     )
                     if (ratingState.available) {
                         DetailActionButton(
-                            label = if (ratingState.score > 0) "★ ${ratingState.score}" else "評分",
+                            label = when {
+                                ratingState.loading -> "評分載入中"
+                                ratingState.loadFailed -> "重試評分"
+                                ratingState.saving -> "評分儲存中"
+                                ratingState.score > 0 -> "★ ${ratingState.score}"
+                                else -> "評分"
+                            },
                             icon = if (ratingState.score > 0) Icons.Default.Star else Icons.Default.StarBorder,
                             accent = AulamaTvColors.Amber,
-                            enabled = isInteractive && !ratingState.saving,
-                            onClick = { showRating = true },
+                            enabled = isInteractive && !ratingState.saving && !ratingState.loading,
+                            onClick = { if (ratingState.loadFailed) onRetryRating() else showRating = true },
                             onNavigateDown = onNavigateDown,
                             modifier = Modifier
-                                .width(98.dp)
+                                .width(if (ratingState.loading || ratingState.loadFailed || ratingState.saving) 140.dp else 98.dp)
                                 .focusProperties {
                                     canFocus = isInteractive
                                     downFocusRequester?.let { down = it }
@@ -2130,6 +2202,66 @@ private fun EpisodeProgressBar(
             )
         }
     )
+}
+
+@Composable
+internal fun DetailRelatedStatus(
+    state: DetailRelatedLoadState,
+    hasExistingItems: Boolean,
+    onRetry: () -> Unit,
+    onNavigateUp: () -> Unit = {},
+    onNavigateDown: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    if (state is DetailRelatedLoadState.Complete) return
+    val navigationModifier = modifier.onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (event.key) {
+            Key.DirectionUp -> { onNavigateUp(); true }
+            Key.DirectionDown -> { onNavigateDown(); true }
+            else -> false
+        }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 44.dp, vertical = 10.dp)
+            .heightIn(min = if (hasExistingItems) 44.dp else 116.dp)
+            .then(
+                if (state is DetailRelatedLoadState.Loading) {
+                    navigationModifier.focusable(enabled = !hasExistingItems)
+                } else Modifier
+            ),
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = localizedText(
+                    if (state is DetailRelatedLoadState.Error) state.message
+                    else "相關動漫載入中…"
+                ),
+                fontSize = if (hasExistingItems) 16.sp else 20.sp,
+                lineHeight = 26.sp,
+                color = AulamaTvColors.TextSecondary
+            )
+            if (state is DetailRelatedLoadState.Loading && !hasExistingItems) {
+                AulamaLoadingPulse()
+            }
+        }
+        if (state is DetailRelatedLoadState.Error) {
+            SpringFocusButton(
+                onClick = onRetry,
+                modifier = navigationModifier.height(42.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp)
+            ) {
+                Text(text = localizedText("重新載入"), fontSize = 16.sp)
+            }
+        }
+    }
 }
 
 @Composable

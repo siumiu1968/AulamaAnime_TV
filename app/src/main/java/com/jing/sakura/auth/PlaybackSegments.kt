@@ -1,6 +1,7 @@
 package com.jing.sakura.auth
 
 import com.google.gson.JsonParser
+import kotlin.math.roundToLong
 
 data class PlaybackSegments(
     val introStartMs: Long? = null,
@@ -32,5 +33,5 @@ object PlaybackSegmentsParser {
 
     private fun secondsToMs(seconds: Double?): Long? = seconds
         ?.takeIf { it.isFinite() && it >= 0.0 }
-        ?.let { (it * 1000.0).toLong() }
+        ?.let { (it * 1000.0).roundToLong() }
 }

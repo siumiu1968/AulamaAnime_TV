@@ -45,8 +45,9 @@ class SegmentEditorDialogTest {
         compose.waitForIdle()
     }
 
-    private fun focus(label: String): SemanticsNodeInteraction = compose.onNodeWithText(label)
-        .performScrollTo().performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+    private fun focus(label: String, scrollable: Boolean = true): SemanticsNodeInteraction = compose.onNodeWithText(label)
+        .let { if (scrollable) it.performScrollTo() else it }
+        .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
 
     @Test fun remoteAdjustsWithoutLosingFocusAndSaveCloseStayReachableAt720p() {
         open()
@@ -80,6 +81,7 @@ class SegmentEditorDialogTest {
         focus("目前線路").performKeyInput { pressKey(Key.DirectionCenter) }
         compose.onNodeWithText("繼續調節").assertIsFocused()
         compose.onNodeWithText("繼續調節").performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.onNodeWithTag("introStart").assertIsFocused()
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.waitForIdle()
         compose.onNodeWithText("繼續調節").assertIsFocused()
@@ -91,10 +93,10 @@ class SegmentEditorDialogTest {
 
     @Test fun failedSaveKeepsDraftAndCanRetry() {
         open(failsOnce = true)
-        focus("儲存至全部線路").performKeyInput { pressKey(Key.DirectionCenter) }
+        focus("儲存至全部線路", scrollable = false).performKeyInput { pressKey(Key.DirectionCenter) }
         compose.onNodeWithText("未能完成儲存，請重試").assertExists()
         compose.runOnIdle { assertNull(saved) }
-        focus("儲存至全部線路").performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.onNodeWithText("儲存至全部線路").assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
         compose.onNodeWithText("已儲存至全部線路").assertExists()
         compose.runOnIdle { assertNotNull(saved) }
     }

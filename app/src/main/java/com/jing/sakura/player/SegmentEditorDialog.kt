@@ -93,12 +93,16 @@ internal fun SegmentEditorDialog(
     Dialog(onDismissRequest = ::close, properties = DialogProperties(
         usePlatformDefaultWidth = false, dismissOnClickOutside = false
     )) {
-        LaunchedEffect(loading, snapshot, intro) {
+        LaunchedEffect(loadGeneration, loading, intro, confirmation) {
+            if (confirmation != null) return@LaunchedEffect
             withFrameNanos { }
             if (!loading && snapshot != null) initialFocus.requestFocus() else cancelFocus.requestFocus()
         }
         Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
-            if (event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+            if (event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_BACK) {
+                if (event.type == KeyEventType.KeyUp) close()
+                true
+            } else if (event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
                 if (event.type == KeyEventType.KeyUp) onPlayPause()
                 true
             } else false
@@ -177,21 +181,25 @@ internal fun SegmentEditorDialog(
                 }
                 Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     EditorButton(if (saving) "儲存中…" else if (allProviders) "儲存至全部線路" else "儲存至目前線路", {
-                        val invalid = draft.error(durationMs)
-                        if (invalid != null) { message = invalid }
-                        else scope.launch {
-                            saving = true; message = ""
-                            try {
-                                val saved = save(draft, allProviders)
-                                snapshot = saved
-                                val next = (if (allProviders) saved.all else saved.current).copy(cleared = draft.cleared)
-                                replace(next); message = if (allProviders) "已儲存至全部線路" else "已儲存至${target.providerLabel}"
-                            } catch (error: Exception) {
-                                if (error is CancellationException) throw error
-                                message = error.message ?: "未能完成儲存，請重試"
-                            } finally { saving = false }
+                        if (!saving) {
+                            val invalid = draft.error(durationMs)
+                            if (invalid != null) { message = invalid }
+                            else {
+                                saving = true; message = ""
+                                scope.launch {
+                                    try {
+                                        val saved = save(draft, allProviders)
+                                        snapshot = saved
+                                        val next = (if (allProviders) saved.all else saved.current).copy(cleared = draft.cleared)
+                                        replace(next); message = if (allProviders) "已儲存至全部線路" else "已儲存至${target.providerLabel}"
+                                    } catch (error: Exception) {
+                                        if (error is CancellationException) throw error
+                                        message = error.message ?: "未能完成儲存，請重試"
+                                    } finally { saving = false }
+                                }
+                            }
                         }
-                    }, Modifier.weight(2f), enabled = snapshot != null && !loading && !saving)
+                    }, Modifier.weight(2f), enabled = snapshot != null && !loading)
                     EditorButton("關閉", ::close, Modifier.weight(1f).focusRequester(cancelFocus), enabled = !saving)
                 }
             }

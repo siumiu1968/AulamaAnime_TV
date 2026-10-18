@@ -206,7 +206,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             if (segmentEditorVisible) {
-                viewModel.stopSaveHistory()
+                viewModel.stopSaveHistory(persist = false)
                 return
             }
             snapshotPlaybackPosition()
@@ -239,7 +239,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
                 return
             }
             progressBarManager.hide()
-            viewModel.stopSaveHistory()
+            viewModel.stopSaveHistory(persist = !segmentEditorVisible)
             showPlaybackFailure(error.errorCodeName)
         }
 
@@ -551,7 +551,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         segmentEditorSeekParameters = localPlayer.seekParameters
         segmentEditorNearEndSuppressed = nearEndAutoAdvanceSuppressed
         segmentEditorTarget = target
-        viewModel.stopSaveHistory()
+        viewModel.stopSaveHistory(persist = false)
         localPlayer.pause()
         localPlayer.setSeekParameters(SeekParameters.EXACT)
         clearSkipState()
