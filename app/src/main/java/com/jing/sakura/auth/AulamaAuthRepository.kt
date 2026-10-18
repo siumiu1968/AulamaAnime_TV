@@ -9,6 +9,11 @@ import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimePageData
 import com.jing.sakura.data.UpdateTimeLine
 import com.jing.sakura.detail.DetailPageCache
+import com.jing.sakura.player.SegmentDraft
+import com.jing.sakura.player.SegmentEditorSnapshot
+import com.jing.sakura.player.SegmentEditorTarget
+import com.jing.sakura.player.SegmentMarker
+import com.jing.sakura.player.canEditPlaybackSegments
 import com.jing.sakura.extend.executeWithCoroutine
 import com.jing.sakura.repo.isSuppressedAnime
 import com.jing.sakura.remote.RemoteCommandAckStatus
@@ -410,7 +415,8 @@ class AulamaAuthRepository(
     suspend fun fetchPlaybackSegments(
         animeId: String,
         episodeId: String,
-        episodeIndex: Int
+        episodeIndex: Int,
+        provider: String = "cycani"
     ): PlaybackSegments? {
         if (animeId.isBlank() || episodeId.isBlank() || episodeIndex < 0) return null
         val url = API_BASE.toHttpUrl().newBuilder()
@@ -419,8 +425,55 @@ class AulamaAuthRepository(
             .addQueryParameter("animeId", animeId)
             .addQueryParameter("episodeId", episodeId)
             .addQueryParameter("episodeIndex", episodeIndex.toString())
+            .addQueryParameter("provider", provider)
             .build()
         return authenticatedBody(url)?.let(PlaybackSegmentsParser::parse)
+    }
+
+    internal suspend fun fetchSegmentEditor(target: SegmentEditorTarget): SegmentEditorSnapshot {
+        check(canEditPlaybackSegments(session.value?.account?.role, true)) { "只有最高管理員可以調節片頭片尾" }
+        val url = API_BASE.toHttpUrl().newBuilder().addPathSegments("playback/segments")
+            .addQueryParameter("animeId", target.animeId).addQueryParameter("episodeId", target.episodeId)
+            .addQueryParameter("episodeIndex", target.episodeIndex.toString())
+            .addQueryParameter("provider", target.provider).build()
+        val snapshot = SegmentEditorSnapshot.parse(authenticatedBody(url) ?: error("登入已失效，請重新登入"))
+        check(snapshot.canEdit) { "只有最高管理員可以調節片頭片尾" }
+        return snapshot
+    }
+
+    internal suspend fun saveSegmentEditor(
+        target: SegmentEditorTarget, draft: SegmentDraft, durationMs: Long, allProviders: Boolean
+    ): SegmentEditorSnapshot {
+        check(canEditPlaybackSegments(session.value?.account?.role, true)) { "只有最高管理員可以調節片頭片尾" }
+        draft.error(durationMs)?.let { error(it) }
+        val accountSession = session.value ?: error("請先登入")
+        var snapshot: SegmentEditorSnapshot? = null
+        // The shared web API explicitly marks one absent segment per write; retrying is idempotent.
+        for (clearKind in draft.cleared.sorted().map { it as String? }.ifEmpty { listOf(null) }) {
+            val body = JsonObject().apply {
+                addProperty("animeId", target.animeId); addProperty("episodeId", target.episodeId)
+                addProperty("episodeIndex", target.episodeIndex); addProperty("episodeLabel", target.episodeLabel)
+                addProperty("provider", target.provider); addProperty("scope", if (allProviders) "all" else "provider")
+                if (durationMs > 0) addProperty("duration", durationMs / 1000.0)
+                SegmentMarker.entries.forEach { marker ->
+                    val value = draft[marker]
+                    if (value == null) add(marker.key, com.google.gson.JsonNull.INSTANCE)
+                    else addProperty(marker.key, value / 1000.0)
+                }
+                if (clearKind != null) addProperty("clearSegment", clearKind)
+            }.toString().toRequestBody(JSON_MEDIA_TYPE)
+            val request = authenticatedRequest("$API_BASE/playback/segments", accountSession).put(body).build()
+            snapshot = executeResponseOnIo(request) { response, responseBody ->
+                if (response.code == 401) clearSession()
+                if (response.code == 403) recordRegionBlock(response, responseBody)
+                check(response.isSuccessful) {
+                    if (response.code in listOf(401, 403)) "冇權限儲存，請重新確認登入帳戶"
+                    else "未能完成儲存，請重試（${response.code}）"
+                }
+                SegmentEditorSnapshot.parse(responseBody)
+            }
+        }
+        return checkNotNull(snapshot)
     }
 
     internal suspend fun fetchPlaybackProviders(animeId: String): List<AulamaPlaybackProvider>? {

@@ -30,7 +30,8 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
     private val playPreviousEpisode: () -> Unit,
     private val playNextEpisode: () -> Unit,
     private val open4kModePicker: () -> Unit,
-    private val openSpeedPicker: () -> Unit
+    private val openSpeedPicker: () -> Unit,
+    private val openSegmentEditor: () -> Unit = {}
 ) : PlaybackTransportControlGlue<T>(context, impl) {
 
     private val appContext = context
@@ -61,6 +62,10 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
         context.getString(R.string.player_switch_source),
         null,
         ContextCompat.getDrawable(context, R.drawable.play_list)
+    )
+    private val segmentEditorAction = Action(
+        ACTION_SEGMENT_EDITOR, "片頭片尾", null,
+        ContextCompat.getDrawable(context, R.drawable.ic_player_segments)
     )
 
     override fun onCreatePrimaryActions(primaryActionsAdapter: ArrayObjectAdapter) {
@@ -104,6 +109,7 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
             nextAction -> playNextEpisode()
             episodeListAction -> chooseEpisode()
             sourceFallbackAction -> switchSourceFallback()
+            segmentEditorAction -> openSegmentEditor()
             fast4kAction -> open4kModePicker()
             speedAction -> openSpeedPicker()
             is PlayPauseAction -> if (!onPlayPauseAction(action)) {
@@ -191,9 +197,17 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
         if (!visible && index >= 0) adapter.remove(sourceFallbackAction)
     }
 
+    fun showSegmentEditorAction(visible: Boolean) {
+        val adapter = secondaryActionsAdapter ?: return
+        val index = adapter.indexOf(segmentEditorAction)
+        if (visible && index < 0) adapter.add(segmentEditorAction)
+        if (!visible && index >= 0) adapter.remove(segmentEditorAction)
+    }
+
     companion object {
         private const val ACTION_EPISODE_LIST = 10L
         private const val ACTION_FAST_4K = 11L
         private const val ACTION_SOURCE_FALLBACK = 12L
+        private const val ACTION_SEGMENT_EDITOR = 14L
     }
 }

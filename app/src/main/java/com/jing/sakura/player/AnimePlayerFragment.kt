@@ -111,6 +111,13 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var fallbackEpisodeLabel = ""
     private var seasonFinaleView: ComposeView? = null
     private var seasonFinaleVisible = false
+    private var segmentEditorView: ComposeView? = null
+    private var segmentEditorTarget: SegmentEditorTarget? = null
+    private var segmentEditorPositionMs = 0L
+    private var segmentEditorWasPlaying = false
+    private var segmentEditorSeekParameters = SeekParameters.CLOSEST_SYNC
+    private var segmentEditorNearEndSuppressed = false
+    private val segmentEditorVisible get() = segmentEditorTarget != null
 
     private val hideTransientSkipRunnable = Runnable {
         if (skipUiState.onTransientActionTimeout()) {
@@ -198,6 +205,10 @@ class AnimePlayerFragment : VideoSupportFragment() {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (segmentEditorVisible) {
+                viewModel.stopSaveHistory()
+                return
+            }
             snapshotPlaybackPosition()
             if (isPlaying) {
                 viewModel.startSaveHistory()
@@ -303,6 +314,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
         seasonFinaleView = requireActivity().findViewById<ComposeView>(R.id.player_season_finale).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
         }
+        segmentEditorView = requireActivity().findViewById<ComposeView>(R.id.player_segment_editor).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        }
         view.post {
             bindPlaybackFocusTargets()
             PlayerProgressStyler.apply(view)
@@ -324,6 +338,12 @@ class AnimePlayerFragment : VideoSupportFragment() {
                         renderSkipSegment(player?.currentPosition ?: 0L)
                     }
                 }
+                launch {
+                    viewModel.canEditSegments.collectLatest { permitted ->
+                        glue?.showSegmentEditorAction(permitted)
+                        if (!permitted) closeSegmentEditor()
+                    }
+                }
             }
         }
     }
@@ -338,6 +358,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     override fun onStop() {
+        closeSegmentEditor(resume = false)
         // The season is over and the sheet is a terminal state: leaving the app closes the player.
         if (seasonFinaleVisible) activity?.finish()
         clearSkipState()
@@ -351,6 +372,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun renderVideoState(resource: Resource<EpisodeUrlAndHistory>) {
+        if (segmentEditorVisible && segmentEditorTarget != viewModel.segmentEditorTarget()) {
+            closeSegmentEditor(resume = false)
+        }
         when (resource) {
             is Resource.Loading -> {
                 progressBarManager.show()
@@ -469,10 +493,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
                 }
             },
             updateProgress = {
-                viewModel.onPlayPositionChange(
-                    localPlayer.currentPosition.coerceAtLeast(0L),
-                    localPlayer.contentDuration.coerceAtLeast(0L)
-                )
+                if (!segmentEditorVisible) snapshotPlaybackPosition()
                 renderSkipSegment(localPlayer.currentPosition.coerceAtLeast(0L))
             },
             chooseEpisode = ::openEpisodeChooser,
@@ -480,7 +501,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
             playPreviousEpisode = viewModel::playPreviousEpisodeIfExists,
             playNextEpisode = ::advanceToNextEpisode,
             open4kModePicker = ::open4kModePicker,
-            openSpeedPicker = ::openSpeedPicker
+            openSpeedPicker = ::openSpeedPicker,
+            openSegmentEditor = ::openSegmentEditor
         ).apply {
             title = ""
             subtitle = ""
@@ -488,11 +510,13 @@ class AnimePlayerFragment : VideoSupportFragment() {
             isControlsOverlayAutoHideEnabled = true
             host = VideoSupportFragmentGlueHost(this@AnimePlayerFragment)
             update4kAction(current4kMode)
+            showSegmentEditorAction(viewModel.canEditSegments.value)
             glue = this
         }
     }
 
     private fun snapshotPlaybackPosition() {
+        if (segmentEditorVisible) return
         player?.let {
             viewModel.onPlayPositionChange(
                 it.currentPosition.coerceAtLeast(0L),
@@ -513,6 +537,66 @@ class AnimePlayerFragment : VideoSupportFragment() {
         trackSelector = null
         glue = null
         current4kMode = Tv4kMode.OFF
+    }
+
+    private fun openSegmentEditor() {
+        if (!viewModel.canEditSegments.value || segmentEditorVisible) return
+        val target = viewModel.segmentEditorTarget() ?: return
+        val localPlayer = player ?: return
+        val host = segmentEditorView ?: return
+        applyCenterKeyAction(centerKeyController.cancel())
+        snapshotPlaybackPosition()
+        segmentEditorPositionMs = localPlayer.currentPosition.coerceAtLeast(0L)
+        segmentEditorWasPlaying = localPlayer.playWhenReady
+        segmentEditorSeekParameters = localPlayer.seekParameters
+        segmentEditorNearEndSuppressed = nearEndAutoAdvanceSuppressed
+        segmentEditorTarget = target
+        viewModel.stopSaveHistory()
+        localPlayer.pause()
+        localPlayer.setSeekParameters(SeekParameters.EXACT)
+        clearSkipState()
+        cancelControlsAutoHide()
+        glue?.host?.hideControlsOverlay(false)
+        hidePlayerHeaderNow()
+        host.visibility = View.VISIBLE
+        val durationMs = localPlayer.contentDuration.coerceAtLeast(0L)
+        host.setAulamaTvContent {
+            SegmentEditorDialog(
+                animeName = viewModel.anime.animeName,
+                target = target,
+                durationMs = durationMs,
+                currentPosition = { localPlayer.currentPosition.coerceAtLeast(0L) },
+                playing = { localPlayer.playWhenReady },
+                onSeek = { localPlayer.seekTo(it.coerceIn(0L, durationMs.takeIf { value -> value > 0 } ?: Long.MAX_VALUE)) },
+                onPlayPause = { if (localPlayer.playWhenReady) localPlayer.pause() else localPlayer.play() },
+                load = { viewModel.loadSegmentEditor(target) },
+                save = { draft, all -> viewModel.saveSegmentEditor(target, draft, durationMs, all) },
+                onClose = { closeSegmentEditor() }
+            )
+        }
+    }
+
+    private fun closeSegmentEditor(resume: Boolean = true) {
+        val target = segmentEditorTarget ?: return
+        val sameEpisode = target == viewModel.segmentEditorTarget()
+        player?.let { localPlayer ->
+            localPlayer.pause()
+            localPlayer.setSeekParameters(segmentEditorSeekParameters)
+            if (sameEpisode) {
+                localPlayer.seekTo(segmentEditorPositionMs)
+                viewModel.onPlayPositionChange(segmentEditorPositionMs, localPlayer.contentDuration.coerceAtLeast(0L))
+            }
+        }
+        nearEndAutoAdvanceSuppressed = segmentEditorNearEndSuppressed
+        segmentEditorTarget = null
+        segmentEditorView?.visibility = View.GONE
+        segmentEditorView?.disposeComposition()
+        if (resume && sameEpisode) {
+            player?.playWhenReady = segmentEditorWasPlaying
+            glue?.host?.showControlsOverlay(false)
+            view?.post { view?.findViewById<View>(LeanbackR.id.secondary_controls_dock)?.requestFocus() }
+            scheduleControlsAutoHide()
+        }
     }
 
     private fun openSpeedPicker() {
@@ -706,6 +790,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     fun handlePlaybackKeyEvent(event: KeyEvent): Boolean {
+        if (segmentEditorVisible) return false
         if (seasonFinaleVisible) {
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
                 if (event.action == KeyEvent.ACTION_UP) activity?.finish()
@@ -1119,6 +1204,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     override fun onDestroyView() {
+        closeSegmentEditor(resume = false)
+        segmentEditorView?.disposeComposition()
+        segmentEditorView = null
         view?.removeCallbacks(centerLongPressRunnable)
         clearSkipState()
         cancelControlsAutoHide()
@@ -1149,6 +1237,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun renderSkipSegment(positionMs: Long) {
+        if (segmentEditorVisible) return
         val button = skipSegmentButton ?: return
         val durationMs = player?.contentDuration?.coerceAtLeast(0L) ?: 0L
         if (
@@ -1338,6 +1427,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun advanceToNextEpisode() {
+        if (segmentEditorVisible) return
         val episodeIndex = viewModel.playIndex
         if (handledEndedEpisodeIndex == episodeIndex) return
         handledEndedEpisodeIndex = episodeIndex
@@ -1360,6 +1450,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
      * final episode has reached its credits. Returns false when it does not apply.
      */
     private fun showSeasonFinaleIfEligible(positionMs: Long, durationMs: Long): Boolean {
+        if (segmentEditorVisible) return false
         if (seasonFinaleVisible) return true
         if (!viewModel.shouldOfferSeasonFinale(positionMs, durationMs)) return false
         val content = viewModel.seasonFinale.value ?: return false

@@ -9,6 +9,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackSegmentsParserTest {
+    @Test fun anEmptyEpisodeCanStillExposeServerVerifiedEditorPermission() {
+        val empty = PlaybackSegmentsParser.parse("""{"item":null,"permissions":{"canEdit":true}}""")
+        assertTrue(empty?.canEdit == true)
+        assertNull(empty?.introStartMs)
+        assertFalse(PlaybackSegmentsParser.parse("""{"item":{},"permissions":{"canEdit":false}}""")!!.canEdit)
+        assertNull(PlaybackSegmentsParser.parse("""{"item":null}"""))
+    }
     @Test
     fun parsesBackendSecondsAndSafeNextAction() {
         val segments = PlaybackSegmentsParser.parse(

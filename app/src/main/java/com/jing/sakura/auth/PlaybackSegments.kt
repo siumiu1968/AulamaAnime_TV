@@ -7,14 +7,16 @@ data class PlaybackSegments(
     val introEndMs: Long? = null,
     val outroStartMs: Long? = null,
     val outroEndMs: Long? = null,
-    val outroAction: String = "skip"
+    val outroAction: String = "skip",
+    val canEdit: Boolean = false
 )
 
 object PlaybackSegmentsParser {
     fun parse(body: String): PlaybackSegments? {
         return runCatching {
-            val item =
-            JsonParser.parseString(body).asJsonObject.getAsJsonObject("item")
+            val root = JsonParser.parseString(body).asJsonObject
+            val item = root.get("item")?.takeIf { it.isJsonObject }?.asJsonObject
+                ?: if (root.has("permissions")) com.google.gson.JsonObject() else return null
             PlaybackSegments(
                 introStartMs = secondsToMs(item.get("introStart")?.takeUnless { it.isJsonNull }?.asDouble),
                 introEndMs = secondsToMs(item.get("introEnd")?.takeUnless { it.isJsonNull }?.asDouble),
@@ -22,7 +24,8 @@ object PlaybackSegmentsParser {
                 outroEndMs = secondsToMs(item.get("outroEnd")?.takeUnless { it.isJsonNull }?.asDouble),
                 outroAction = item.get("outroAction")?.takeUnless { it.isJsonNull }?.asString
                     ?.takeIf { it == "next" }
-                    ?: "skip"
+                    ?: "skip",
+                canEdit = root.getAsJsonObject("permissions")?.get("canEdit")?.asBoolean == true
             )
         }.getOrNull()
     }

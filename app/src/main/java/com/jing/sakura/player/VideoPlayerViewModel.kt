@@ -22,6 +22,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -73,6 +76,32 @@ class VideoPlayerViewModel(
     private val _playbackSegments = MutableStateFlow<PlaybackSegments?>(null)
     val playbackSegments: StateFlow<PlaybackSegments?>
         get() = _playbackSegments
+
+    internal val canEditSegments = combine(authRepository.session, _playbackSegments) { session, segments ->
+        canEditPlaybackSegments(session?.account?.role, segments?.canEdit == true)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    internal fun segmentEditorTarget(): SegmentEditorTarget? {
+        val episode = _playList.getOrNull(playIndex) ?: return null
+        val provider = playbackSegmentProvider(episode.episodeId)
+        return SegmentEditorTarget(anime.animeId, episode.episodeId, playIndex, episode.episode,
+            provider, playbackPlaylists.getOrNull(currentPlaylistIndex)?.name.orEmpty().ifBlank { "主線路A" })
+    }
+
+    internal suspend fun loadSegmentEditor(target: SegmentEditorTarget): SegmentEditorSnapshot {
+        check(canEditSegments.value && segmentEditorTarget() == target) { "集數、線路或權限已變更，請重新開啟設定" }
+        return authRepository.fetchSegmentEditor(target)
+    }
+
+    internal suspend fun saveSegmentEditor(target: SegmentEditorTarget, draft: SegmentDraft,
+        durationMs: Long, allProviders: Boolean): SegmentEditorSnapshot {
+        check(canEditSegments.value && segmentEditorTarget() == target) { "集數、線路或權限已變更，請重新開啟設定" }
+        val saved = authRepository.saveSegmentEditor(target, draft, durationMs, allProviders)
+        if (segmentEditorTarget() == target) {
+            _playList.getOrNull(playIndex)?.let { fetchPlaybackSegments(it, playIndex) }
+        }
+        return saved
+    }
 
     @Volatile
     private var playingEpisode: AnimePlayListEpisode? = null
@@ -194,7 +223,8 @@ class VideoPlayerViewModel(
                     authRepository.fetchPlaybackSegments(
                         animeId = anime.animeId,
                         episodeId = episodeId,
-                        episodeIndex = index
+                        episodeIndex = index,
+                        provider = playbackSegmentProvider(episodeId)
                     )
                 }.onFailure { error ->
                     if (error !is CancellationException) {

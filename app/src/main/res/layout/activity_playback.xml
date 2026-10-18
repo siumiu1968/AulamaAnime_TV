@@ -123,4 +123,11 @@
         android:layout_height="match_parent"
         android:elevation="16dp"
         android:visibility="gone" />
+
+    <androidx.compose.ui.platform.ComposeView
+        android:id="@+id/player_segment_editor"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:elevation="24dp"
+        android:visibility="gone" />
 </FrameLayout>
