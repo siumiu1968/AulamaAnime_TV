@@ -139,6 +139,7 @@ class DetailPageCacheTest {
         val old = JsonParser.parseString(file.readText()).asJsonObject
         old.remove("relatedVersion")
         file.writeText(old.toString())
+        file.setLastModified(now)
         val restored = cache().get("cycani", "cw:3963")!!
         assertTrue(restored.detail.otherAnimeList.isEmpty())
         assertTrue(restored.needsEnrichment(now))
