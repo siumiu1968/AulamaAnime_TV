@@ -25,7 +25,7 @@ class DetailPageCache(
             enrichedAt <= 0 || nowMs < enrichedAt || nowMs - enrichedAt >= ENRICHMENT_AGE_MS
 
         fun isBehind(expectedEpisodes: Int): Boolean = expectedEpisodes > 0 &&
-            expectedEpisodes > (detail.playLists.maxOfOrNull { it.episodeList.size } ?: 0)
+            expectedEpisodes > (detail.playLists.getOrNull(detail.defaultPlayListIndex)?.episodeList?.size ?: 0)
 
         fun mergeCore(fresh: AnimeDetailPageData, sourceId: String): AnimeDetailPageData =
             fresh.copy(otherAnimeList = mergeRelatedAnime(detail.otherAnimeList, fresh.otherAnimeList, sourceId))
@@ -172,5 +172,5 @@ class DetailPageCache(
 }
 
 internal fun detailExpectedEpisodeCount(episodeInfo: String): Int =
-    Regex("""^\s*(?:更新至|全|第)?\s*(\d{1,4})(?:集|\s|[·・•]|$)""")
+    Regex("""^\s*(?:更新至\s*第?|全|第)?\s*(\d{1,4})(?:集|\s|[·・•]|$)""")
         .find(episodeInfo)?.groupValues?.get(1)?.toIntOrNull()?.coerceAtLeast(0) ?: 0

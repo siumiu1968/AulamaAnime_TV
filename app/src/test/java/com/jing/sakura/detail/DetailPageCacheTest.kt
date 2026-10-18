@@ -60,6 +60,11 @@ class DetailPageCacheTest {
         cache().put("cycani", old.mergeCore(detail(episodes = 2), "cycani"), old.enrichedAt)
         assertFalse(cache().get("cycani", "cw:3963")!!.isBehind(2))
         assertEquals(12, detailExpectedEpisodeCount("全12集"))
+        assertEquals(2, detailExpectedEpisodeCount("更新至第02集"))
+        val primaryBehind = old.copy(detail = old.detail.copy(
+            playLists = old.detail.playLists + detail(episodes = 2).playLists
+        ))
+        assertTrue(primaryBehind.isBehind(2))
     }
 
     @Test fun titleSourcesAndViewerRatingsAreIsolatedAndRatingsExpire() {
