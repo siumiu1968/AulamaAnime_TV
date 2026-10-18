@@ -109,7 +109,8 @@ internal fun SegmentEditorDialog(
         }, contentAlignment = Alignment.CenterEnd) {
             Column(Modifier.padding(16.dp).widthIn(max = 470.dp).fillMaxHeight()
                 .background(AulamaTvColors.Surface, RoundedCornerShape(18.dp)).padding(22.dp)) {
-                Text(localizedText("片頭片尾"), fontSize = 24.sp, fontWeight = FontWeight.Black)
+                Text(localizedText("片頭片尾"), color = AulamaTvColors.TextPrimary,
+                    fontSize = 24.sp, fontWeight = FontWeight.Black)
                 Text(localizedText(animeName), maxLines = 1, overflow = TextOverflow.Ellipsis,
                     color = AulamaTvColors.TextSecondary, fontSize = 14.sp)
                 Text(localizedText("${target.episodeLabel} · ${target.providerLabel}"),
