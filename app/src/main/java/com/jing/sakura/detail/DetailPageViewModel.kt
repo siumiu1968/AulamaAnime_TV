@@ -140,7 +140,7 @@ class DetailPageViewModel constructor(
                     }
                 }
                 val cloudDetailJob = async(start = CoroutineStart.LAZY) {
-                    if (needsRelatedRefresh) fetchDetailSection {
+                    if (needsRelatedRefresh) fetchDetailSection(timeoutMillis = 50_000L) {
                         authRepository.fetchTvAnimeDetail(animeId)
                             .takeIf { it.catalogItem != null }
                     } else null
@@ -203,7 +203,7 @@ class DetailPageViewModel constructor(
         relatedRetryJob = viewModelScope.launch(Dispatchers.IO) {
             val cached = detailCache.get(sourceId, animeId)
             applyRelatedEnrichment(
-                result = fetchDetailSection {
+                result = fetchDetailSection(timeoutMillis = 50_000L) {
                     authRepository.fetchTvAnimeDetail(animeId).takeIf { it.catalogItem != null }
                 },
                 fallbackRelated = detail.otherAnimeList,

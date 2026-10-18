@@ -40,6 +40,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.util.Calendar
+import java.util.concurrent.TimeUnit
 
 class AulamaAuthRepository(
     initialClient: OkHttpClient,
@@ -358,7 +359,8 @@ class AulamaAuthRepository(
                 else addQueryParameter("sections", "related")
             }
             .build()
-        val body = authenticatedBody(url) ?: return TvAnimeDetailPayload()
+        val body = authenticatedBody(url, readTimeoutSeconds = if (coreOnly) null else 45L)
+            ?: return TvAnimeDetailPayload()
         return TvLibraryParser.parseAnimeDetail(body).let { payload ->
             payload.copy(
                 related = payload.related.filterNot(::isSuppressedAnime),
@@ -802,10 +804,10 @@ class AulamaAuthRepository(
         return authenticatedBody("$API_BASE$path".toHttpUrl())
     }
 
-    private suspend fun authenticatedBody(url: okhttp3.HttpUrl): String? {
+    private suspend fun authenticatedBody(url: okhttp3.HttpUrl, readTimeoutSeconds: Long? = null): String? {
         val session = _session.value ?: return null
         val request = authenticatedRequest(url.toString(), session).get().build()
-        return executeResponseOnIo(request) { response, responseBody ->
+        return executeResponseOnIo(request, readTimeoutSeconds) { response, responseBody ->
             if (response.code == 401) {
                 clearSession()
                 return@executeResponseOnIo null
@@ -857,11 +859,14 @@ class AulamaAuthRepository(
 
     private suspend fun <T> executeResponseOnIo(
         request: Request,
+        readTimeoutSeconds: Long? = null,
         handler: (okhttp3.Response, String) -> T
     ): T {
         val transport = regionRouteTransport
         return withContext(Dispatchers.IO) {
-            transport.client.executeWithCoroutine(
+            val client = if (readTimeoutSeconds == null) transport.client else transport.client.newBuilder()
+                .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS).build()
+            client.executeWithCoroutine(
                 request.withAulamaApiSession(_session.value).taggedFor(transport)
             ).use { response ->
                 handler(response, response.body?.string().orEmpty())
