@@ -12,8 +12,11 @@ class PosterFallbackInterceptor : Interceptor {
         val request = chain.request()
         val fallback = originalPosterRequest(request) ?: return chain.proceed(request)
         try {
-            val response = chain.withReadTimeout(4, java.util.concurrent.TimeUnit.SECONDS).proceed(request)
-            if (response.isSuccessful) return response
+            val proxyRequest = request.newBuilder().header("X-Aulama-Image-Cache", "1").build()
+            val response = chain.withReadTimeout(4, java.util.concurrent.TimeUnit.SECONDS).proceed(proxyRequest)
+            // Coil revalidates its own disk cache. A 304 must reach Coil so it can reuse
+            // the cached bytes, rather than retrying the unavailable original CDN.
+            if (response.isSuccessful || response.code == 304) return response
             response.close()
         } catch (error: IOException) {
             if (chain.call().isCanceled()) throw error
