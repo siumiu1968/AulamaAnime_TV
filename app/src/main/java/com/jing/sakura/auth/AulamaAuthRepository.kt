@@ -52,6 +52,10 @@ class AulamaAuthRepository(
     val session: StateFlow<AuthSession?> = _session
     private val _regionBlock = MutableStateFlow<RegionBlockState?>(null)
     val regionBlock: StateFlow<RegionBlockState?> = _regionBlock
+    private val _canSkipRegion = MutableStateFlow(false)
+    val canSkipRegion: StateFlow<Boolean> = _canSkipRegion
+    @Volatile
+    private var regionBypassEnabled = false
     private val regionProbeMutex = Mutex()
     @Volatile
     private var regionRouteTransport = RegionRouteTransport(initialClient, generation = 0L)
@@ -104,6 +108,8 @@ class AulamaAuthRepository(
         )
         storage.saveSession(session)
         _session.value = session
+        _canSkipRegion.value = false
+        regionBypassEnabled = false
     }
 
     suspend fun validateAccount(session: AuthSession): AccountValidationResult = try {
@@ -133,7 +139,8 @@ class AulamaAuthRepository(
     }
 
     suspend fun probeRegionAccess(
-        forceFreshConnection: Boolean = false
+        forceFreshConnection: Boolean = false,
+        useAccountExemption: Boolean = regionBypassEnabled
     ): RegionAccessProbeResult = regionProbeMutex.withLock {
         try {
             val request = Request.Builder()
@@ -141,8 +148,8 @@ class AulamaAuthRepository(
                 .header("Accept", "application/json")
                 .get()
                 .build()
-                .withAulamaApiSession(_session.value)
-            withContext(Dispatchers.IO) {
+                .let { if (useAccountExemption) it.withAulamaApiSession(_session.value) else it }
+            val result = withContext(Dispatchers.IO) {
                 val transport = if (forceFreshConnection) {
                     replaceRegionRouteTransport()
                 } else {
@@ -164,11 +171,42 @@ class AulamaAuthRepository(
                         result
                     }
             }
+            if (result == RegionAccessProbeResult.Blocked) refreshRegionSkipPermission()
+            result
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
             RegionAccessProbeResult.Unavailable
         }
+    }
+
+    suspend fun refreshRegionSkipPermission(): Boolean {
+        val session = _session.value?.takeUnless(AuthSession::isExpired) ?: run {
+            _canSkipRegion.value = false
+            return false
+        }
+        return try {
+            val allowed = executeResponseOnIo(
+                authenticatedRequest("https://aulama.org/hermes-auth/anime-region/status", session).get().build()
+            ) { response, body ->
+                response.isSuccessful && JsonParser.parseString(body).asJsonObject
+                    .get("can_skip")?.asBoolean == true
+            }
+            if (_session.value == session) _canSkipRegion.value = allowed
+            _canSkipRegion.value
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            _canSkipRegion.value = false
+            false
+        }
+    }
+
+    suspend fun skipRegionRestriction(): RegionAccessProbeResult {
+        if (!refreshRegionSkipPermission()) return RegionAccessProbeResult.Blocked
+        val result = probeRegionAccess(forceFreshConnection = true, useAccountExemption = true)
+        regionBypassEnabled = result == RegionAccessProbeResult.Allowed
+        return result
     }
 
     private val ratingPreferences by lazy {
@@ -675,6 +713,8 @@ class AulamaAuthRepository(
     fun clearSession() {
         storage.clearSession()
         _session.value = null
+        _canSkipRegion.value = false
+        regionBypassEnabled = false
     }
 
     private fun authenticatedRequest(url: String, session: AuthSession): Request.Builder =

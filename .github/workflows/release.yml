@@ -73,6 +73,8 @@ jobs:
           disable-animations: true
           script: |
             ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.jing.sakura.compose.screen.RegionBlockedFocusTest
+            mkdir -p app/build/release-startup-smoke
+            adb pull /sdcard/Android/data/com.codex.ciyuanbox.tv/files/region-admin-actions.png app/build/release-startup-smoke/region-admin-actions.png
             adb uninstall com.codex.ciyuanbox.tv
             python3 scripts/smoke_release_apk.py "$SMOKE_APK"
       - name: Upload Android TV startup evidence

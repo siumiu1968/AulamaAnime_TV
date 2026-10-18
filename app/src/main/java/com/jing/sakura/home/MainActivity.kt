@@ -79,6 +79,7 @@ class MainActivity : ComponentActivity() {
             val homePageData = viewModel.homePageData.collectAsState().value
             val authState = authViewModel.state.collectAsState().value
             val regionBlock = authRepository.regionBlock.collectAsState().value
+            val canSkipRegion = authRepository.canSkipRegion.collectAsState().value
             val regionRetrying = remember { mutableStateOf(false) }
             val composeScope = rememberCoroutineScope()
             val welcomeRefreshSeed = remember {
@@ -166,6 +167,22 @@ class MainActivity : ComponentActivity() {
                         RegionBlockedScreen(
                             countryCode = regionBlock.countryCode,
                             retrying = regionRetrying.value,
+                            canSkip = canSkipRegion,
+                            onSkip = {
+                                if (!regionRetrying.value) {
+                                    composeScope.launch {
+                                        regionRetrying.value = true
+                                        try {
+                                            if (authRepository.skipRegionRestriction() == RegionAccessProbeResult.Allowed) {
+                                                authViewModel.resumeAfterRegionAccess()
+                                                viewModel.loadData(silent = false)
+                                            }
+                                        } finally {
+                                            regionRetrying.value = false
+                                        }
+                                    }
+                                }
+                            },
                             onExit = { finish() },
                             onRetry = {
                                 if (!regionRetrying.value) {

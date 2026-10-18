@@ -5,11 +5,15 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import android.graphics.Bitmap
+import java.io.File
 import com.jing.sakura.compose.common.AulamaActionButton
 import com.jing.sakura.compose.common.LocalTvLanguage
 import com.jing.sakura.compose.common.TvLanguage
@@ -19,9 +23,50 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
+@OptIn(ExperimentalTestApi::class)
 class RegionBlockedFocusTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun skipIsHiddenUntilAuthorizedAndFocusStaysInsideAuthorizedActions() {
+        val canSkip = mutableStateOf(false)
+        var skips = 0
+        compose.setContent {
+            CompositionLocalProvider(LocalTvLanguage provides TvLanguage.Traditional) {
+                RegionBlockedScreen(
+                    countryCode = "US", retrying = false, onRetry = {}, onExit = {},
+                    canSkip = canSkip.value, onSkip = { skips++ }
+                )
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("跳過限制").assertDoesNotExist()
+        compose.runOnIdle { canSkip.value = true }
+        compose.waitForIdle()
+        compose.onNodeWithText("重新嘗試").assertIsFocused()
+        repeat(10) {
+            compose.onNodeWithText("重新嘗試").performKeyInput { pressKey(Key.DirectionDown) }
+            compose.onNodeWithText("跳過限制").assertIsFocused()
+                .performKeyInput { pressKey(Key.DirectionRight) }
+            compose.onNodeWithText("跳過限制").assertIsFocused()
+                .performKeyInput { pressKey(Key.DirectionUp) }
+            compose.onNodeWithText("重新嘗試").assertIsFocused()
+        }
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        File(instrumentation.targetContext.getExternalFilesDir(null), "region-admin-actions.png")
+            .outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        compose.onNodeWithText("重新嘗試").performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNodeWithText("跳過限制").performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.runOnIdle {
+            assertEquals(1, skips)
+            canSkip.value = false
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("跳過限制").assertDoesNotExist()
+        compose.onNodeWithText("重新嘗試").assertIsFocused()
+    }
 
     @Test
     fun directionalKeysCannotLeaveRetryBeforeDuringOrAfterRetry() {

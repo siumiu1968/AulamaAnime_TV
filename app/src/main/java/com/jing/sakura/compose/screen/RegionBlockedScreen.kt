@@ -18,13 +18,18 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -32,6 +37,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -83,15 +90,20 @@ internal fun regionBlockCopy(countryCode: String, language: TvLanguage): RegionB
 }
 
 @Composable
+@OptIn(ExperimentalComposeUiApi::class)
 fun RegionBlockedScreen(
     countryCode: String,
     retrying: Boolean,
     onRetry: () -> Unit,
-    onExit: () -> Unit
+    onExit: () -> Unit,
+    canSkip: Boolean = false,
+    onSkip: () -> Unit = {}
 ) {
     val language = LocalTvLanguage.current
     val copy = regionBlockCopy(countryCode, language)
     val retryFocusRequester = remember { FocusRequester() }
+    val skipFocusRequester = remember { FocusRequester() }
+    var skipFocused by remember { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onExit,
@@ -105,9 +117,19 @@ fun RegionBlockedScreen(
         modifier = Modifier
             .fillMaxSize()
             .onPreviewKeyEvent { event ->
-                event.key in setOf(
+                val navigation = event.key in setOf(
                     Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight, Key.Tab
                 )
+                if (navigation && canSkip && !retrying && event.type == KeyEventType.KeyDown &&
+                    event.key in setOf(Key.DirectionUp, Key.DirectionDown)
+                ) {
+                    retryFocusRequester.freeFocus()
+                    skipFocusRequester.freeFocus()
+                    val target = if (skipFocused) retryFocusRequester else skipFocusRequester
+                    target.requestFocus()
+                    target.captureFocus()
+                }
+                navigation
             }
             .aulamaTvBackground()
             .background(
@@ -234,6 +256,7 @@ fun RegionBlockedScreen(
                         .width(184.dp)
                         .height(52.dp)
                         .focusRequester(retryFocusRequester)
+                        .onFocusChanged { if (it.isFocused) skipFocused = false }
                         .focusProperties {
                             up = FocusRequester.Cancel
                             down = FocusRequester.Cancel
@@ -244,13 +267,41 @@ fun RegionBlockedScreen(
                         },
                     centerLabel = true
                 )
+                if (canSkip) {
+                    Spacer(Modifier.height(12.dp))
+                    AulamaActionButton(
+                        label = when (language) {
+                            TvLanguage.Traditional -> "跳過限制"
+                            TvLanguage.Simplified -> "跳过限制"
+                        },
+                        onClick = { if (!retrying) onSkip() },
+                        accent = AulamaTvColors.Cyan,
+                        modifier = Modifier
+                            .width(184.dp)
+                            .height(52.dp)
+                            .focusRequester(skipFocusRequester)
+                            .onFocusChanged { if (it.isFocused) skipFocused = true }
+                            .focusProperties {
+                                up = FocusRequester.Cancel
+                                down = FocusRequester.Cancel
+                                left = FocusRequester.Cancel
+                                right = FocusRequester.Cancel
+                                next = FocusRequester.Cancel
+                                previous = FocusRequester.Cancel
+                            },
+                        centerLabel = true
+                    )
+                }
             }
         }
     }
-    LaunchedEffect(retrying) {
+    LaunchedEffect(retrying, canSkip) {
         withFrameNanos { }
-        retryFocusRequester.requestFocus()
-        retryFocusRequester.captureFocus()
+        retryFocusRequester.freeFocus()
+        if (canSkip) skipFocusRequester.freeFocus()
+        val target = if (canSkip && skipFocused) skipFocusRequester else retryFocusRequester
+        target.requestFocus()
+        target.captureFocus()
     }
     }
 }
