@@ -322,6 +322,11 @@ class AulamaAuthRepository(
         }
     }
 
+    /** A detail page only needs history; favorites and catalog scores must not delay it. */
+    suspend fun fetchTvHistoryItem(animeId: String): TvHistoryItem? =
+        authenticatedBody("/history")?.let(TvLibraryParser::parseHistoryItems)
+            ?.firstOrNull { it.animeId == animeId || it.anime.id == animeId }
+
     suspend fun fetchTvLibrary(): TvLibraryPayload {
         val favorites = fetchFavorites()
         val rawHistoryItems = authenticatedBody("/history")
@@ -343,7 +348,10 @@ class AulamaAuthRepository(
         val url = API_BASE.toHttpUrl().newBuilder()
             .addPathSegment("detail")
             .addPathSegment(animeId)
-            .apply { if (coreOnly) addQueryParameter("stage", "core") }
+            .apply {
+                if (coreOnly) addQueryParameter("stage", "core")
+                else addQueryParameter("sections", "related")
+            }
             .build()
         val body = authenticatedBody(url) ?: return TvAnimeDetailPayload()
         return TvLibraryParser.parseAnimeDetail(body).let { payload ->

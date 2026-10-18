@@ -2114,6 +2114,7 @@ private fun EpisodeProgressBar(
 ) {
     val track = if (focused) Color(0x33041014) else Color.White.copy(alpha = 0.14f)
     val fill = when {
+        progress >= 1f -> Color(0xFF34C77A)
         focused -> Color(0xFF041014)
         isCurrent -> AulamaTvColors.Cyan
         else -> AulamaTvColors.Cyan.copy(alpha = 0.55f)

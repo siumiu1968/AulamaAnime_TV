@@ -75,8 +75,8 @@ jobs:
             mkdir -p app/build/release-startup-smoke
             adb install -r -t app/build/outputs/apk/debug/app-debug.apk
             adb install -r -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-            adb shell am instrument -w -r -e class com.jing.sakura.compose.screen.RegionBlockedFocusTest com.codex.ciyuanbox.tv.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/release-startup-smoke/focus-tests.log
-            grep -q 'OK (2 tests)' app/build/release-startup-smoke/focus-tests.log
+            adb shell am instrument -w -r -e class com.jing.sakura.compose.screen.RegionBlockedFocusTest,com.jing.sakura.player.PlayerProgressAlignmentTest com.codex.ciyuanbox.tv.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/release-startup-smoke/focus-tests.log
+            grep -q 'OK (3 tests)' app/build/release-startup-smoke/focus-tests.log
             adb pull /sdcard/Android/data/com.codex.ciyuanbox.tv/files/region-admin-actions.png app/build/release-startup-smoke/region-admin-actions.png
             adb uninstall com.codex.ciyuanbox.tv
             python3 scripts/smoke_release_apk.py "$SMOKE_APK"

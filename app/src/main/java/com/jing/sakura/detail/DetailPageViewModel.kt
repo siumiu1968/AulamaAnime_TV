@@ -59,6 +59,7 @@ class DetailPageViewModel constructor(
         get() = _latestProgress
 
     private var loadDataJob: Job? = null
+    private var historyRefreshJob: Job? = null
 
     private val _episodeProgress = MutableStateFlow<Map<Int, Float>>(emptyMap())
     /** Watched fraction per episode number, for the progress fill on each episode tile. */
@@ -118,13 +119,7 @@ class DetailPageViewModel constructor(
                     if (authRepository.session.value == null) {
                         null
                     } else {
-                        runCatching { authRepository.fetchTvLibrary() }
-                            .getOrNull()
-                            ?.historyItems
-                            ?.firstOrNull { item ->
-                                (item.animeId == animeId || item.anime.id == animeId) &&
-                                    (item.sourceTypeId.isBlank() || item.sourceTypeId == sourceId)
-                            }
+                        runCatching { authRepository.fetchTvHistoryItem(animeId) }.getOrNull()
                     }
                 }
                 val cloudDetailJob = async {
@@ -153,6 +148,9 @@ class DetailPageViewModel constructor(
                         sourceData.copy(lastPlayEpisodePosition = sourceData.positionFor(localHistory?.episodeId))
                     )
                 )
+                refreshEpisodeProgress()
+                // Watch state is independent of the slower public recommendation enrichment.
+                val history = applyCloudHistory(sourceData, cloudHistoryJob.await())
                 val cloudDetail = cloudDetailJob.await()
                 val data = if (cloudDetail == null) sourceData else sourceData.copy(
                     otherAnimeList = mergeRelatedAnime(
@@ -164,25 +162,8 @@ class DetailPageViewModel constructor(
                 if (cloudDetail != null) detailCache.put(sourceId, data, System.currentTimeMillis(), coreCheckedAt)
                 visibleData = data
                 _detailPageData.emit(Resource.Success(data.copy(
-                    lastPlayEpisodePosition = data.positionFor(localHistory?.episodeId)
+                    lastPlayEpisodePosition = data.positionFor(history?.episodeId)
                 )))
-                val remoteItem = cloudHistoryJob.await()
-                remoteHistoryItem = remoteItem
-                val remoteHistory = remoteItem?.toLocalHistory(data)
-                val history = listOfNotNull(localHistory, remoteHistory)
-                    .maxByOrNull(VideoHistoryEntity::updateTime)
-                if (remoteHistory != null &&
-                    (localHistory == null || remoteHistory.updateTime > localHistory.updateTime)
-                ) {
-                    videoHistoryDao.saveHistory(remoteHistory)
-                }
-                history?.let { _latestProgress.emit(Resource.Success(it)) }
-                refreshEpisodeProgress()
-                _detailPageData.emit(
-                    Resource.Success(
-                        data.copy(lastPlayEpisodePosition = data.positionFor(history?.episodeId))
-                    )
-                )
             } catch (ex: Exception) {
                 if (ex is CancellationException) {
                     throw ex
@@ -338,12 +319,33 @@ class DetailPageViewModel constructor(
     }
 
     fun fetchHistory() {
-        viewModelScope.launch(Dispatchers.IO) {
+        historyRefreshJob?.cancel()
+        historyRefreshJob = viewModelScope.launch(Dispatchers.IO) {
             videoHistoryDao.queryLastHistoryOfAnimeId(animeId, sourceId)?.let {
                 _latestProgress.emit(Resource.Success(it))
             }
             refreshEpisodeProgress()
+            // Initial loading already has a parallel history request in flight.
+            if (loadDataJob?.isActive == true || authRepository.session.value == null) return@launch
+            val detail = _detailPageData.value.getOrNull() ?: return@launch
+            val remote = runCatching { authRepository.fetchTvHistoryItem(animeId) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+            applyCloudHistory(detail, remote)
         }
+    }
+
+    private fun applyCloudHistory(detail: AnimeDetailPageData, remote: TvHistoryItem?): VideoHistoryEntity? {
+        if (remote != null) remoteHistoryItem = remote
+        val local = videoHistoryDao.queryLastHistoryOfAnimeId(animeId, sourceId)
+        val mapped = remote?.toLocalHistory(detail)
+        if (mapped != null && (local == null || mapped.updateTime > local.updateTime)) {
+            videoHistoryDao.saveHistory(mapped)
+        }
+        val latest = listOfNotNull(local, mapped).maxByOrNull(VideoHistoryEntity::updateTime)
+        latest?.let { _latestProgress.value = Resource.Success(it) }
+        refreshEpisodeProgress()
+        return latest
     }
 
     private fun refreshEpisodeProgress() {

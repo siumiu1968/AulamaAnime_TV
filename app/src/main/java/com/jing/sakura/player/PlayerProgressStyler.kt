@@ -40,6 +40,14 @@ internal object PlayerProgressStyler {
             params.marginStart = maxOf(params.marginStart, inset)
             params.marginEnd = maxOf(params.marginEnd, inset)
             seekBar.layoutParams = params
+            // Leanback draws the track half a bar-height inside the SeekBar bounds.
+            // Keep the duration's trailing edge on that visible endpoint as well.
+            val timeRow = root.findViewById<View>(androidx.leanback.R.id.total_time)?.parent as? View
+            (timeRow?.layoutParams as? ViewGroup.MarginLayoutParams)?.let { timeParams ->
+                timeParams.marginEnd = params.marginEnd +
+                    (PlayerProgressStyleSpec.BAR_HEIGHT_DP * density).toInt() / 2
+                timeRow.layoutParams = timeParams
+            }
         }
         if (styledSeekBars.put(seekBar, true) == null) {
             seekBar.addOnLayoutChangeListener { view, left, _, right, _, _, _, _, _ ->
