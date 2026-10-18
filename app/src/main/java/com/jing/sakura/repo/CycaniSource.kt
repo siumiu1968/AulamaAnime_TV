@@ -172,7 +172,7 @@ class CycaniSource(
         if (repository.session.value == null) {
             throw IllegalStateException("請先登入 Aulama ID 再載入此動畫")
         }
-        val detail = repository.fetchTvAnimeDetail(animeId)
+        val detail = repository.fetchTvAnimeDetail(animeId, coreOnly = true)
         val item = detail.catalogItem
             ?: throw IllegalStateException("暫時未能載入動畫詳情")
         val mainPlayLists = detail.cycaniPlayLists.mapIndexed { index, line ->

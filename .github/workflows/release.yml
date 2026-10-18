@@ -35,7 +35,7 @@ jobs:
           TV_KEY_PASSWORD: ${{ secrets.TV_KEY_PASSWORD }}
         run: |
           chmod a+x ./gradlew
-          ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" :app:testDebugUnitTest :app:assembleRelease
+          ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease
       - name: Verify and rename APK
         id: apk
         env:
@@ -71,13 +71,19 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -memory 2048 -cores 2
           disable-animations: true
-          script: python3 scripts/smoke_release_apk.py "$SMOKE_APK"
+          script: |
+            ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.jing.sakura.compose.screen.RegionBlockedFocusTest
+            adb uninstall com.codex.ciyuanbox.tv
+            python3 scripts/smoke_release_apk.py "$SMOKE_APK"
       - name: Upload Android TV startup evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-tv-release-startup-${{ github.run_id }}
-          path: app/build/release-startup-smoke/
+          path: |
+            app/build/release-startup-smoke/
+            app/build/outputs/androidTest-results/
+            app/build/reports/androidTests/
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload verified APK

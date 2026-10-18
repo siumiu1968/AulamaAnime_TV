@@ -23,11 +23,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -100,6 +104,11 @@ fun RegionBlockedScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                event.key in setOf(
+                    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight, Key.Tab
+                )
+            }
             .aulamaTvBackground()
             .background(
                 Brush.radialGradient(
@@ -220,25 +229,28 @@ fun RegionBlockedScreen(
                     label = if (retrying) "…" else copy.retry,
                     icon = Icons.Default.Refresh,
                     accent = AulamaTvColors.Cyan,
-                    onClick = onRetry,
-                    enabled = !retrying,
+                    onClick = { if (!retrying) onRetry() },
                     modifier = Modifier
                         .width(184.dp)
                         .height(52.dp)
-                        .focusRequester(retryFocusRequester),
+                        .focusRequester(retryFocusRequester)
+                        .focusProperties {
+                            up = FocusRequester.Cancel
+                            down = FocusRequester.Cancel
+                            left = FocusRequester.Cancel
+                            right = FocusRequester.Cancel
+                            next = FocusRequester.Cancel
+                            previous = FocusRequester.Cancel
+                        },
                     centerLabel = true
                 )
             }
         }
     }
     LaunchedEffect(retrying) {
-        if (retrying) {
-            retryFocusRequester.freeFocus()
-        } else {
-            withFrameNanos { }
-            retryFocusRequester.requestFocus()
-            retryFocusRequester.captureFocus()
-        }
+        withFrameNanos { }
+        retryFocusRequester.requestFocus()
+        retryFocusRequester.captureFocus()
     }
     }
 }

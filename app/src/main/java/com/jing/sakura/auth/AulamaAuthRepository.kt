@@ -298,11 +298,12 @@ class AulamaAuthRepository(
         )
     }
 
-    suspend fun fetchTvAnimeDetail(animeId: String): TvAnimeDetailPayload {
+    suspend fun fetchTvAnimeDetail(animeId: String, coreOnly: Boolean = false): TvAnimeDetailPayload {
         if (animeId.isBlank()) return TvAnimeDetailPayload()
         val url = API_BASE.toHttpUrl().newBuilder()
             .addPathSegment("detail")
             .addPathSegment(animeId)
+            .apply { if (coreOnly) addQueryParameter("stage", "core") }
             .build()
         val body = authenticatedBody(url) ?: return TvAnimeDetailPayload()
         return TvLibraryParser.parseAnimeDetail(body).let { payload ->

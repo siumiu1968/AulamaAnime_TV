@@ -123,6 +123,12 @@ class DetailPageViewModel constructor(
                     }
                 }
                 val sourceData = repository.fetchDetailPage(animeId, sourceId)
+                val localHistory = localHistoryJob.await()
+                _detailPageData.emit(
+                    Resource.Success(
+                        sourceData.copy(lastPlayEpisodePosition = sourceData.positionFor(localHistory?.episodeId))
+                    )
+                )
                 val cloudDetail = cloudDetailJob.await()
                 val data = sourceData.copy(
                     otherAnimeList = mergeRelatedAnime(
@@ -131,7 +137,6 @@ class DetailPageViewModel constructor(
                         fallbackSourceId = sourceId
                     )
                 )
-                val localHistory = localHistoryJob.await()
                 val remoteItem = cloudHistoryJob.await()
                 remoteHistoryItem = remoteItem
                 val remoteHistory = remoteItem?.toLocalHistory(data)

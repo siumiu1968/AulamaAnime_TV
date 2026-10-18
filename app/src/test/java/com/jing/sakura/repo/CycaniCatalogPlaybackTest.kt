@@ -12,6 +12,7 @@ import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.Dispatcher
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -50,6 +51,24 @@ class CycaniCatalogPlaybackTest {
         server.shutdown()
         client.connectionPool.evictAll()
         client.dispatcher.executorService.shutdown()
+    }
+
+    @Test
+    fun currentTitleLoadsCoreWithoutWaitingForSlowEnrichment() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                if (request.requestUrl?.queryParameter("stage") == "core") {
+                    MockResponse().setHeader("Content-Type", "application/json").setBody(currentDetail())
+                } else {
+                    MockResponse().setHeadersDelay(1, TimeUnit.SECONDS).setBody("{}")
+                }
+        }
+        val fastClient = client.newBuilder().readTimeout(300, TimeUnit.MILLISECONDS).build()
+        val repository = AulamaAuthRepository(fastClient, SignedInStorage())
+        val detail = CycaniSource(fastClient, repository).fetchDetailPage("cw:3939")
+        assertEquals("cw:3939", detail.animeId)
+        assertEquals(3, detail.playLists.first().episodeList.size)
+        assertEquals("core", takeRequest().requestUrl?.queryParameter("stage"))
     }
 
     @Test
@@ -141,6 +160,7 @@ class CycaniCatalogPlaybackTest {
         val detailRequest = takeRequest()
         val playbackRequest = takeRequest()
         assertEquals(listOf("anime", "api", "detail", animeId), detailRequest.requestUrl?.pathSegments)
+        assertEquals("core", detailRequest.requestUrl?.queryParameter("stage"))
         assertEquals(
             listOf("anime", "api", "cycani", "sections", sectionId, "play-url"),
             playbackRequest.requestUrl?.pathSegments

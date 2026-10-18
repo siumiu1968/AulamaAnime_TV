@@ -15,8 +15,9 @@ android {
         applicationId = "com.codex.ciyuanbox.tv"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1043
-        versionName = "3.3.2"
+        versionCode = 1044
+        versionName = "3.3.3"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     }
     packaging {
@@ -154,5 +155,9 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.09.03"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:runner:1.5.2")
 
 }
