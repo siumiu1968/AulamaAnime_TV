@@ -6,7 +6,6 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jing.sakura.compose.common.LocalTvLanguage
@@ -81,7 +80,8 @@ class SegmentEditorDialogTest {
         focus("目前線路").performKeyInput { pressKey(Key.DirectionCenter) }
         compose.onNodeWithText("繼續調節").assertIsFocused()
         compose.onNodeWithText("繼續調節").performKeyInput { pressKey(Key.DirectionCenter) }
-        Espresso.pressBack()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
         compose.onNodeWithText("繼續調節").assertIsFocused()
         compose.runOnIdle { assertEquals(0, closed); assertNull(saved) }
         compose.onNodeWithText("放棄修改").performSemanticsAction(SemanticsActions.RequestFocus) { it() }
