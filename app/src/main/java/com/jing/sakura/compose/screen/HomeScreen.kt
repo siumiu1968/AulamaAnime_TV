@@ -109,9 +109,6 @@ import androidx.tv.material3.Surface
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
-import coil.imageLoader
-import coil.request.CachePolicy
-import coil.request.ImageRequest
 import com.jing.sakura.R
 import com.jing.sakura.auth.AulamaAccount
 import com.jing.sakura.category.AnimeCategoryActivity
@@ -125,7 +122,6 @@ import com.jing.sakura.compose.common.rememberCarouselGlide
 import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.CinematicArtworkBackdrop
 import com.jing.sakura.compose.common.AutoMarqueeText
-import com.jing.sakura.compose.common.Loading
 import com.jing.sakura.compose.common.TvLanguagePreferences
 import com.jing.sakura.compose.common.TvPreviewPreferences
 import com.jing.sakura.compose.common.ChineseText
@@ -137,12 +133,10 @@ import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.RetainedHeroPreview
 import com.jing.sakura.compose.common.rememberPreviewAnticipation
 import com.jing.sakura.compose.common.rememberPreviewReveal
-import com.jing.sakura.compose.common.LoadingOverlay
 import com.jing.sakura.compose.common.PosterRatingBadge
 import com.jing.sakura.compose.common.NewEpisodeBadge
 import com.jing.sakura.compose.common.rememberArtworkAccent
 import com.jing.sakura.compose.common.rememberPosterImageRequest
-import com.jing.sakura.compose.common.posterImageRequest
 import com.jing.sakura.compose.common.rememberReducedMotion
 import com.jing.sakura.compose.common.safelyRequestFocus
 import com.jing.sakura.compose.common.boundedVirtualCarouselMove
@@ -165,7 +159,7 @@ import com.jing.sakura.home.HERO_MANUAL_RESUME_DELAY_MS
 import com.jing.sakura.home.HERO_ROTATION_INTERVAL_MS
 import com.jing.sakura.home.HeroPreviewState
 import com.jing.sakura.home.homeDescriptionKey
-import com.jing.sakura.home.homePosterPrefetchUrls
+import com.jing.sakura.home.HomeStartupStage
 import com.jing.sakura.home.homeRowFocusBehavior
 import com.jing.sakura.home.homeRowShouldLoop
 import com.jing.sakura.home.homeRowVirtualItemKey
@@ -178,7 +172,6 @@ import com.jing.sakura.home.resolveHeroDescription
 import com.jing.sakura.home.restoredHomeRowSelection
 import com.jing.sakura.home.shouldResumeHeroRotation
 import com.jing.sakura.home.shouldPublishFocusedHomeCard
-import com.jing.sakura.home.shouldBlockForInitialHomeLoad
 import com.jing.sakura.home.shouldStartPreview
 import com.jing.sakura.home.shouldSkipHomeContentEntrance
 import com.jing.sakura.search.SearchActivity
@@ -213,26 +206,19 @@ fun HomeScreen(
     val previewEnabled by previewPreferences.previewEnabled.collectAsState()
     val updateChannelPreferences = remember(context) { TvUpdateChannelPreferences.get(context) }
     val updateChannel by updateChannelPreferences.channel.collectAsState()
-    val homePageDataResource = viewModel.homePageData.collectAsState().value
-    val recommendations = viewModel.recommendations.collectAsState().value
-    val syncedRows = viewModel.syncedRows.collectAsState().value
-    val syncedTodayUpdates = viewModel.todayUpdates.collectAsState().value
-    val theaterItems = viewModel.theaterItems.collectAsState().value
+    val startupContent = viewModel.startupContent.collectAsState().value
+    val homePageDataResource = startupContent.home
+    val recommendations = startupContent.recommendations
+    val syncedRows = startupContent.syncedRows
+    val syncedTodayUpdates = startupContent.todayUpdates
+    val theaterItems = startupContent.theaterItems
     val heroDescriptions = viewModel.heroDescriptions.collectAsState().value
+    val startupState = viewModel.startupState.collectAsState().value
+    val startupDataStatus = startupContent.dataStatus
     val displayData: HomePageData? = when (homePageDataResource) {
         is Resource.Success -> homePageDataResource.data
-        is Resource.Loading -> viewModel.lastHomePageData
-        is Resource.Error -> viewModel.lastHomePageData
-    }
-
-    if (
-        shouldBlockForInitialHomeLoad(
-            isLoading = homePageDataResource is Resource.Loading,
-            hasDisplayData = displayData != null
-        )
-    ) {
-        Loading()
-        return
+        is Resource.Loading -> startupContent.retainedHome
+        is Resource.Error -> startupContent.retainedHome
     }
 
     val sourceRows = displayData?.seriesList.orEmpty()
@@ -325,16 +311,18 @@ fun HomeScreen(
                 .forEach { add(it.copy(value = it.value.distinctAnime())) }
         }.distinctBy { it.name }
     }
-    val posterPrefetchUrls = remember(featured, rows) {
-        homePosterPrefetchUrls(featured, rows.map { it.value })
-    }
-    LaunchedEffect(posterPrefetchUrls) {
-        posterPrefetchUrls.chunked(4).forEach { batch ->
-            batch.forEach { imageUrl -> context.imageLoader.enqueue(posterImageRequest(context, imageUrl)) }
-            delay(100)
-        }
-    }
     val hasRenderableContent = featured.isNotEmpty() || rows.any { it.value.isNotEmpty() }
+    LaunchedEffect(featured, rows, startupDataStatus) {
+        viewModel.prepareHomeStartup(featured, rows.map { it.value }, startupDataStatus)
+    }
+    if (startupState.stage != HomeStartupStage.Ready) {
+        HomeStartupScreen(
+            state = startupState,
+            onRetry = viewModel::retryHomeStartup,
+            onContinue = viewModel::continueHomeStartup
+        )
+        return
+    }
     var heroIndex by remember { mutableStateOf(0) }
     var heroTransitionDirection by remember { mutableStateOf(1) }
     var focusedHero by remember { mutableStateOf<AnimeData?>(null) }
@@ -888,11 +876,6 @@ fun HomeScreen(
             onAccount = { showAccountDialog = true }
         )
 
-        LoadingOverlay(
-            visible = homePageDataResource is Resource.Loading &&
-                !homePageDataResource.silent &&
-                displayData == null
-        )
         if (homePageDataResource is Resource.Error && !hasRenderableContent) {
             ErrorTip(message = "暫時未能載入內容，請稍後再試") {
                 viewModel.loadData(false)

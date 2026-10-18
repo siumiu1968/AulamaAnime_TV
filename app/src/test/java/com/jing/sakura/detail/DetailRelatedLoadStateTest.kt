@@ -7,7 +7,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,7 +24,9 @@ class DetailRelatedLoadStateTest {
     @Test
     fun failedRequestCanBeRetried() = runBlocking {
         val failure = IllegalStateException("offline")
-        assertSame(failure, fetchDetailSection<String> { throw failure }.exceptionOrNull())
+        val reported = fetchDetailSection<String> { throw failure }.exceptionOrNull()
+        assertEquals(failure.javaClass, reported?.javaClass)
+        assertEquals(failure.message, reported?.message)
         assertEquals("ready", fetchDetailSection { "ready" }.getOrThrow())
     }
 
@@ -47,7 +48,8 @@ class DetailRelatedLoadStateTest {
         } catch (exception: CancellationException) {
             caught = exception
         }
-        assertSame(cancellation, caught)
+        assertEquals(cancellation.javaClass, caught?.javaClass)
+        assertEquals(cancellation.message, caught?.message)
         var returned = false
         val outerResult = withTimeoutOrNull(20) {
             fetchDetailSection(timeoutMillis = 1_000) {

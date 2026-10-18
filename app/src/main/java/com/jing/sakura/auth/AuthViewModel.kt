@@ -70,11 +70,10 @@ class AuthViewModel(
 
     private fun bootstrap() {
         loginJob = viewModelScope.launch {
-            val startedAtMs = System.currentTimeMillis()
             val session = repository.session.value
             if (session == null || session.isExpired()) {
                 repository.clearSession()
-                showEntryAfterBrandMoment(startedAtMs)
+                showEntry()
                 return@launch
             }
             when (val validation = repository.validateAccount(session)) {
@@ -84,7 +83,7 @@ class AuthViewModel(
                 }
                 AccountValidationResult.Unauthorized -> {
                     repository.clearSession()
-                    showEntryAfterBrandMoment(startedAtMs)
+                    showEntry()
                 }
                 AccountValidationResult.RegionBlocked -> {
                     guestModeStorage.setEnabled(false)
@@ -98,12 +97,7 @@ class AuthViewModel(
         }
     }
 
-    private suspend fun showEntryAfterBrandMoment(startedAtMs: Long) {
-        val remainingMs = AuthEntryPolicy.remainingBrandDisplayMs(
-            startedAtMs = startedAtMs,
-            nowMs = System.currentTimeMillis()
-        )
-        if (remainingMs > 0L) delay(remainingMs)
+    private fun showEntry() {
         _state.value = if (guestModeStorage.isEnabled()) {
             AuthUiState.Guest
         } else {

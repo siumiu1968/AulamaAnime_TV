@@ -4,9 +4,13 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import coil.imageLoader
+import coil.request.CachePolicy
+import coil.request.SuccessResult
 import com.jing.sakura.SakuraApplication
 import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.GuestLibraryStore
+import com.jing.sakura.auth.FavoritePayload
 import com.jing.sakura.auth.applyFavoriteNewEpisodeBadges
 import com.jing.sakura.auth.toAnimeData
 import com.jing.sakura.data.AnimeData
@@ -15,6 +19,7 @@ import com.jing.sakura.data.AnimePlayListEpisode
 import com.jing.sakura.data.HomePageData
 import com.jing.sakura.data.NamedValue
 import com.jing.sakura.data.Resource
+import com.jing.sakura.compose.common.posterImageRequest
 import com.jing.sakura.player.NavigateToPlayerArg
 import com.jing.sakura.repo.AnimationSource
 import com.jing.sakura.repo.CycaniSource
@@ -63,6 +68,19 @@ class HomeViewModel(
         )
     )
     private val _heroPreviewState = MutableStateFlow<HeroPreviewState>(HeroPreviewState.Idle)
+    private val _startupDataStatus = MutableStateFlow(HomeStartupDataStatus())
+    val startupDataStatus: StateFlow<HomeStartupDataStatus> = _startupDataStatus
+    private val _startupContent = MutableStateFlow(HomeStartupContent())
+    val startupContent: StateFlow<HomeStartupContent> = _startupContent
+    private val startupReadiness = HomeStartupReadiness(viewModelScope, loadPoster = { target ->
+        val context = SakuraApplication.context
+        val request = posterImageRequest(context, target.imageUrl, target.widthPx, target.heightPx)
+            .newBuilder()
+            .memoryCachePolicy(if (target.keepInMemory) CachePolicy.ENABLED else CachePolicy.READ_ONLY)
+            .build()
+        context.imageLoader.execute(request) is SuccessResult
+    })
+    val startupState: StateFlow<HomeStartupState> = startupReadiness.state
     private val remoteHeroPreviewHistory = ConcurrentHashMap<String, HeroPreviewHistory>()
 
     private val _sp = SakuraApplication.context.getSharedPreferences("source", Context.MODE_PRIVATE)
@@ -107,6 +125,7 @@ class HomeViewModel(
     private var loadDataJob: Pair<String, Job>? = null
     private val homeLoadGeneration = AtomicLong(0L)
     private var syncedContentRefreshJob: Job? = null
+    private val syncedContentGeneration = AtomicLong()
     private val lastSyncedContentStartedAtMs = AtomicLong(0L)
     private var heroPreviewJob: Job? = null
     private var heroPreviewRequestKey: String? = null
@@ -118,11 +137,7 @@ class HomeViewModel(
             combine(authRepository.session, guestLibraryStore.favorites) { session, favorites ->
                 session to favorites
             }.collectLatest { (session, favorites) ->
-                if (session == null) {
-                    loadGuestContent(favorites)
-                } else {
-                    loadSyncedContent()
-                }
+                startSyncedContentLoad(session == null, favorites).join()
             }
         }
     }
@@ -137,6 +152,7 @@ class HomeViewModel(
         viewModelScope.launch {
             _currentSource.emit(source)
         }
+        startupReadiness.reset()
         loadData(false, saveLastData = false)
     }
 
@@ -167,6 +183,7 @@ class HomeViewModel(
             if (job.first == sourceId) {
                 return
             }
+            homeLoadGeneration.incrementAndGet()
             job.second.cancel()
         }
         val lastValue = _homePageData.value
@@ -177,10 +194,12 @@ class HomeViewModel(
         val hasDisplayDataAtRequestStart = retainedHomeData != null
         lastHomePageData = retainedHomeData
         val generation = homeLoadGeneration.incrementAndGet()
+        _startupDataStatus.update { it.copy(coreLoading = true, coreFailed = false) }
+        _homePageData.value = Resource.Loading(silent = silent)
+        publishStartupContent()
         loadDataJob = sourceId to viewModelScope.launch(Dispatchers.IO) {
             var publishedPartial = false
             try {
-                _homePageData.emit(Resource.Loading(silent = silent))
                 val homeData = repository.fetchHomePageProgressively(sourceId) { partialData ->
                     if (shouldPublishProgressiveHomePayload(
                             hasDisplayDataAtRequestStart = hasDisplayDataAtRequestStart,
@@ -192,6 +211,7 @@ class HomeViewModel(
                         )
                     ) {
                         _homePageData.emit(Resource.Success(processHomePageData(partialData)))
+                        publishStartupContent()
                         publishedPartial = true
                     }
                 }
@@ -218,16 +238,20 @@ class HomeViewModel(
                     return@launch
                 }
                 if (publishedPartial) {
+                    _startupDataStatus.update { it.copy(coreFailed = true) }
                     Log.w("homepage", "完整首頁資料載入失敗，保留已載入時間表", ex)
                     return@launch
                 }
-                lastHomePageData = null
+                lastHomePageData = retainedHomeData
                 Log.e("homepage", "请求数据失败", ex)
 
                 val message = "請求資料失敗：" + ex.message
+                _startupDataStatus.update { it.copy(coreFailed = true) }
                 _homePageData.emit(Resource.Error(message))
             } finally {
                 if (homeLoadGeneration.get() == generation) {
+                    _startupDataStatus.update { it.copy(coreLoading = false) }
+                    publishStartupContent()
                     loadDataJob = null
                 }
             }
@@ -236,23 +260,71 @@ class HomeViewModel(
 
     fun getAllSources(): List<AnimationSource> = repository.animationSources
 
-    fun refreshSyncedContent() {
+    fun prepareHomeStartup(featured: List<AnimeData>, rows: List<List<AnimeData>>, dataStatus: HomeStartupDataStatus) {
+        startupReadiness.update(
+            nextPlan = homeStartupPosterPlan(featured, rows),
+            nextData = dataStatus,
+            hasRenderableContent = featured.isNotEmpty() || rows.any { it.isNotEmpty() }
+        )
+    }
+
+    fun retryHomeStartup() {
+        val status = _startupDataStatus.value
+        if (status.coreFailed || status.coreLoading) {
+            homeLoadGeneration.incrementAndGet()
+            loadDataJob?.second?.cancel()
+            loadDataJob = null
+            loadData(false)
+        }
+        if (status.syncedFailed || status.syncedLoading) refreshSyncedContent(force = true)
+        startupReadiness.retry()
+    }
+
+    fun continueHomeStartup() = startupReadiness.continueToHome()
+
+    private fun publishStartupContent() {
+        val status = _startupDataStatus.value
+        _startupContent.value = HomeStartupContent(
+            dataStatus = status,
+            home = _homePageData.value,
+            retainedHome = lastHomePageData,
+            recommendations = _recommendations.value,
+            syncedRows = _syncedRows.value,
+            todayUpdates = _todayUpdates.value,
+            theaterItems = _theaterItems.value
+        )
+    }
+
+    fun refreshSyncedContent(force: Boolean = false) {
         val now = System.currentTimeMillis()
         if (
-            syncedContentRefreshJob?.isActive == true ||
-            now - lastSyncedContentStartedAtMs.get() < SYNCED_CONTENT_REFRESH_DEBOUNCE_MS
+            !force && (syncedContentRefreshJob?.isActive == true ||
+                now - lastSyncedContentStartedAtMs.get() < SYNCED_CONTENT_REFRESH_DEBOUNCE_MS)
         ) return
-        syncedContentRefreshJob = viewModelScope.launch(Dispatchers.IO) {
-            if (authRepository.session.value == null) {
-                loadGuestContent(guestLibraryStore.favorites.value)
-            } else {
-                loadSyncedContent()
+        startSyncedContentLoad(authRepository.session.value == null, guestLibraryStore.favorites.value)
+    }
+
+    private fun startSyncedContentLoad(guest: Boolean, favorites: List<FavoritePayload>): Job {
+        val generation = syncedContentGeneration.incrementAndGet()
+        syncedContentRefreshJob?.cancel()
+        _startupDataStatus.update { it.copy(syncedLoading = true, syncedFailed = false) }
+        publishStartupContent()
+        return viewModelScope.launch(Dispatchers.IO) {
+            var successful = false
+            try {
+                successful = if (guest) loadGuestContent(favorites) else loadSyncedContent()
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                Log.e("tv-home-sync", "載入首頁同步內容失敗", exception)
+            } finally {
+                if (syncedContentGeneration.get() == generation) {
+                    _startupDataStatus.update { it.copy(syncedLoading = false, syncedFailed = !successful) }
+                    publishStartupContent()
+                    syncedContentRefreshJob = null
+                }
             }
-        }.also { job ->
-            job.invokeOnCompletion {
-                if (syncedContentRefreshJob === job) syncedContentRefreshJob = null
-            }
-        }
+        }.also { syncedContentRefreshJob = it }
     }
 
     fun prefetchHeroDescriptions(items: List<AnimeData>) {
@@ -499,11 +571,13 @@ class HomeViewModel(
         )
     }
 
-    private suspend fun loadSyncedContent() {
+    private suspend fun loadSyncedContent(): Boolean {
         lastSyncedContentStartedAtMs.set(System.currentTimeMillis())
         val (homeResult, freshSchedule) = coroutineScope {
-            val home = async { runCatching { authRepository.fetchTvHome() } }
-            val schedule = async { runCatching { authRepository.fetchPublicSchedule() }.getOrNull() }
+            val home = async { runCatching { authRepository.fetchTvHome() }
+                .onFailure { if (it is CancellationException) throw it } }
+            val schedule = async { runCatching { authRepository.fetchPublicSchedule() }
+                .onFailure { if (it is CancellationException) throw it }.getOrNull() }
             home.await() to schedule.await()
         }
         val schedule = freshSchedule ?: homeResult.getOrNull()?.schedule
@@ -517,7 +591,9 @@ class HomeViewModel(
             .onFailure { Log.e("tv-home-sync", "載入首頁同步內容失敗", it) }
         val localHistory = videoHistoryDao.queryAllHistoryRecords()
 
-        runCatching { authRepository.fetchTvLibrary() }
+        val libraryResult = runCatching { authRepository.fetchTvLibrary() }
+            .onFailure { if (it is CancellationException) throw it }
+        libraryResult
             .onSuccess { payload ->
                 replaceRemoteHeroPreviewHistory(
                     payload.historyItems.mapIndexed { index, history ->
@@ -550,14 +626,16 @@ class HomeViewModel(
                 }
             }
             .onFailure { Log.e("tv-library-sync", "載入帳戶收藏及紀錄失敗", it) }
+        return homeResult.isSuccess && libraryResult.isSuccess
     }
 
-    private suspend fun loadGuestContent(favorites: List<com.jing.sakura.auth.FavoritePayload>) {
+    private suspend fun loadGuestContent(favorites: List<com.jing.sakura.auth.FavoritePayload>): Boolean {
         lastSyncedContentStartedAtMs.set(System.currentTimeMillis())
         replaceRemoteHeroPreviewHistory(emptyList())
         _recommendations.value = emptyList()
         _todayUpdates.value = emptyList()
-        val schedule = runCatching { authRepository.fetchPublicSchedule() }.getOrNull()
+        val schedule = runCatching { authRepository.fetchPublicSchedule() }
+            .onFailure { if (it is CancellationException) throw it }.getOrNull()
         val localHistory = videoHistoryDao.queryAllHistoryRecords()
         val recent = videoHistoryDao.queryRecentHistory(GUEST_CONTINUE_WATCHING_LIMIT)
             .map(VideoHistoryEntity::toLocalAnimeData)
@@ -575,9 +653,12 @@ class HomeViewModel(
         _syncedRows.value = buildList {
             if (upNext.isNotEmpty()) add(NamedValue(HOME_UP_NEXT_TITLE, upNext))
         }
-        runCatching { authRepository.fetchPublicTheaterItems() }
+        val theaterResult = runCatching { authRepository.fetchPublicTheaterItems() }
+            .onFailure { if (it is CancellationException) throw it }
+        theaterResult
             .onSuccess { _theaterItems.value = it }
             .onFailure { Log.e("tv-theater-sync", "載入公開劇場版目錄失敗", it) }
+        return theaterResult.isSuccess
     }
 
     private fun clearSyncedContent() {

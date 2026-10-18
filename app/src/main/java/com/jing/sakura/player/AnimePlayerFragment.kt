@@ -11,6 +11,7 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
@@ -80,6 +81,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
     private var player: ExoPlayer? = null
     private var trackSelector: DefaultTrackSelector? = null
     private var glue: ProgressTransportControlGlue<LeanbackPlayerAdapter>? = null
+    private val progressFocusListener = ViewTreeObserver.OnGlobalFocusChangeListener { old, next ->
+        if (old?.id == LeanbackR.id.playback_progress && next !== old) glue?.resetProgressSeek()
+    }
     private var current4kMode = Tv4kMode.OFF
     private var skipSegmentActions: View? = null
     private var skipActionsExiting = false
@@ -276,6 +280,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        view.viewTreeObserver.addOnGlobalFocusChangeListener(progressFocusListener)
         view.background = Color.BLACK.toDrawable()
         progressBarManager.setRootView(view as ViewGroup)
         progressBarManager.enableProgressBar()
@@ -358,6 +363,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     override fun onStop() {
+        glue?.resetProgressSeek()
         closeSegmentEditor(resume = false)
         // The season is over and the sheet is a terminal state: leaving the app closes the player.
         if (seasonFinaleVisible) activity?.finish()
@@ -392,6 +398,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
     private fun loadEpisode(payload: EpisodeUrlAndHistory) {
         val localPlayer = player ?: return
+        glue?.resetProgressSeek()
         progressBarManager.show()
         handledEndedEpisodeIndex = -1
         nearEndAutoAdvanceSuppressed = false
@@ -544,6 +551,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
         val target = viewModel.segmentEditorTarget() ?: return
         val localPlayer = player ?: return
         val host = segmentEditorView ?: return
+        glue?.resetProgressSeek()
         applyCenterKeyAction(centerKeyController.cancel())
         snapshotPlaybackPosition()
         segmentEditorPositionMs = localPlayer.currentPosition.coerceAtLeast(0L)
@@ -790,8 +798,9 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     fun handlePlaybackKeyEvent(event: KeyEvent): Boolean {
-        if (segmentEditorVisible) return false
+        if (segmentEditorVisible) { glue?.resetProgressSeek(); return false }
         if (seasonFinaleVisible) {
+            glue?.resetProgressSeek()
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
                 if (event.action == KeyEvent.ACTION_UP) activity?.finish()
                 return true
@@ -833,6 +842,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
         if (primaryFocused || continueFocused) {
             return handleSkipActionKey(event, continueFocused)
         }
+
+        if (glue?.prepareProgressSeekKeyEvent(event, playbackProgress?.hasFocus() == true) == true) return true
 
         if (isCenterKey(event.keyCode)) {
             return when (
@@ -1204,6 +1215,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     override fun onDestroyView() {
+        view?.viewTreeObserver?.removeOnGlobalFocusChangeListener(progressFocusListener)
+        glue?.resetProgressSeek()
         closeSegmentEditor(resume = false)
         segmentEditorView?.disposeComposition()
         segmentEditorView = null

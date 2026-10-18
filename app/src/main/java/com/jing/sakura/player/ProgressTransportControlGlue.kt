@@ -36,6 +36,9 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
 
     private val appContext = context
     private var secondaryActionsAdapter: ArrayObjectAdapter? = null
+    private val heldSeek = PlaybackHeldSeekController()
+    private var heldSeekStepMs: Long? = null
+    private var nativeProgressSeekInProgress = false
 
     private val previousAction = SkipPreviousAction(context)
     private val rewindAction = RewindAction(context)
@@ -92,7 +95,47 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
     }
 
     private fun updateSeekIncrement() {
-        transportPresenter?.defaultSeekIncrement = PlaybackSeekPolicy.fraction(playerAdapter.duration)
+        val duration = playerAdapter.duration
+        transportPresenter?.defaultSeekIncrement = PlaybackSeekPolicy.fraction(
+            duration, heldSeekStepMs ?: PlaybackSeekPolicy.incrementMs(duration))
+    }
+
+    /** Returns true only for throttled repeats; accepted events go to Leanback's SeekBar once. */
+    fun prepareProgressSeekKeyEvent(event: KeyEvent, progressFocused: Boolean): Boolean {
+        if (!progressFocused || !isSeekEnabled || seekProvider != null || playerAdapter.duration <= 0L) {
+            resetProgressSeek()
+            return false
+        }
+        val direction = when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> -1
+            KeyEvent.KEYCODE_DPAD_RIGHT -> 1
+            else -> null
+        }
+        if (direction == null || event.action != KeyEvent.ACTION_DOWN) {
+            resetSeekAcceleration()
+            if (event.action == KeyEvent.ACTION_UP && event.keyCode in listOf(
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+                nativeProgressSeekInProgress = false
+            }
+            return false
+        }
+        val step = heldSeek.onKeyDown(direction, event.downTime, event.eventTime,
+            event.repeatCount, playerAdapter.duration) ?: return true
+        heldSeekStepMs = step
+        nativeProgressSeekInProgress = true
+        updateSeekIncrement()
+        return false
+    }
+
+    private fun resetSeekAcceleration() {
+        heldSeek.reset()
+        heldSeekStepMs = null
+        updateSeekIncrement()
+    }
+
+    fun resetProgressSeek() {
+        nativeProgressSeekInProgress = false
+        resetSeekAcceleration()
     }
 
     override fun onUpdateProgress() {
@@ -121,6 +164,11 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
 
     override fun onKey(view: View?, keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
+            resetSeekAcceleration()
+            if (nativeProgressSeekInProgress) {
+                if (event.action == KeyEvent.ACTION_UP) nativeProgressSeekInProgress = false
+                return false
+            }
             if (event.action == KeyEvent.ACTION_DOWN) return true
             if (host.isControlsOverlayVisible) {
                 host.hideControlsOverlay(true)
@@ -131,6 +179,7 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
         }
 
         if (keyCode == KeyEvent.KEYCODE_MENU) {
+            resetProgressSeek()
             if (event.action == KeyEvent.ACTION_DOWN) return true
             chooseEpisode()
             return true
