@@ -53,7 +53,8 @@ data class TvAnimeDetailPayload(
     val related: List<com.jing.sakura.data.AnimeData> = emptyList(),
     val recommendations: List<com.jing.sakura.data.AnimeData> = emptyList(),
     val personalizedRecommendations: Boolean = false,
-    val completion: SeriesCompletion = SeriesCompletion()
+    val completion: SeriesCompletion = SeriesCompletion(),
+    val relatedReady: Boolean = false
 )
 
 data class TvCycaniEpisode(

@@ -152,6 +152,7 @@ object TvLibraryParser {
                 addInfo("編劇", info?.primitiveString("writer").orEmpty())
             },
             related = RecommendationParser.parseItems(item.array("related")),
+            relatedReady = item.boolean("relatedReady"),
             recommendations = RecommendationParser.parseItems(item.array("recommendations")),
             personalizedRecommendations = item.boolean("personalizedRecommendations"),
             completion = SeriesCompletion(

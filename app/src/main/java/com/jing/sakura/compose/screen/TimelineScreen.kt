@@ -89,6 +89,7 @@ import com.jing.sakura.compose.common.AulamaTvColors
 import com.jing.sakura.compose.common.CinematicArtworkBackdrop
 import com.jing.sakura.compose.common.AutoMarqueeText
 import com.jing.sakura.compose.common.ErrorTip
+import com.jing.sakura.compose.common.PreviewPreparationHint
 import com.jing.sakura.compose.common.RetainedHeroPreview
 import com.jing.sakura.compose.common.rememberReducedMotion
 import com.jing.sakura.compose.common.rememberPreviewReveal
@@ -103,6 +104,7 @@ import com.jing.sakura.data.Resource
 import com.jing.sakura.data.UpdateTimeLine
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.home.HeroPreviewState
+import com.jing.sakura.home.runPreviewFocusDwell
 import com.jing.sakura.home.PREVIEW_DIM_DELAY_MS
 import com.jing.sakura.home.PREVIEW_START_AFTER_DIM_DELAY_MS
 import com.jing.sakura.home.isPreviewPlaybackActive
@@ -285,6 +287,7 @@ fun TimeLine(
             spec = readyPreview,
             reveal = previewReveal,
             retainWhileFading = isScreenResumed,
+            playbackEnabled = previewArmed,
             onReady = { previewFirstFrameReady = true },
             onError = {
                 previewArmed = false
@@ -304,6 +307,7 @@ fun TimeLine(
             accent = accent,
             previewReveal = previewReveal
         )
+        PreviewPreparationHint(previewArmed && !previewFirstFrameReady)
         Column(modifier = Modifier.fillMaxSize()) {
             Spacer(Modifier.height(8.dp))
             Box(
@@ -450,19 +454,21 @@ fun TimeLine(
         previewFirstFrameReady = false
         val selected = highlightedAnime ?: return@LaunchedEffect
         if (!rowHasFocus || !isScreenResumed || !previewEnabled) return@LaunchedEffect
-        delay(PREVIEW_DIM_DELAY_MS)
-        dimUnselected = true
-        delay(PREVIEW_START_AFTER_DIM_DELAY_MS)
-        if (!shouldStartPreview(
-                scheduledSession = scheduledSession,
-                currentSession = previewSession,
-                isScreenResumed = isScreenResumed,
-                hasFocusedContent = rowHasFocus,
-                previewEnabled = previewEnabled
-            )
-        ) return@LaunchedEffect
-        onPreparePreview(selected)
-        previewArmed = true
+        runPreviewFocusDwell(
+            prepare = { onPreparePreview(selected) },
+            dim = { dimUnselected = true },
+            arm = {
+                if (!shouldStartPreview(
+                        scheduledSession = scheduledSession,
+                        currentSession = previewSession,
+                        isScreenResumed = isScreenResumed,
+                        hasFocusedContent = rowHasFocus,
+                        previewEnabled = previewEnabled
+                    )
+                ) return@runPreviewFocusDwell
+                previewArmed = true
+            }
+        )
     }
 
     LaunchedEffect(previewActive, readyPreview?.key) {

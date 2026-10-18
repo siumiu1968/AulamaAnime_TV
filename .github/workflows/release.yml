@@ -75,12 +75,12 @@ jobs:
             mkdir -p app/build/release-startup-smoke
             adb install -r -t app/build/outputs/apk/debug/app-debug.apk
             adb install -r -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-            adb shell am instrument -w -r -e class com.jing.sakura.compose.screen.RegionBlockedFocusTest,com.jing.sakura.player.PlayerProgressAlignmentTest,com.jing.sakura.player.SegmentEditorDialogTest,com.jing.sakura.compose.screen.ArtworkLoadingTipsTest,com.jing.sakura.compose.screen.HomeStartupScreenTest com.codex.ciyuanbox.tv.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/release-startup-smoke/focus-tests.log
+            adb shell am instrument -w -r -e class com.jing.sakura.compose.screen.RegionBlockedFocusTest,com.jing.sakura.player.PlayerProgressAlignmentTest,com.jing.sakura.player.SegmentEditorDialogTest,com.jing.sakura.compose.screen.ArtworkLoadingTipsTest,com.jing.sakura.compose.screen.HomeStartupScreenTest,com.jing.sakura.compose.common.HeroPreviewPreparationTest com.codex.ciyuanbox.tv.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/release-startup-smoke/focus-tests.log
             adb pull /sdcard/Android/data/com.codex.ciyuanbox.tv/files/region-admin-actions.png app/build/release-startup-smoke/region-admin-actions.png || true
             adb pull /sdcard/Android/data/com.codex.ciyuanbox.tv/files/segment-editor.png app/build/release-startup-smoke/segment-editor.png || true
             adb pull /sdcard/Android/data/com.codex.ciyuanbox.tv/files/loading-tips.png app/build/release-startup-smoke/loading-tips.png || true
             adb pull /sdcard/Android/data/com.codex.ciyuanbox.tv/files/home-startup-retry.png app/build/release-startup-smoke/home-startup-retry.png || true
-            grep -q 'OK (12 tests)' app/build/release-startup-smoke/focus-tests.log
+            grep -q 'OK (14 tests)' app/build/release-startup-smoke/focus-tests.log
             adb uninstall com.codex.ciyuanbox.tv
             python3 scripts/smoke_release_apk.py "$SMOKE_APK"
       - name: Upload Android TV startup evidence

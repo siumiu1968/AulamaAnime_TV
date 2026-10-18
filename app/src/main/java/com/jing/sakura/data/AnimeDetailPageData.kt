@@ -9,5 +9,6 @@ data class AnimeDetailPageData(
     val playLists: List<AnimePlayList>,
     val otherAnimeList: List<AnimeData> = listOf(),
     val infoList: List<String> = emptyList(),
-    val lastPlayEpisodePosition: Pair<Int, Int> = Pair(0, 0)
+    val lastPlayEpisodePosition: Pair<Int, Int> = Pair(0, 0),
+    val relatedReady: Boolean = false
 )

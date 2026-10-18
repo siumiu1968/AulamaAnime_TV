@@ -217,6 +217,7 @@ class TvLibraryParserTest {
                 {
                   "ok": true,
                   "item": {
+                    "relatedReady": true,
                     "related": [
                       {"id":"same-series","title":"同系列","poster":"related.jpg"}
                     ],
@@ -230,6 +231,7 @@ class TvLibraryParserTest {
         )
 
         assertEquals("同系列", payload.related.single().title)
+        assertTrue(payload.relatedReady)
         assertEquals("為你推介", payload.recommendations.single().title)
         assertTrue(payload.personalizedRecommendations)
     }

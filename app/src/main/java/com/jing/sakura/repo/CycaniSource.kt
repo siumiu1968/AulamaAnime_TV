@@ -242,6 +242,7 @@ class CycaniSource(
             defaultPlayListIndex = 0,
             playLists = playLists,
             otherAnimeList = detail.related,
+            relatedReady = detail.relatedReady,
             infoList = buildList {
                 item.year.takeIf(String::isNotBlank)?.let { add("年份：${localizeText(it)}") }
                 item.tags.takeIf(String::isNotBlank)?.let { add("類型：${localizeText(it)}") }
@@ -251,17 +252,6 @@ class CycaniSource(
     }
 
     private suspend fun fetchWebDetailPage(animeId: String): AnimeDetailPageData = coroutineScope {
-        val relatedItems = async {
-            try {
-                apiGetDataArray("$API_BASE_URL/video/prefer", linkedMapOf("vod_id" to animeId))
-                    .asJsonObjects().map { parseAnimeItem(it) }
-                    .filterNot { it.id == animeId || isSuppressedAnime(it) }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                emptyList()
-            }
-        }
         val cachedSynopsis = async {
             try {
                 withTimeoutOrNull(CACHED_SYNOPSIS_TIMEOUT_MS) {
@@ -372,7 +362,7 @@ class CycaniSource(
             imageUrl = imageUrl,
             playLists = playLists,
             infoList = infoList,
-            otherAnimeList = relatedItems.await()
+            otherAnimeList = emptyList()
         )
     }
 
@@ -454,11 +444,6 @@ class CycaniSource(
             throw RuntimeException(trad("未找到播放列表"))
         }
 
-        val related = apiGetDataArray(
-            "$API_BASE_URL/video/prefer",
-            linkedMapOf("vod_id" to animeId)
-        ).asJsonObjects().map { parseAnimeItem(it) }.filterNot(::isSuppressedAnime)
-
         val infoList = buildList {
             addInfo("地區", trad(detail.string("vod_area")))
             addInfo("年份", trad(detail.string("vod_year")))
@@ -479,7 +464,7 @@ class CycaniSource(
             description = description,
             imageUrl = imageUrl,
             playLists = playLists,
-            otherAnimeList = related.filter { it.id != animeId },
+            otherAnimeList = emptyList(),
             infoList = infoList
         )
     }

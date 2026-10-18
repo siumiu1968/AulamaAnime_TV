@@ -130,6 +130,7 @@ import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.lightweightEntrance
 import com.jing.sakura.compose.common.ChangeSourceDialog
 import com.jing.sakura.compose.common.ErrorTip
+import com.jing.sakura.compose.common.PreviewPreparationHint
 import com.jing.sakura.compose.common.RetainedHeroPreview
 import com.jing.sakura.compose.common.rememberPreviewAnticipation
 import com.jing.sakura.compose.common.rememberPreviewReveal
@@ -152,6 +153,7 @@ import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.history.HistoryActivity
 import com.jing.sakura.home.HOME_UP_NEXT_TITLE
 import com.jing.sakura.home.HomeViewModel
+import com.jing.sakura.home.runPreviewFocusDwell
 import com.jing.sakura.home.PREVIEW_DIM_DELAY_MS
 import com.jing.sakura.home.PREVIEW_START_AFTER_DIM_DELAY_MS
 import com.jing.sakura.home.PREVIEW_TYPICAL_LOAD_MS
@@ -580,19 +582,21 @@ fun HomeScreen(
                 previewArmed = false
                 previewFirstFrameReady = false
                 val selected = hero ?: return@collectLatest
-                delay(PREVIEW_DIM_DELAY_MS)
-                previewIdle = true
-                delay(PREVIEW_START_AFTER_DIM_DELAY_MS)
-                if (!shouldStartPreview(
-                        scheduledSession = scheduledSession,
-                        currentSession = previewSession,
-                        isScreenResumed = isScreenResumed,
-                        hasFocusedContent = focusedRowIndex != null,
-                        previewEnabled = previewEnabled
-                    )
-                ) return@collectLatest
-                viewModel.prepareHeroPreview(selected)
-                previewArmed = true
+                runPreviewFocusDwell(
+                    prepare = { viewModel.prepareHeroPreview(selected) },
+                    dim = { previewIdle = true },
+                    arm = {
+                        if (!shouldStartPreview(
+                                scheduledSession = scheduledSession,
+                                currentSession = previewSession,
+                                isScreenResumed = isScreenResumed,
+                                hasFocusedContent = focusedRowIndex != null,
+                                previewEnabled = previewEnabled
+                            )
+                        ) return@runPreviewFocusDwell
+                        previewArmed = true
+                    }
+                )
             }
     }
     LaunchedEffect(previewActive, readyPreview?.key, focusedRowIndex) {
@@ -686,6 +690,7 @@ fun HomeScreen(
             spec = readyPreview,
             reveal = previewReveal,
             retainWhileFading = isScreenResumed,
+            playbackEnabled = previewArmed,
             onReady = { previewFirstFrameReady = true },
             onError = {
                 previewFirstFrameReady = false
@@ -833,6 +838,7 @@ fun HomeScreen(
             }
         }
 
+        PreviewPreparationHint(previewArmed && !previewFirstFrameReady)
         HomeTopBar(
             modifier = Modifier
                 .align(Alignment.TopCenter)

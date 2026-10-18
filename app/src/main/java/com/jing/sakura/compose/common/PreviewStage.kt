@@ -5,6 +5,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -14,12 +17,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.tv.material3.Text
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import com.jing.sakura.home.HeroPreviewSpec
 import kotlinx.coroutines.flow.first
+
+@OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
+@Composable
+internal fun PreviewPreparationHint(visible: Boolean) {
+    if (!visible) return
+    Box(Modifier.fillMaxSize().padding(top = 78.dp, end = 52.dp)) {
+        Text(
+            text = localizedText("預覽準備中…"),
+            color = AulamaTvColors.TextSecondary,
+            fontSize = 14.sp,
+            modifier = Modifier.align(Alignment.TopEnd)
+                .background(AulamaTvColors.Background.copy(alpha = 0.8f), RoundedCornerShape(20.dp))
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+        )
+    }
+}
 
 /**
  * How far the cover has dissolved into the playing preview: 0 = artwork, 1 = video.
@@ -70,6 +93,7 @@ fun RetainedHeroPreview(
     reveal: State<Float>,
     retainWhileFading: Boolean,
     modifier: Modifier = Modifier,
+    playbackEnabled: Boolean = true,
     onReady: () -> Unit = {},
     onError: (String) -> Unit = {},
     onEnded: () -> Unit = {}
@@ -88,8 +112,9 @@ fun RetainedHeroPreview(
     val displayed = spec ?: fadingSpec?.takeIf { retainWhileFading } ?: return
     HeroPreviewPlayer(
         spec = displayed,
+        playbackEnabled = if (spec != null) playbackEnabled else retainWhileFading && reveal.value > 0.001f,
         volume = { AulamaMotion.unit(reveal.value) },
-        onReady = onReady,
+        onReady = { if (spec?.key == displayed.key) onReady() },
         onError = onError,
         onEnded = onEnded,
         modifier = modifier.graphicsLayer { alpha = AulamaMotion.unit(reveal.value) }

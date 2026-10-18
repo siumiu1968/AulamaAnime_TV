@@ -133,5 +133,19 @@ class DetailPageCacheTest {
         assertFalse(directory.listFiles()!!.single().readText().contains("token=private"))
     }
 
+    @Test fun oldUnverifiedRelatedItemsStayHiddenUntilCloudEnrichment() {
+        cache().put("cycani", detail(), now)
+        val file = directory.listFiles()!!.single()
+        val old = JsonParser.parseString(file.readText()).asJsonObject
+        old.remove("relatedVersion")
+        file.writeText(old.toString())
+        val restored = cache().get("cycani", "cw:3963")!!
+        assertTrue(restored.detail.otherAnimeList.isEmpty())
+        assertTrue(restored.needsEnrichment(now))
+        assertTrue(restored.mergeCore(detail(), "cycani").otherAnimeList.isEmpty())
+        cache().put("cycani", detail(), now)
+        assertEquals("related:2", cache().get("cycani", "cw:3963")!!.detail.otherAnimeList.single().id)
+    }
+
     private companion object { const val HOUR = 60L * 60L * 1_000L }
 }

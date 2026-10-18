@@ -27,6 +27,8 @@ class PlayerProgressAlignmentTest {
     private class SeekAdapter : PlayerAdapter() {
         var positionMs = 100_000L
         val seeks = mutableListOf<Long>()
+        override fun play() = Unit
+        override fun pause() = Unit
         override fun isPrepared() = true
         override fun getDuration() = 24 * 60_000L
         override fun getCurrentPosition() = positionMs

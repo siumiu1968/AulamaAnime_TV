@@ -48,6 +48,7 @@ import org.koin.core.qualifier.qualifier
 fun HeroPreviewPlayer(
     spec: HeroPreviewSpec,
     modifier: Modifier = Modifier,
+    playbackEnabled: Boolean = true,
     volume: () -> Float = { 1f },
     onReady: () -> Unit = {},
     onError: (String) -> Unit = {},
@@ -63,6 +64,7 @@ fun HeroPreviewPlayer(
     val currentOnEnded by rememberUpdatedState(onEnded)
     val currentVolume by rememberUpdatedState(volume)
     var showPoster by remember { mutableStateOf(true) }
+    var displayedKey by remember { mutableStateOf<String?>(null) }
     val controller = remember(context, okHttpClient) {
         HeroPreviewController(
             context = context,
@@ -100,8 +102,12 @@ fun HeroPreviewPlayer(
         }
     }
 
-    LaunchedEffect(spec.key) {
-        showPoster = true
+    LaunchedEffect(spec.key, playbackEnabled) {
+        if (displayedKey != spec.key) {
+            displayedKey = spec.key
+            showPoster = true
+        }
+        controller.setPlaybackEnabled(playbackEnabled)
         controller.load(spec)
     }
 
@@ -144,6 +150,7 @@ private class HeroPreviewController(
     private var playbackRetryCount = 0
     private var loadGeneration = 0L
     private var volume = 1f
+    private var playbackEnabled = true
 
     private val playerListener = object : Player.Listener {
         override fun onRenderedFirstFrame() {
@@ -215,6 +222,11 @@ private class HeroPreviewController(
     fun setVolume(value: Float) {
         volume = value
         player?.volume = value
+    }
+
+    fun setPlaybackEnabled(enabled: Boolean) {
+        playbackEnabled = enabled
+        player?.playWhenReady = enabled
     }
 
     fun load(spec: HeroPreviewSpec) {
@@ -299,7 +311,7 @@ private class HeroPreviewController(
             setMediaSource(DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(mediaItem))
             seekTo(spec.startPositionMs.coerceAtLeast(0L))
             prepare()
-            playWhenReady = true
+            playWhenReady = playbackEnabled
         }
     }
 

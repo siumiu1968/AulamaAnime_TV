@@ -25,15 +25,22 @@ class RelatedAnimeMergeTest {
     }
 
     @Test
-    fun `appends source-only items and applies fallback source id`() {
+    fun `source metadata cannot append generic recommendations`() {
         val cloud = listOf(anime(id = "a"))
         val source = listOf(anime(id = "a"), anime(id = "c", description = "簡介 C"))
 
         val merged = mergeRelatedAnime(cloud, source, fallbackSourceId = "20")
 
-        assertEquals(listOf("a", "c"), merged.map(AnimeData::id))
-        assertEquals(listOf("20", "20"), merged.map(AnimeData::sourceId))
-        assertEquals("簡介 C", merged.last().description)
+        assertEquals(listOf("a"), merged.map(AnimeData::id))
+        assertEquals(listOf("20"), merged.map(AnimeData::sourceId))
+        assertEquals("", merged.single().description)
+    }
+
+    @Test
+    fun `empty verified related result never falls back to source recommendations`() {
+        assertEquals(emptyList<AnimeData>(), mergeRelatedAnime(
+            cloud = emptyList(), source = listOf(anime("generic")), fallbackSourceId = "20"
+        ))
     }
 
     private fun anime(

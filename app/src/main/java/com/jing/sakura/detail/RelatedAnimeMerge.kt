@@ -14,11 +14,10 @@ internal fun mergeRelatedAnime(
     val normalizedSource = source.map { anime ->
         anime.copy(sourceId = anime.sourceId.ifBlank { fallbackSourceId })
     }
-    if (cloud.isEmpty()) return normalizedSource
+    if (cloud.isEmpty()) return emptyList()
 
     val sourceByKey = normalizedSource.associateBy(::relatedAnimeKey)
     val sourceById = normalizedSource.associateBy(AnimeData::id)
-    val matchedSourceKeys = mutableSetOf<String>()
 
     val mergedCloud = cloud.map { cloudAnime ->
         val normalizedCloud = cloudAnime.copy(
@@ -30,7 +29,6 @@ internal fun mergeRelatedAnime(
         if (sourceAnime == null) {
             normalizedCloud
         } else {
-            matchedSourceKeys += relatedAnimeKey(sourceAnime)
             normalizedCloud.copy(
                 url = normalizedCloud.url.ifBlank(sourceAnime::url),
                 title = normalizedCloud.title.ifBlank(sourceAnime::title),
@@ -43,7 +41,5 @@ internal fun mergeRelatedAnime(
         }
     }
 
-    return (mergedCloud + normalizedSource.filterNot {
-        relatedAnimeKey(it) in matchedSourceKeys
-    }).distinctBy(::relatedAnimeKey)
+    return mergedCloud.distinctBy(::relatedAnimeKey)
 }

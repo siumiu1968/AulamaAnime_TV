@@ -19,16 +19,26 @@ class DetailPageCache(
     data class Entry(
         val detail: AnimeDetailPageData,
         val savedAt: Long,
-        val enrichedAt: Long
+        val enrichedAt: Long,
+        val relatedVersion: Int = 0
     ) {
         fun needsEnrichment(nowMs: Long): Boolean =
-            enrichedAt <= 0 || nowMs < enrichedAt || nowMs - enrichedAt >= ENRICHMENT_AGE_MS
+            relatedVersion != RELATED_VERSION || enrichedAt <= 0 || nowMs < enrichedAt || nowMs - enrichedAt >= ENRICHMENT_AGE_MS
 
         fun isBehind(expectedEpisodes: Int): Boolean = expectedEpisodes > 0 &&
             expectedEpisodes > (detail.playLists.getOrNull(detail.defaultPlayListIndex)?.episodeList?.size ?: 0)
 
         fun mergeCore(fresh: AnimeDetailPageData, sourceId: String): AnimeDetailPageData =
-            fresh.copy(otherAnimeList = mergeRelatedAnime(detail.otherAnimeList, fresh.otherAnimeList, sourceId))
+            fresh.copy(otherAnimeList = when {
+                fresh.relatedReady -> fresh.otherAnimeList
+                relatedVersion == RELATED_VERSION -> mergeRelatedAnime(detail.otherAnimeList, fresh.otherAnimeList, sourceId)
+                else -> emptyList()
+            }, relatedReady = fresh.relatedReady || relatedVersion == RELATED_VERSION)
+
+        fun forDisplay(): Entry = copy(detail = detail.copy(
+            otherAnimeList = if (relatedVersion == RELATED_VERSION) detail.otherAnimeList else emptyList(),
+            relatedReady = relatedVersion == RELATED_VERSION
+        ))
     }
 
     private data class Rating(val score: Int, val savedAt: Long)
@@ -36,7 +46,7 @@ class DetailPageCache(
     private val memory = ConcurrentHashMap<String, Entry>()
 
     fun peek(sourceId: String, animeId: String): Entry? =
-        memory[key("detail", sourceId, animeId)]?.takeIf { validAge(it.savedAt, DETAIL_AGE_MS) }
+        memory[key("detail", sourceId, animeId)]?.takeIf { validAge(it.savedAt, DETAIL_AGE_MS) }?.forDisplay()
 
     @Synchronized
     fun get(sourceId: String, animeId: String): Entry? {
@@ -50,7 +60,7 @@ class DetailPageCache(
             }
         }.getOrNull() ?: return null
         remember(key, entry)
-        return entry
+        return entry.forDisplay()
     }
 
     @Synchronized
@@ -58,7 +68,7 @@ class DetailPageCache(
         if (detail.animeId.isBlank() || detail.playLists.isEmpty()) return
         val key = key("detail", sourceId, detail.animeId)
         val entry = Entry(detail.copy(otherAnimeList = detail.otherAnimeList.take(24),
-            lastPlayEpisodePosition = 0 to 0), checkedAt, enrichedAt)
+            lastPlayEpisodePosition = 0 to 0), checkedAt, enrichedAt, if (enrichedAt > 0) RELATED_VERSION else 0)
         remember(key, entry)
         persistentDetail(entry.detail)?.let { write(key, entry.copy(detail = it)) }
     }
@@ -160,6 +170,7 @@ class DetailPageCache(
             .joinToString("") { "%02x".format(it) }
 
     companion object {
+        private const val RELATED_VERSION = 1
         private const val MAX_ENTRIES = 120
         private const val MAX_MEMORY_ENTRIES = 16
         private const val MAX_FILE_BYTES = 220_000L

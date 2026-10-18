@@ -23,6 +23,7 @@ import com.jing.sakura.repo.WebPageRepository
 import com.jing.sakura.room.VideoHistoryDao
 import com.jing.sakura.room.VideoHistoryEntity
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -138,7 +139,7 @@ class DetailPageViewModel constructor(
                             .getOrNull()
                     }
                 }
-                val cloudDetailJob = async {
+                val cloudDetailJob = async(start = CoroutineStart.LAZY) {
                     if (needsRelatedRefresh) fetchDetailSection {
                         authRepository.fetchTvAnimeDetail(animeId)
                             .takeIf { it.catalogItem != null }
@@ -149,7 +150,14 @@ class DetailPageViewModel constructor(
                 val coreCheckedAt = if (needsCoreRefresh) System.currentTimeMillis() else checkNotNull(cached).savedAt
                 val sourceData = cached?.mergeCore(freshSourceData, sourceId) ?: freshSourceData
                 val localHistory = localHistoryJob.await()
-                if (needsCoreRefresh) detailCache.put(sourceId, sourceData, cached?.enrichedAt ?: 0L, coreCheckedAt)
+                val coreRelatedReady = needsCoreRefresh && freshSourceData.relatedReady
+                val relatedCheckedAt = if (coreRelatedReady) System.currentTimeMillis()
+                    else cached?.takeUnless { it.relatedVersion == 0 }?.enrichedAt ?: 0L
+                if (needsCoreRefresh) detailCache.put(sourceId, sourceData, relatedCheckedAt, coreCheckedAt)
+                if (coreRelatedReady) {
+                    _relatedLoadState.value = DetailRelatedLoadState.Complete
+                    cloudDetailJob.cancel()
+                } else cloudDetailJob.start()
                 visibleData = sourceData
                 _detailPageData.emit(
                     Resource.Success(
@@ -166,7 +174,7 @@ class DetailPageViewModel constructor(
                         } ?: current
                     }
                 }
-                cloudDetailJob.await()?.let { result ->
+                if (!coreRelatedReady) cloudDetailJob.await()?.let { result ->
                     applyRelatedEnrichment(
                         result = result,
                         fallbackRelated = if (needsCoreRefresh) freshSourceData.otherAnimeList else emptyList(),
@@ -220,7 +228,7 @@ class DetailPageViewModel constructor(
                     cloud = cloudDetail.related,
                     source = fallbackRelated,
                     fallbackSourceId = sourceId
-                )))
+                ), relatedReady = true))
             } ?: current
         }
         _detailPageData.value.getOrNull()?.let { data ->

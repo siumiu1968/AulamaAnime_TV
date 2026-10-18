@@ -4,14 +4,47 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 
 class PreviewSessionPolicyTest {
     @Test
-    fun previewStartsLoadingThreeSecondsAfterFocus() {
+    fun previewCanPlayThreeSecondsAfterFocus() {
         assertEquals(
             3_000L,
             PREVIEW_DIM_DELAY_MS + PREVIEW_START_AFTER_DIM_DELAY_MS
         )
+    }
+
+    @Test
+    fun previewPreparesEarlyButNeverArmsBeforeTheSharedDwell() = runBlocking {
+        var clock = 0L
+        val events = mutableListOf<Pair<String, Long>>()
+        runPreviewFocusDwell(
+            prepare = { events += "prepare" to clock },
+            dim = { events += "dim" to clock },
+            arm = { events += "arm" to clock },
+            wait = { clock += it }
+        )
+        assertEquals(listOf("prepare" to 400L, "dim" to 1_500L, "arm" to 3_000L), events)
+    }
+
+    @Test
+    fun leavingFocusDuringPreparationCannotStartPlayback() = runBlocking {
+        var clock = 0L
+        var prepared = false
+        var armed = false
+        try {
+            runPreviewFocusDwell(
+                prepare = { prepared = true }, dim = {}, arm = { armed = true },
+                wait = { interval ->
+                    clock += interval
+                    if (clock >= 1_500L) throw CancellationException("焦點已移走")
+                }
+            )
+        } catch (_: CancellationException) { }
+        assertTrue(prepared)
+        assertFalse(armed)
     }
 
     @Test

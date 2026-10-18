@@ -125,6 +125,7 @@ import com.jing.sakura.compose.common.rememberCarouselGlide
 import com.jing.sakura.compose.common.springScrollToItem
 import com.jing.sakura.compose.common.AulamaMotion
 import com.jing.sakura.compose.common.rememberReducedMotion
+import com.jing.sakura.compose.common.PreviewPreparationHint
 import com.jing.sakura.compose.common.RetainedHeroPreview
 import com.jing.sakura.compose.common.rememberPreviewReveal
 import com.jing.sakura.compose.common.TvPreviewPreferences
@@ -142,6 +143,7 @@ import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.detail.DetailPageViewModel
 import com.jing.sakura.detail.DetailRelatedLoadState
 import com.jing.sakura.detail.relatedAnimeKey
+import com.jing.sakura.home.runPreviewFocusDwell
 import com.jing.sakura.home.HeroPreviewState
 import com.jing.sakura.home.previewCardAlpha
 import com.jing.sakura.extend.secondsToMinuteAndSecondText
@@ -367,9 +369,11 @@ private fun DetailContent(
         if (!previewEnabled || !isScreenResumed || !relatedRowFocusState.value) {
             return@LaunchedEffect
         }
-        delay(DETAIL_RELATED_PREVIEW_DWELL_MS)
-        viewModel.prepareRelatedPreview(selected)
-        relatedPreviewArmed = true
+        runPreviewFocusDwell(
+            prepare = { viewModel.prepareRelatedPreview(selected) },
+            dim = {},
+            arm = { relatedPreviewArmed = true }
+        )
     }
 
     LaunchedEffect(relatedPreviewActive, readyRelatedPreview?.key) {
@@ -556,6 +560,7 @@ private fun DetailContent(
             spec = readyRelatedPreview,
             reveal = relatedPreviewReveal,
             retainWhileFading = isScreenResumed,
+            playbackEnabled = relatedPreviewArmed,
             onReady = { relatedPreviewFirstFrameReady = true },
             onError = {
                 relatedPreviewArmed = false
@@ -570,6 +575,7 @@ private fun DetailContent(
             modifier = Modifier.fillMaxSize()
         )
         PreviewLegibilityScrim(reveal = { relatedPreviewReveal.value })
+        PreviewPreparationHint(relatedPreviewArmed && !relatedPreviewFirstFrameReady)
         DetailHero(
             detail = detail,
             history = history,
