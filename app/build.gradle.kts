@@ -15,8 +15,8 @@ android {
         applicationId = "com.codex.ciyuanbox.tv"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1045
-        versionName = "3.3.4"
+        versionCode = 1046
+        versionName = "3.3.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     }

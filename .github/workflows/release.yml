@@ -89,6 +89,7 @@ jobs:
             app/build/release-startup-smoke/
             app/build/outputs/androidTest-results/
             app/build/reports/androidTests/
+            app/build/test-results/testDebugUnitTest/
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload verified APK

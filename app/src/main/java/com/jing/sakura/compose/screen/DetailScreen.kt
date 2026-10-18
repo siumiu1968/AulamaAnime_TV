@@ -199,12 +199,16 @@ fun DetailScreen(
     val detailResource = viewModel.detailPageData.collectAsState().value
     val loadingHistory = viewModel.latestProgress.collectAsState().value.getOrNull()
     Crossfade(
-        targetState = detailResource,
+        targetState = when (detailResource) {
+            is Resource.Loading -> "loading"
+            is Resource.Error -> "error"
+            is Resource.Success -> "content"
+        },
         animationSpec = tween(durationMillis = 320, easing = LinearOutSlowInEasing),
         label = "detail-load-transition"
     ) { state ->
         when (state) {
-            is Resource.Loading -> ArtworkLoading(
+            "loading" -> ArtworkLoading(
                 title = initialTitle,
                 imageUrl = initialImageUrl,
                 tags = initialTags,
@@ -213,17 +217,18 @@ fun DetailScreen(
                     .ifBlank { initialResumeEpisode }
             )
 
-            is Resource.Error -> ErrorTip(message = state.message) { viewModel.loadData() }
-            is Resource.Success -> DetailContent(
+            "error" -> ErrorTip(message = (detailResource as? Resource.Error)?.message.orEmpty()) { viewModel.loadData() }
+            "content" -> detailResource.getOrNull()?.let { detail -> DetailContent(
                 viewModel = viewModel,
-                detail = state.data.copy(
+                detail = detail.copy(
                     description = selectNonJapaneseSynopsis(
                         initialDescription,
-                        state.data.description
+                        detail.description
                     )
                 ),
                 previewEnabled = previewEnabled
-            )
+            ) }
+            else -> Unit
         }
     }
 }

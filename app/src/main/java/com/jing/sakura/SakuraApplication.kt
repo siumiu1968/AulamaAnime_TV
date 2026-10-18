@@ -24,6 +24,7 @@ import com.jing.sakura.auth.SearchHistorySyncQueue
 import com.jing.sakura.auth.SearchHistorySyncScheduler
 import com.jing.sakura.compose.common.ChineseText
 import com.jing.sakura.detail.DetailPageViewModel
+import com.jing.sakura.detail.DetailPageCache
 import com.jing.sakura.extend.WebViewCompatibleCookieJar
 import com.jing.sakura.history.HistoryViewModel
 import com.jing.sakura.home.CategoryViewModel
@@ -180,10 +181,12 @@ class SakuraApplication : Application(), ImageLoaderFactory {
         single { SecureAuthStorage(get()) }
         single { GuestModeStorage(get()) }
         single { GuestLibraryStore(get()) }
+        single { DetailPageCache(java.io.File(context.cacheDir, "anime-detail-v1")) }
         single {
             AulamaAuthRepository(
                 get(qualifier(KoinOkHttpClient.AULAMA)),
-                get<SecureAuthStorage>()
+                get<SecureAuthStorage>(),
+                get<DetailPageCache>()
             )
         }
         single { PlaybackHistorySyncQueue(get()) }
@@ -224,7 +227,7 @@ class SakuraApplication : Application(), ImageLoaderFactory {
 
     private fun viewModelModule() = module {
         viewModel { holder ->
-            DetailPageViewModel(holder.get(), get(), get(), get(), get(), holder.get())
+            DetailPageViewModel(holder.get(), get(), get(), get(), get(), holder.get(), get(), holder.get())
         }
         viewModel { holder -> VideoPlayerViewModel(holder.get(), get(), get(), get(), get()) }
         viewModelOf(::HomeViewModel)

@@ -2,7 +2,7 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/aulama_tv_background" />
     <item
-        android:width="390dp"
+        android:width="388dp"
         android:height="160dp"
         android:drawable="@drawable/aulama_anime_wordmark"
         android:gravity="center" />

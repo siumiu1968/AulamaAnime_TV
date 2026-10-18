@@ -28,7 +28,8 @@ class DetailActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val videoId = intent.getStringExtra("id")!!
         val sourceId = intent.getStringExtra("source")!!
-        val viewModel by viewModel<DetailPageViewModel> { parametersOf(videoId, sourceId) }
+        val expectedEpisodes = detailExpectedEpisodeCount(intent.getStringExtra(EXTRA_EPISODE_INFO).orEmpty())
+        val viewModel by viewModel<DetailPageViewModel> { parametersOf(videoId, sourceId, expectedEpisodes) }
         setAulamaTvContent {
             Box(
                 modifier = Modifier

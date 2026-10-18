@@ -8,6 +8,7 @@ import com.jing.sakura.BuildConfig
 import com.jing.sakura.data.AnimeData
 import com.jing.sakura.data.AnimePageData
 import com.jing.sakura.data.UpdateTimeLine
+import com.jing.sakura.detail.DetailPageCache
 import com.jing.sakura.extend.executeWithCoroutine
 import com.jing.sakura.repo.isSuppressedAnime
 import com.jing.sakura.remote.RemoteCommandAckStatus
@@ -37,7 +38,8 @@ import java.util.Calendar
 
 class AulamaAuthRepository(
     initialClient: OkHttpClient,
-    private val storage: AulamaAuthStorage
+    private val storage: AulamaAuthStorage,
+    private val detailCache: DetailPageCache? = null
 ) {
     private data class RegionRouteTransport(
         val client: OkHttpClient,
@@ -526,11 +528,19 @@ class AulamaAuthRepository(
         return executeAuthenticatedMutation(request)
     }
 
-    /** The signed-in viewer's own rating for [animeId], or null when unrated or signed out. */
+    /** The viewer's stars, zero when unrated, or null when signed out/unavailable. */
     suspend fun fetchMyRating(animeId: String): Int? {
         if (animeId.isBlank()) return null
+        val accountEmail = _session.value?.account?.email.orEmpty()
+        withContext(Dispatchers.IO) { detailCache?.rating(accountEmail, animeId) }?.let { return it }
         val body = authenticatedBody("/ratings") ?: return null
-        return TvLibraryParser.parseRating(body, animeId)
+        val root = runCatching { JsonParser.parseString(body).asJsonObject }.getOrNull()
+        if (root?.get("items")?.isJsonArray != true) return null
+        val score = TvLibraryParser.parseRating(body, animeId) ?: 0
+        if (_session.value?.account?.email == accountEmail) withContext(Dispatchers.IO) {
+            detailCache?.putRating(accountEmail, animeId, score)
+        }
+        return score
     }
 
     /** Saves a 1–5 star rating to the same store the web uses, so it feeds recommendations. */
@@ -548,7 +558,11 @@ class AulamaAuthRepository(
             addProperty("summary", payload.summary)
         }.toString().toRequestBody(JSON_MEDIA_TYPE)
         val request = authenticatedRequest("$API_BASE/ratings", session).post(body).build()
-        return executeAuthenticatedMutation(request)
+        val saved = executeAuthenticatedMutation(request)
+        if (saved) withContext(Dispatchers.IO) {
+            detailCache?.putRating(session.account.email, payload.animeId, payload.rating.coerceIn(1, 5))
+        }
+        return saved
     }
 
     suspend fun deleteFavorite(animeId: String): Boolean {

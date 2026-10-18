@@ -92,7 +92,7 @@ fun AulamaAnimeBrandMark(
     )
 }
 
-private const val AULAMA_WORDMARK_RATIO = 2.4308f
+private const val AULAMA_WORDMARK_RATIO = 1580f / 651f
 
 @Composable
 fun AulamaPageHeader(
