@@ -199,7 +199,8 @@ fun HomeScreen(
     isCheckingForUpdate: Boolean,
     onCheckForUpdate: () -> Unit,
     onLogin: () -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    overlayVisible: Boolean = false
 ) {
     val context = LocalContext.current
     val languagePreferences = remember(context) { TvLanguagePreferences.get(context) }
@@ -411,7 +412,7 @@ fun HomeScreen(
                 spec.navigateToPlayerArg.sourceId == selectedHeroSourceId
         }
     val previewActive = isHomePreviewPlaybackActive(
-        previewEnabled = previewEnabled,
+        previewEnabled = previewEnabled && !overlayVisible,
         isScreenResumed = isScreenResumed,
         hasFocusedRow = focusedRowIndex != null,
         previewArmed = previewArmed,
@@ -486,8 +487,8 @@ fun HomeScreen(
         }
         viewModel.prefetchHeroDescriptions(featured)
     }
-    LaunchedEffect(featured.size, autoRotateHero) {
-        while (autoRotateHero && featured.size > 1) {
+    LaunchedEffect(featured.size, autoRotateHero, overlayVisible) {
+        while (autoRotateHero && featured.size > 1 && !overlayVisible) {
             delay(HERO_ROTATION_INTERVAL_MS)
             focusedHero = null
             heroTransitionDirection = 1
@@ -564,9 +565,10 @@ fun HomeScreen(
         interactionEvents,
         isScreenResumed,
         previewSession,
-        previewEnabled
+        previewEnabled,
+        overlayVisible
     ) {
-        if (focusedRowIndex == null || !isScreenResumed || !previewEnabled) {
+        if (focusedRowIndex == null || !isScreenResumed || !previewEnabled || overlayVisible) {
             viewModel.cancelHeroPreview()
             previewIdle = false
             previewArmed = false
@@ -615,28 +617,28 @@ fun HomeScreen(
             viewModel.cancelHeroPreview()
         }
     }
-    LaunchedEffect(rows.size, hero?.id) {
-        if (!requestedInitialFocus && hero != null) {
-            requestedInitialFocus = true
+    LaunchedEffect(rows.size, hero?.id, overlayVisible) {
+        if (!overlayVisible && !requestedInitialFocus && hero != null) {
             focusedRowIndex = null
             delay(180)
             heroActionFocus.safelyRequestFocus("home-hero-initial")
+            requestedInitialFocus = true
         }
     }
-    LaunchedEffect(heroFocusRequestCount) {
-        if (heroFocusRequestCount > 0) {
+    LaunchedEffect(heroFocusRequestCount, overlayVisible) {
+        if (!overlayVisible && heroFocusRequestCount > 0) {
             delay(24)
             heroActionFocus.safelyRequestFocus("home-row-to-hero")
         }
     }
-    LaunchedEffect(topFocusRequestCount) {
-        if (topFocusRequestCount > 0) {
+    LaunchedEffect(topFocusRequestCount, overlayVisible) {
+        if (!overlayVisible && topFocusRequestCount > 0) {
             delay(24)
             topHomeFocus.safelyRequestFocus("home-back-to-nav")
         }
     }
 
-    BackHandler(enabled = focusedRowIndex != null) {
+    BackHandler(enabled = !overlayVisible && focusedRowIndex != null) {
         focusedRowIndex = null
         displayedRowIndex = 0
         focusedHero = null
@@ -690,7 +692,7 @@ fun HomeScreen(
             spec = readyPreview,
             reveal = previewReveal,
             retainWhileFading = isScreenResumed,
-            playbackEnabled = previewArmed,
+            playbackEnabled = previewArmed && !overlayVisible,
             onReady = { previewFirstFrameReady = true },
             onError = {
                 previewFirstFrameReady = false

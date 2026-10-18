@@ -29,6 +29,7 @@ import com.jing.sakura.auth.AulamaAuthRepository
 import com.jing.sakura.auth.RegionAccessProbeResult
 import com.jing.sakura.auth.regionAccessPollDelayMs
 import com.jing.sakura.compose.screen.DeviceLoginScreen
+import com.jing.sakura.compose.screen.CrossDeviceCampaignDialog
 import com.jing.sakura.compose.screen.FirstLaunchSupportDialog
 import com.jing.sakura.compose.screen.HomeScreen
 import com.jing.sakura.compose.screen.RegionBlockedScreen
@@ -78,10 +79,27 @@ class MainActivity : ComponentActivity() {
             val downloadState = updateManager.downloadState.collectAsState().value
             val homePageData = viewModel.homePageData.collectAsState().value
             val authState = authViewModel.state.collectAsState().value
+            val startupState = viewModel.startupState.collectAsState().value
             val regionBlock = authRepository.regionBlock.collectAsState().value
             val canSkipRegion = authRepository.canSkipRegion.collectAsState().value
             val regionRetrying = remember { mutableStateOf(false) }
             val composeScope = rememberCoroutineScope()
+            val campaignStore = remember { CrossDeviceCampaignStore(this@MainActivity) }
+            val campaignDismissed = remember { mutableStateOf(campaignStore.isDismissed()) }
+            val supportSuppressedThisSession = remember { mutableStateOf(false) }
+            val homeVisible = authState is AuthUiState.Authenticated || authState == AuthUiState.Guest
+            val blockingOverlay = regionBlock != null || availableUpdate.value != null ||
+                downloadState !is TvUpdateDownloadState.Idle
+            val showCampaign = shouldShowCrossDeviceCampaign(
+                dismissed = campaignDismissed.value,
+                homeVisible = homeVisible,
+                startupStage = startupState.stage,
+                blockingOverlay = blockingOverlay
+            )
+            val showSupport = showFirstLaunchSupport.value && !supportSuppressedThisSession.value && homeVisible &&
+                startupState.stage == HomeStartupStage.Ready &&
+                automaticUpdateCheckFinished.value && downloadState is TvUpdateDownloadState.Idle
+            val homeOverlayVisible = blockingOverlay || showCampaign || showSupport
             val welcomeRefreshSeed = remember {
                 mutableStateOf(welcomeContentSeed(System.currentTimeMillis()))
             }
@@ -142,7 +160,8 @@ class MainActivity : ComponentActivity() {
                             onLogin = authViewModel::startLogin,
                             onLogout = authViewModel::logout,
                             isCheckingForUpdate = isCheckingForUpdate.value,
-                            onCheckForUpdate = ::checkForUpdateManually
+                            onCheckForUpdate = ::checkForUpdateManually,
+                            overlayVisible = homeOverlayVisible
                         )
                         AuthUiState.Guest -> HomeScreen(
                             viewModel = viewModel,
@@ -150,7 +169,8 @@ class MainActivity : ComponentActivity() {
                             onLogin = authViewModel::startLogin,
                             onLogout = authViewModel::logout,
                             isCheckingForUpdate = isCheckingForUpdate.value,
-                            onCheckForUpdate = ::checkForUpdateManually
+                            onCheckForUpdate = ::checkForUpdateManually,
+                            overlayVisible = homeOverlayVisible
                         )
                         else -> DeviceLoginScreen(
                             state = authState,
@@ -217,9 +237,15 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    showFirstLaunchSupport.value &&
-                        automaticUpdateCheckFinished.value &&
-                        downloadState is TvUpdateDownloadState.Idle -> {
+                    showCampaign -> {
+                        CrossDeviceCampaignDialog(onDismiss = {
+                            campaignStore.dismiss()
+                            campaignDismissed.value = true
+                            supportSuppressedThisSession.value = true
+                        })
+                    }
+
+                    showSupport -> {
                         FirstLaunchSupportDialog(
                             onDismiss = ::dismissFirstLaunchSupport
                         )

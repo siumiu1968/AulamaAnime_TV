@@ -1,7 +1,6 @@
 package com.jing.sakura.http
 
 import java.io.IOException
-import java.net.URLDecoder
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
@@ -53,17 +52,7 @@ private fun hasImageBytes(response: Response): Boolean {
 /** Only matching, reviewed cover paths may use the canonical mirror; never guess another title. */
 internal fun posterFallbackRequests(request: Request): List<Request> {
     val original = originalPosterRequest(request) ?: return emptyList()
-    var cover = original.url
-    val path = Regex("^/pic/cover/[lms]/[a-f0-9]{2}/[a-f0-9]{2}/[0-9]+_[A-Za-z0-9]+\\.(jpg|jpeg|png|webp)$", RegexOption.IGNORE_CASE)
-    if (cover.isHttps && Regex("gimg[0-9]+\\.baidu\\.com").matches(cover.host) && cover.encodedPath.startsWith("/gimg/")) {
-        val encoded = Regex("[?&]src=([^&]+)").find(cover.toString())?.groupValues?.get(1)
-        val nested = encoded?.let { runCatching { URLDecoder.decode(it, "UTF-8") }.getOrNull() }
-            ?.let { if (it.startsWith("//")) "https:$it" else if (it.startsWith("https://")) it else "https://$it" }
-            ?.toHttpUrlOrNull()
-        if (nested != null && nested.isHttps && nested.port == 443 && nested.username.isEmpty() && nested.password.isEmpty() &&
-            nested.host in setOf("img1.cycapp.org", "img2.cycimg.me", "lain.bgm.tv") && path.matches(nested.encodedPath)) cover = nested
-    }
-    if (!cover.isHttps || cover.port != 443 || cover.host !in setOf("img1.cycapp.org", "img2.cycimg.me", "lain.bgm.tv") || !path.matches(cover.encodedPath)) return listOf(original)
+    val cover = reviewedPosterImageUrl(original.url) ?: return listOf(original)
     return listOf(cover.newBuilder().host("lain.bgm.tv").build(), cover.newBuilder().host("img2.cycimg.me").build(), cover)
         .distinct().map { Request.Builder().url(it).header("Accept", "image/webp,image/*").build() }
 }

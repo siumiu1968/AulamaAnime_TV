@@ -9,6 +9,7 @@ import coil.request.ImageRequest
 import java.net.URLEncoder
 import org.koin.core.context.GlobalContext
 import com.jing.sakura.auth.AulamaAuthRepository
+import com.jing.sakura.http.canonicalPosterImageUrl
 
 internal fun posterDownloadUrl(imageUrl: String, widthPx: Int = 420): String {
     if (!imageUrl.startsWith("https://") && !imageUrl.startsWith("http://")) return imageUrl
@@ -19,7 +20,7 @@ internal fun posterDownloadUrl(imageUrl: String, widthPx: Int = 420): String {
 
 internal fun posterImageRequest(context: Context, imageUrl: String, widthPx: Int = 420, heightPx: Int = 600): ImageRequest {
     val session = GlobalContext.getOrNull()?.getOrNull<AulamaAuthRepository>()?.session?.value
-    val downloadUrl = if (session != null) posterDownloadUrl(imageUrl, widthPx) else imageUrl
+    val downloadUrl = if (session != null) posterDownloadUrl(imageUrl, widthPx) else canonicalPosterImageUrl(imageUrl)
     return ImageRequest.Builder(context)
         .data(downloadUrl)
         .apply { if (session != null && downloadUrl.startsWith("https://aulama.org/anime/api/image?")) addHeader("Authorization", "Bearer ${session.accessToken}") }

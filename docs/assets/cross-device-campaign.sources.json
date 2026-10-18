@@ -1,0 +1,60 @@
+{
+  "webUrl": "https://aulama.org/anime/",
+  "androidDownloadUrl": "https://aulama.org/anime/downloads/aulama-anime.apk",
+  "androidUrlSource": "https://github.com/siumiu1968/aulama-anime/blob/main/README.md",
+  "images": [
+    {
+      "resource": "cross_device_web_preview",
+      "file": "app/src/main/res/drawable-nodpi/cross_device_web_preview.webp",
+      "content": "Aulama Anime 網頁首頁",
+      "sourceCapture": "/Users/auchunngai/Documents/Aualama/work/home-reveal-20261003/home-live.png",
+      "sourceCaptureBatch": "2026-10-03",
+      "sourceDimensions": [
+        1710,
+        895
+      ],
+      "sourceSha256": "5a19cc93c7fce0489ec0ac163c004c150cc14cf3af9a059ad8c7ae270c0678b2",
+      "crop": [
+        0,
+        0,
+        1568,
+        882
+      ],
+      "dimensions": [
+        960,
+        540
+      ],
+      "bytes": 112514,
+      "sha256": "18ff54ac73517285e7ed249aa939bcb04d416c0dbed854a4d7a3d337809964bd",
+      "privacy": "裁走右上帳戶區；無瀏覽器工具列、個人姓名、通知或用戶紀錄。",
+      "captureType": "既有正式網頁驗證截圖；非本日重拍；未生成或重畫 UI。"
+    },
+    {
+      "resource": "cross_device_mobile_preview",
+      "file": "app/src/main/res/drawable-nodpi/cross_device_mobile_preview.webp",
+      "content": "手機版網頁播放器",
+      "sourceCapture": "/Users/auchunngai/Documents/Aualama/work/player-pill-spacing-20261004/public-mobile.png",
+      "sourceCaptureBatch": "2026-10-04",
+      "sourceEvidence": "/Users/auchunngai/Documents/Aualama/work/player-pill-spacing-20261004/public-final-proof.json",
+      "sourceDimensions": [
+        320,
+        568
+      ],
+      "sourceSha256": "cd93f201e133a47aa3f9cb4004f139eb52761ddfae4934a83aa5903254636518",
+      "crop": [
+        0,
+        72,
+        320,
+        568
+      ],
+      "dimensions": [
+        320,
+        496
+      ],
+      "bytes": 24662,
+      "sha256": "7f37aeef81b72d3328e560027f877c55b8f8dbc26922236736953df56e8f5bd3",
+      "privacy": "裁走頂部帳戶區；無系統通知、個人姓名、播放歷史清單或瀏覽器工具列。",
+      "captureType": "既有正式網頁驗證截圖；非 Android 原生實機驗證；未生成或重畫 UI。"
+    }
+  ]
+}
