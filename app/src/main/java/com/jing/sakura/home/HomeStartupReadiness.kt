@@ -102,11 +102,6 @@ internal fun homeStartupState(
         canContinue = hasContent
     )
     return when {
-        deadlineExpired -> state.copy(
-            stage = HomeStartupStage.NeedsAttention,
-            message = if (hasContent) "準備首頁需時較長，請重試或先進入已載入內容。"
-                else "首頁資料仍未準備好，請重新嘗試。"
-        )
         data.hasFailure -> state.copy(
             stage = HomeStartupStage.NeedsAttention,
             message = if (hasContent) "部分首頁資料暫時未能載入，請重新嘗試。"
@@ -116,17 +111,23 @@ internal fun homeStartupState(
             stage = HomeStartupStage.NeedsAttention,
             message = "部分封面暫時未能載入，請重試或先進入首頁。"
         )
+        !data.isLoading && hasContent && successful == plan.targets.size ->
+            state.copy(stage = HomeStartupStage.Ready)
+        deadlineExpired -> state.copy(
+            stage = HomeStartupStage.NeedsAttention,
+            message = if (hasContent) "準備首頁需時較長，請重試或先進入已載入內容。"
+                else "首頁資料仍未準備好，請重新嘗試。"
+        )
         data.isLoading -> state.copy(stage = HomeStartupStage.LoadingData)
         !hasContent -> state.copy(
             stage = HomeStartupStage.NeedsAttention,
             message = "暫時未有可顯示嘅首頁內容，請重新嘗試。"
         )
-        successful < plan.targets.size -> state.copy(stage = HomeStartupStage.LoadingPosters)
-        else -> state.copy(stage = HomeStartupStage.Ready)
+        else -> state.copy(stage = HomeStartupStage.LoadingPosters)
     }
 }
 
-/** Readiness has no minimum display time. Deadlines lead to actions, never a silent release. */
+/** Readiness has no minimum display time. The wait threshold offers actions while loading continues. */
 internal class HomeStartupReadiness(
     private val scope: CoroutineScope,
     private val loadPoster: suspend (HomePosterTarget) -> Boolean,
@@ -205,8 +206,6 @@ internal class HomeStartupReadiness(
             synchronized(this@HomeStartupReadiness) {
                 if (!released) {
                     deadlineExpired = true
-                    generation.incrementAndGet()
-                    preloadJob?.cancel()
                     publish()
                 }
             }
@@ -216,7 +215,6 @@ internal class HomeStartupReadiness(
     private fun startPreload() {
         val requestGeneration = generation.incrementAndGet()
         preloadJob?.cancel()
-        if (deadlineExpired && !released) return
         val pending = plan.targets.filterNot(results::containsKey)
         if (pending.isEmpty()) return
         preloadJob = scope.launch {

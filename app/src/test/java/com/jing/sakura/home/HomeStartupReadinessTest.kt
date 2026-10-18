@@ -60,6 +60,12 @@ class HomeStartupReadinessTest {
             homeStartupState(readyData, true, plan, 1, 0, false).stage)
         assertEquals(HomeStartupStage.NeedsAttention,
             homeStartupState(readyData.copy(coreFailed = true), true, plan, 1, 0, false).stage)
+        assertEquals(HomeStartupStage.Ready,
+            homeStartupState(readyData, true, plan, 1, 0, true).stage)
+        assertEquals(HomeStartupStage.NeedsAttention,
+            homeStartupState(readyData.copy(coreFailed = true), true, plan, 1, 0, true).stage)
+        assertEquals(HomeStartupStage.NeedsAttention,
+            homeStartupState(readyData, true, plan, 0, 1, true).stage)
     }
 
     @Test
@@ -125,7 +131,7 @@ class HomeStartupReadinessTest {
     }
 
     @Test
-    fun slowDataReachesAnActionableDeadlineAndOnlyExplicitContinueReleasesIt() = runBlocking {
+    fun slowDataOffersActionsAtTheThresholdAndCanContinueExplicitly() = runBlocking {
         val background = CoroutineScope(coroutineContext + SupervisorJob())
         try {
             val gate = HomeStartupReadiness(background, loadPoster = { true }, deadlineMillis = 20)
@@ -135,6 +141,47 @@ class HomeStartupReadinessTest {
             assertTrue(failure.message.isNotBlank())
             gate.continueToHome()
             assertEquals(HomeStartupStage.Ready, gate.state.value.stage)
+        } finally { background.cancel() }
+    }
+
+    @Test
+    fun waitThresholdKeepsPreloadingAndLateDataAutomaticallyReleasesReadyHome() = runBlocking {
+        val background = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val earlyStarted = CompletableDeferred<Unit>()
+            val earlyReady = CompletableDeferred<Unit>()
+            val lateStarted = CompletableDeferred<Unit>()
+            val lateReady = CompletableDeferred<Unit>()
+            val early = HomePosterTarget("early")
+            val late = HomePosterTarget("late")
+            val gate = HomeStartupReadiness(background, loadPoster = { target ->
+                if (target == early) {
+                    earlyStarted.complete(Unit)
+                    earlyReady.await()
+                } else {
+                    lateStarted.complete(Unit)
+                    lateReady.await()
+                }
+                true
+            }, deadlineMillis = 20)
+            gate.update(HomePosterPlan(listOf(early)), HomeStartupDataStatus(), true)
+            withTimeout(1_000) { earlyStarted.await() }
+            val waiting = withTimeout(1_000) {
+                gate.state.first { it.stage == HomeStartupStage.NeedsAttention }
+            }
+            assertTrue(waiting.canContinue)
+            earlyReady.complete(Unit)
+            withTimeout(1_000) { gate.state.first { it.completedPosters == 1 } }
+            assertEquals(HomeStartupStage.NeedsAttention, gate.state.value.stage)
+
+            gate.update(HomePosterPlan(listOf(early, late)), readyData, true)
+            withTimeout(1_000) { lateStarted.await() }
+            assertEquals(HomeStartupStage.NeedsAttention, gate.state.value.stage)
+            lateReady.complete(Unit)
+            val ready = withTimeout(1_000) {
+                gate.state.first { it.stage == HomeStartupStage.Ready }
+            }
+            assertEquals(2, ready.completedPosters)
         } finally { background.cancel() }
     }
 
