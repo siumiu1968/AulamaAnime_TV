@@ -90,13 +90,13 @@ internal fun SegmentEditorDialog(
     LaunchedEffect(Unit) {
         while (true) { position = currentPosition(); isPlaying = playing(); delay(250) }
     }
-    LaunchedEffect(loading, snapshot, intro) {
-        if (!loading && snapshot != null) initialFocus.requestFocus() else cancelFocus.requestFocus()
-    }
-
     Dialog(onDismissRequest = ::close, properties = DialogProperties(
         usePlatformDefaultWidth = false, dismissOnClickOutside = false
     )) {
+        LaunchedEffect(loading, snapshot, intro) {
+            withFrameNanos { }
+            if (!loading && snapshot != null) initialFocus.requestFocus() else cancelFocus.requestFocus()
+        }
         Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
             if (event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
                 if (event.type == KeyEventType.KeyUp) onPlayPause()
@@ -206,8 +206,8 @@ internal fun SegmentEditorDialog(
                 }) { Text(localizedText("放棄修改")) } },
                 dismissButton = { TextButton(onClick = { confirmation = null }, modifier = Modifier.focusRequester(keepFocus)) {
                     Text(localizedText("繼續調節"))
+                    LaunchedEffect(Unit) { withFrameNanos { }; keepFocus.requestFocus() }
                 } })
-            LaunchedEffect(confirmation) { keepFocus.requestFocus() }
         }
     }
 }
