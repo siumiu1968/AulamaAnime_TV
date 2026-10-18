@@ -50,7 +50,7 @@ class DetailRatingCacheTest {
             val repository = repository(server)
             server.enqueue(MockResponse().setResponseCode(503))
             server.enqueue(MockResponse().setBody("""{"items":[]}"""))
-            assertNull(repository.fetchMyRating("cw:3963"))
+            assertTrue(runCatching { repository.fetchMyRating("cw:3963") }.isFailure)
             assertEquals(0, repository.fetchMyRating("cw:3963"))
             assertEquals(0, repository.fetchMyRating("cw:3963"))
             assertEquals(2, server.requestCount)
