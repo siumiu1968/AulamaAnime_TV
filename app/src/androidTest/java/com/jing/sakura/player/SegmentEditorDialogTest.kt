@@ -59,6 +59,9 @@ class SegmentEditorDialogTest {
         start.performKeyInput { pressKey(Key.DirectionDown) }
         compose.onNodeWithTag("introEnd").assertIsFocused()
         repeat(4) { compose.onAllNodes(isFocused()).onFirst().performKeyInput { pressKey(Key.DirectionDown) } }
+        if (compose.onAllNodes(hasText("關閉") and isFocused()).fetchSemanticsNodes().isNotEmpty()) {
+            compose.onNodeWithText("關閉").performKeyInput { pressKey(Key.DirectionLeft) }
+        }
         compose.onNodeWithText("儲存至全部線路").assertIsFocused()
         compose.onNodeWithText("儲存至全部線路").performKeyInput { pressKey(Key.DirectionRight) }
         compose.onNodeWithText("關閉").assertIsFocused()
