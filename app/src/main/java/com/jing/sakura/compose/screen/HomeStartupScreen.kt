@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,7 +27,6 @@ import androidx.tv.material3.Text
 import com.jing.sakura.compose.common.AulamaAnimeBrandMark
 import com.jing.sakura.compose.common.AulamaLoadingPulse
 import com.jing.sakura.compose.common.AulamaTvColors
-import com.jing.sakura.compose.common.LoadingTipsFooter
 import com.jing.sakura.compose.common.SpringFocusButton
 import com.jing.sakura.compose.common.aulamaTvBackground
 import com.jing.sakura.compose.common.localizedText
@@ -55,19 +54,15 @@ internal fun HomeStartupScreen(
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             AulamaAnimeBrandMark(height = if (attention) 96.dp else 140.dp)
-            Text(
-                text = localizedText(when {
-                    attention -> state.message
-                    state.stage == HomeStartupStage.LoadingData -> "正在載入首頁資料…"
-                    else -> "正在準備首頁封面 · ${state.completedPosters} / ${state.totalPosters}"
-                }),
-                color = AulamaTvColors.TextSecondary,
-                fontSize = 18.sp,
-                lineHeight = 25.sp,
-                textAlign = TextAlign.Center,
-                maxLines = 2
-            )
             if (attention) {
+                Text(
+                    text = localizedText(state.message),
+                    color = AulamaTvColors.TextSecondary,
+                    fontSize = 18.sp,
+                    lineHeight = 25.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     SpringFocusButton(
                         onClick = onRetry,
@@ -84,12 +79,9 @@ internal fun HomeStartupScreen(
                     }
                 }
             } else {
-                AulamaLoadingPulse()
+                AulamaLoadingPulse(Modifier.testTag("home-startup-progress"))
                 Spacer(Modifier.height(2.dp))
             }
         }
-        LoadingTipsFooter(
-            Modifier.align(Alignment.BottomStart).padding(start = 62.dp, end = 62.dp, bottom = 32.dp)
-        )
     }
 }

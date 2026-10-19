@@ -36,6 +36,7 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
 
     private val appContext = context
     private var secondaryActionsAdapter: ArrayObjectAdapter? = null
+    private var segmentEditorVisible = false
     private val heldSeek = PlaybackHeldSeekController()
     private var heldSeekStepMs: Long? = null
     private var nativeProgressSeekInProgress = false
@@ -85,6 +86,7 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
         secondaryActionsAdapter.add(episodeListAction)
         secondaryActionsAdapter.add(speedAction)
         secondaryActionsAdapter.add(fast4kAction)
+        showSegmentEditorAction(segmentEditorVisible)
     }
 
     private var transportPresenter: PlaybackTransportRowPresenter? = null
@@ -247,6 +249,7 @@ internal class ProgressTransportControlGlue<T : PlayerAdapter>(
     }
 
     fun showSegmentEditorAction(visible: Boolean) {
+        segmentEditorVisible = visible
         val adapter = secondaryActionsAdapter ?: return
         val index = adapter.indexOf(segmentEditorAction)
         if (visible && index < 0) adapter.add(segmentEditorAction)

@@ -344,7 +344,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
                     }
                 }
                 launch {
-                    viewModel.canEditSegments.collectLatest { permitted ->
+                    viewModel.canOpenSegmentEditor.collectLatest { permitted ->
                         glue?.showSegmentEditorAction(permitted)
                         if (!permitted) closeSegmentEditor()
                     }
@@ -517,7 +517,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
             isControlsOverlayAutoHideEnabled = true
             host = VideoSupportFragmentGlueHost(this@AnimePlayerFragment)
             update4kAction(current4kMode)
-            showSegmentEditorAction(viewModel.canEditSegments.value)
+            showSegmentEditorAction(viewModel.canOpenSegmentEditor.value)
             glue = this
         }
     }
@@ -547,7 +547,7 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun openSegmentEditor() {
-        if (!viewModel.canEditSegments.value || segmentEditorVisible) return
+        if (!viewModel.canOpenSegmentEditor.value || segmentEditorVisible) return
         val target = viewModel.segmentEditorTarget() ?: return
         val localPlayer = player ?: return
         val host = segmentEditorView ?: return

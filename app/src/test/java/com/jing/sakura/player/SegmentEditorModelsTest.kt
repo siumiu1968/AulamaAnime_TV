@@ -5,6 +5,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SegmentEditorModelsTest {
+    @Test fun highestAdministratorCanOpenEditorBeforeOptionalMetadataLoads() {
+        assertTrue(canOpenPlaybackSegmentEditor("super_admin"))
+        assertTrue(canOpenPlaybackSegmentEditor(" SUPER_ADMIN "))
+        listOf(null, "", "admin", "member", "free").forEach {
+            assertFalse(canOpenPlaybackSegmentEditor(it))
+        }
+        // Opening the entry never grants permission to edit data returned by the server.
+        assertFalse(canEditPlaybackSegments("super_admin", false))
+    }
+
     @Test fun bothHighestRoleAndServerPermissionAreRequired() {
         assertTrue(canEditPlaybackSegments("super_admin", true))
         listOf(null, "admin", "member", "free").forEach { assertFalse(canEditPlaybackSegments(it, true)) }

@@ -4,10 +4,15 @@ import android.graphics.Bitmap
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
@@ -29,20 +34,30 @@ class HomeStartupScreenTest {
     @get:Rule val compose = createComposeRule()
 
     @Test
-    fun realImageProgressIsVisibleAndRetryIsReachableAfterFailure() {
-        val state = mutableStateOf(HomeStartupState(HomeStartupStage.LoadingPosters, 2, 8, true))
+    fun normalStartupShowsOnlyLogoAndProgressAndRetryIsReachableAfterFailure() {
+        val state = mutableStateOf(HomeStartupState(HomeStartupStage.LoadingData))
         var retries = 0
         compose.setContent {
             CompositionLocalProvider(LocalTvLanguage provides TvLanguage.Traditional) {
                 HomeStartupScreen(state.value, onRetry = { retries++ }, onContinue = {})
             }
         }
-        compose.onNodeWithText("正在準備首頁封面 · 2 / 8").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Aulama Anime").assertIsDisplayed()
+        compose.onNodeWithTag("home-startup-progress").assertIsDisplayed()
+        compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text)).assertCountEquals(0)
+        compose.runOnIdle {
+            state.value = HomeStartupState(HomeStartupStage.LoadingPosters, 2, 8, true)
+        }
+        compose.onNodeWithContentDescription("Aulama Anime").assertIsDisplayed()
+        compose.onNodeWithTag("home-startup-progress").assertIsDisplayed()
+        compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text)).assertCountEquals(0)
         compose.onNodeWithText("重新嘗試").assertDoesNotExist()
         compose.runOnIdle {
             state.value = state.value.copy(stage = HomeStartupStage.NeedsAttention,
                 message = "部分封面暫時未能載入，請重試或先進入首頁。")
         }
+        compose.onNodeWithText("部分封面暫時未能載入，請重試或先進入首頁。").assertIsDisplayed()
+        compose.onNodeWithTag("home-startup-progress").assertDoesNotExist()
         compose.onNodeWithText("重新嘗試").assertIsFocused()
             .performKeyInput { pressKey(Key.DirectionCenter) }
         compose.runOnIdle { assertEquals(1, retries) }

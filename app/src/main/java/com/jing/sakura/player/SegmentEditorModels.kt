@@ -6,8 +6,11 @@ import okio.ByteString.Companion.decodeBase64
 import java.util.Locale
 import kotlin.math.roundToLong
 
+internal fun canOpenPlaybackSegmentEditor(role: String?): Boolean =
+    role?.trim()?.lowercase(Locale.ROOT) == "super_admin"
+
 internal fun canEditPlaybackSegments(role: String?, permitted: Boolean): Boolean =
-    role?.trim()?.lowercase() == "super_admin" && permitted
+    canOpenPlaybackSegmentEditor(role) && permitted
 
 internal fun playbackSegmentProvider(episodeId: String): String = runCatching {
     val raw = episodeId.removePrefix("cycapi:").decodeBase64()?.utf8() ?: return@runCatching "cycani"

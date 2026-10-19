@@ -22,7 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
@@ -77,8 +77,9 @@ class VideoPlayerViewModel(
     val playbackSegments: StateFlow<PlaybackSegments?>
         get() = _playbackSegments
 
-    internal val canEditSegments = combine(authRepository.session, _playbackSegments) { session, segments ->
-        canEditPlaybackSegments(session?.account?.role, segments?.canEdit == true)
+    // Optional skip metadata may still be loading. The editor verifies server permission when opened.
+    internal val canOpenSegmentEditor = authRepository.session.map { session ->
+        canOpenPlaybackSegmentEditor(session?.account?.role)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     internal fun segmentEditorTarget(): SegmentEditorTarget? {
@@ -89,13 +90,13 @@ class VideoPlayerViewModel(
     }
 
     internal suspend fun loadSegmentEditor(target: SegmentEditorTarget): SegmentEditorSnapshot {
-        check(canEditSegments.value && segmentEditorTarget() == target) { "集數、線路或權限已變更，請重新開啟設定" }
+        check(canOpenSegmentEditor.value && segmentEditorTarget() == target) { "集數、線路或權限已變更，請重新開啟設定" }
         return authRepository.fetchSegmentEditor(target)
     }
 
     internal suspend fun saveSegmentEditor(target: SegmentEditorTarget, draft: SegmentDraft,
         durationMs: Long, allProviders: Boolean): SegmentEditorSnapshot {
-        check(canEditSegments.value && segmentEditorTarget() == target) { "集數、線路或權限已變更，請重新開啟設定" }
+        check(canOpenSegmentEditor.value && segmentEditorTarget() == target) { "集數、線路或權限已變更，請重新開啟設定" }
         val saved = authRepository.saveSegmentEditor(target, draft, durationMs, allProviders)
         if (segmentEditorTarget() == target) {
             _playList.getOrNull(playIndex)?.let { fetchPlaybackSegments(it, playIndex) }
