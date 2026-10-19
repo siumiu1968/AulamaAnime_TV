@@ -28,7 +28,6 @@ import com.jing.sakura.player.PreviewPlaybackHandoff
 import com.jing.sakura.player.PreviewPlaybackTransfer
 import com.jing.sakura.player.PreviewHandoffLoadControl
 import okhttp3.OkHttpClient
-import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -44,10 +43,9 @@ class PreviewPlaybackHandoffTest {
 
     @Test fun transfersBufferedPlayerOnceAndPreviewCleanupDoesNotReleaseIt() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val file = File(instrumentation.targetContext.cacheDir, "preview-handoff-fixture.mp4")
-        instrumentation.context.assets.open("preview-prepared.mp4").use { input ->
-            file.outputStream().use { output -> input.copyTo(output) }
-        }
+        val bytes = instrumentation.context.assets.open("preview-prepared.mp4").use { it.readBytes() }
+        val server = HeroPreviewPreparationTest.FixtureServer(bytes)
+        server.allowResponse.countDown()
         val continued = AtomicReference<NavigateToPlayerArg?>()
         val error = AtomicReference<String?>()
         lateinit var controller: HeroPreviewController
@@ -64,7 +62,7 @@ class PreviewPlaybackHandoffTest {
         var transferred = false
         val episode = AnimePlayListEpisode("第 1 集", "fixture-episode")
         val arg = NavigateToPlayerArg("Preview", "fixture", "", 0, listOf(episode), "fixture")
-        val spec = HeroPreviewSpec("fixture-preview", file.toURI().toString(), emptyMap(), 0L, "", arg)
+        val spec = HeroPreviewSpec("fixture-preview", server.url, emptyMap(), 0L, "", arg)
         try {
             compose.runOnUiThread {
                 controller = HeroPreviewController(compose.activity.applicationContext, OkHttpClient(), {},
@@ -145,7 +143,7 @@ class PreviewPlaybackHandoffTest {
                 }
                 PreviewPlaybackHandoff.expire(continued.get()?.previewHandoffId)
             }
-            file.delete()
+            server.close()
         }
     }
 

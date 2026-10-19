@@ -210,7 +210,7 @@ class HeroPreviewPreparationTest {
     }
 
     /** The production OkHttp source reads a bundled fixture exclusively over device loopback. */
-    private class FixtureServer(private val bytes: ByteArray) : AutoCloseable {
+    internal class FixtureServer(private val bytes: ByteArray) : AutoCloseable {
         private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
         val requests = AtomicInteger()
         val allowResponse = CountDownLatch(1)
