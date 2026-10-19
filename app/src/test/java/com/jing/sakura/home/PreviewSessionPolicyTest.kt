@@ -9,9 +9,9 @@ import kotlinx.coroutines.runBlocking
 
 class PreviewSessionPolicyTest {
     @Test
-    fun previewCanPlayThreeSecondsAfterFocus() {
+    fun previewCanPlayOneAndAHalfSecondsAfterFocus() {
         assertEquals(
-            3_000L,
+            1_500L,
             PREVIEW_DIM_DELAY_MS + PREVIEW_START_AFTER_DIM_DELAY_MS
         )
     }
@@ -26,7 +26,21 @@ class PreviewSessionPolicyTest {
             arm = { events += "arm" to clock },
             wait = { clock += it }
         )
-        assertEquals(listOf("prepare" to 400L, "dim" to 1_500L, "arm" to 3_000L), events)
+        assertEquals(listOf("prepare" to 120L, "dim" to 900L, "arm" to 1_500L), events)
+    }
+
+    @Test
+    fun passingOverACardDoesNotStartANetworkPreparation() = runBlocking {
+        var prepared = false
+        var armed = false
+        try {
+            runPreviewFocusDwell(
+                prepare = { prepared = true }, dim = {}, arm = { armed = true },
+                wait = { throw CancellationException("焦點已移走") }
+            )
+        } catch (_: CancellationException) { }
+        assertFalse(prepared)
+        assertFalse(armed)
     }
 
     @Test
@@ -39,7 +53,7 @@ class PreviewSessionPolicyTest {
                 prepare = { prepared = true }, dim = {}, arm = { armed = true },
                 wait = { interval ->
                     clock += interval
-                    if (clock >= 1_500L) throw CancellationException("焦點已移走")
+                    if (clock >= 900L) throw CancellationException("焦點已移走")
                 }
             )
         } catch (_: CancellationException) { }

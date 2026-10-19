@@ -13,7 +13,8 @@ data class NavigateToPlayerArg(
     val sourceId: String,
     val resumePositionMs: Long = NO_REMOTE_RESUME_POSITION,
     val playlists: List<AnimePlayList> = emptyList(),
-    val playlistIndex: Int = 0
+    val playlistIndex: Int = 0,
+    val previewHandoffId: String? = null
 ) : Serializable {
     companion object {
         const val NO_REMOTE_RESUME_POSITION = -1L

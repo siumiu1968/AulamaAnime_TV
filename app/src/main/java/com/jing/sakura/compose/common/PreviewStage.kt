@@ -1,13 +1,16 @@
 package com.jing.sakura.compose.common
 
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -17,30 +20,76 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Text
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
 import com.jing.sakura.home.HeroPreviewSpec
+import com.jing.sakura.home.HeroPreviewState
+import com.jing.sakura.player.NavigateToPlayerArg
 import kotlinx.coroutines.flow.first
+import kotlin.math.PI
+import kotlin.math.cos
 
-@OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 @Composable
-internal fun PreviewPreparationHint(visible: Boolean) {
+internal fun PreviewPreparationHint(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+    reducedMotion: Boolean = rememberReducedMotion()
+) {
     if (!visible) return
-    Box(Modifier.fillMaxSize().padding(top = 78.dp, end = 52.dp)) {
-        Text(
-            text = localizedText("預覽準備中…"),
-            color = AulamaTvColors.TextSecondary,
-            fontSize = 14.sp,
-            modifier = Modifier.align(Alignment.TopEnd)
-                .background(AulamaTvColors.Background.copy(alpha = 0.8f), RoundedCornerShape(20.dp))
-                .padding(horizontal = 14.dp, vertical = 8.dp)
+    val phase = if (reducedMotion) null else {
+        rememberInfiniteTransition(label = "preview-loading-dots").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(1_200, easing = LinearEasing)),
+            label = "preview-loading-phase"
         )
+    }
+    val label = localizedText("預覽載入中")
+    Canvas(
+        modifier = modifier
+            .size(width = 24.dp, height = 8.dp)
+            .testTag("preview-loading-dots")
+            .semantics {
+                contentDescription = label
+                progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
+            }
+    ) {
+        repeat(3) { index ->
+            val pulse = phase?.value?.let {
+                ((cos((it - index / 3f) * 2 * PI) + 1) / 2).toFloat()
+            }
+            drawCircle(
+                color = AulamaTvColors.TextSecondary,
+                alpha = pulse?.let { 0.28f + it * 0.67f } ?: 0.72f,
+                radius = 2.dp.toPx(),
+                center = Offset((3 + index * 9).dp.toPx(), size.height / 2)
+            )
+        }
+    }
+}
+
+internal fun isPreviewPreparationPending(
+    state: HeroPreviewState,
+    focusedAnimeId: String?,
+    focusedSourceId: String?,
+    firstFrameReady: Boolean
+): Boolean {
+    if (focusedAnimeId.isNullOrBlank() || focusedSourceId.isNullOrBlank()) return false
+    return when (state) {
+        is HeroPreviewState.Loading -> state.requestKey == "$focusedSourceId:$focusedAnimeId"
+        is HeroPreviewState.Ready -> !firstFrameReady &&
+            state.spec.navigateToPlayerArg.animeId == focusedAnimeId &&
+            state.spec.navigateToPlayerArg.sourceId == focusedSourceId
+        else -> false
     }
 }
 
@@ -96,7 +145,8 @@ fun RetainedHeroPreview(
     playbackEnabled: Boolean = true,
     onReady: () -> Unit = {},
     onError: (String) -> Unit = {},
-    onEnded: () -> Unit = {}
+    onEnded: () -> Unit = {},
+    onContinuePlayback: ((NavigateToPlayerArg) -> Unit)? = null
 ) {
     var fadingSpec by remember { mutableStateOf<HeroPreviewSpec?>(null) }
     LaunchedEffect(spec, retainWhileFading) {
@@ -117,6 +167,9 @@ fun RetainedHeroPreview(
         onReady = { if (spec?.key == displayed.key) onReady() },
         onError = onError,
         onEnded = onEnded,
+        onContinuePlayback = onContinuePlayback.takeIf {
+            spec?.key == displayed.key && playbackEnabled
+        },
         modifier = modifier.graphicsLayer { alpha = AulamaMotion.unit(reveal.value) }
     )
 }

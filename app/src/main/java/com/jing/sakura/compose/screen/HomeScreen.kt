@@ -127,10 +127,12 @@ import com.jing.sakura.compose.common.TvPreviewPreferences
 import com.jing.sakura.compose.common.ChineseText
 import com.jing.sakura.compose.common.TvLanguage
 import com.jing.sakura.compose.common.localizedText
-import com.jing.sakura.compose.common.lightweightEntrance
+import com.jing.sakura.compose.common.homeEntrance
+import com.jing.sakura.compose.common.rememberHomeEntrance
 import com.jing.sakura.compose.common.ChangeSourceDialog
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.PreviewPreparationHint
+import com.jing.sakura.compose.common.isPreviewPreparationPending
 import com.jing.sakura.compose.common.RetainedHeroPreview
 import com.jing.sakura.compose.common.rememberPreviewAnticipation
 import com.jing.sakura.compose.common.rememberPreviewReveal
@@ -175,8 +177,9 @@ import com.jing.sakura.home.restoredHomeRowSelection
 import com.jing.sakura.home.shouldResumeHeroRotation
 import com.jing.sakura.home.shouldPublishFocusedHomeCard
 import com.jing.sakura.home.shouldStartPreview
-import com.jing.sakura.home.shouldSkipHomeContentEntrance
+import com.jing.sakura.home.homeCardEntranceDelay
 import com.jing.sakura.search.SearchActivity
+import com.jing.sakura.player.PlaybackActivity
 import com.jing.sakura.timeline.UpdateTimelineActivity
 import com.jing.sakura.update.TvUpdateChannel
 import com.jing.sakura.update.TvUpdateChannelPreferences
@@ -318,11 +321,16 @@ fun HomeScreen(
     LaunchedEffect(featured, rows, startupDataStatus) {
         viewModel.prepareHomeStartup(featured, rows.map { it.value }, startupDataStatus)
     }
-    if (startupState.stage != HomeStartupStage.Ready) {
+    var startupRevealReady by remember { mutableStateOf(startupState.stage == HomeStartupStage.Ready) }
+    LaunchedEffect(startupState.stage) {
+        if (startupState.stage != HomeStartupStage.Ready) startupRevealReady = false
+    }
+    if (startupState.stage != HomeStartupStage.Ready || !startupRevealReady) {
         HomeStartupScreen(
             state = startupState,
             onRetry = viewModel::retryHomeStartup,
-            onContinue = viewModel::continueHomeStartup
+            onContinue = viewModel::continueHomeStartup,
+            onReady = { startupRevealReady = true }
         )
         return
     }
@@ -422,6 +430,13 @@ fun HomeScreen(
         focusedAnimeId = selectedHeroId,
         focusedSourceId = selectedHeroSourceId
     )
+    val previewLoading = previewEnabled && !overlayVisible && isScreenResumed &&
+        focusedRowIndex != null && isPreviewPreparationPending(
+            state = heroPreviewState,
+            focusedAnimeId = selectedHeroId,
+            focusedSourceId = selectedHeroSourceId,
+            firstFrameReady = previewFirstFrameReady
+        )
     val previewReveal = rememberPreviewReveal(previewActive, reducedMotion)
     val previewAnticipation = rememberPreviewAnticipation(
         waiting = previewEnabled && previewIdle && focusedRowIndex != null,
@@ -436,10 +451,7 @@ fun HomeScreen(
     val refreshInProgress = refreshRequested ||
         (homePageDataResource is Resource.Loading && displayData != null)
     val contentEntranceKey = hasRenderableContent to contentEntranceVersion
-    val contentEntranceReducedMotion = shouldSkipHomeContentEntrance(
-        reducedMotion = reducedMotion,
-        contentEntranceVersion = contentEntranceVersion
-    )
+    val homeEntrance = rememberHomeEntrance(contentEntranceKey, reducedMotion)
 
     LaunchedEffect(homePageDataResource) {
         when (homePageDataResource) {
@@ -601,14 +613,6 @@ fun HomeScreen(
                 )
             }
     }
-    LaunchedEffect(previewActive, readyPreview?.key, focusedRowIndex) {
-        if (!previewActive || focusedRowIndex == null) return@LaunchedEffect
-        delay(60_000)
-        previewIdle = true
-        previewArmed = false
-        previewFirstFrameReady = false
-        viewModel.cancelHeroPreview()
-    }
     LaunchedEffect(previewEnabled) {
         if (!previewEnabled) {
             previewIdle = false
@@ -693,6 +697,12 @@ fun HomeScreen(
             reveal = previewReveal,
             retainWhileFading = isScreenResumed,
             playbackEnabled = previewArmed && !overlayVisible,
+            onContinuePlayback = { arg ->
+                val current = (viewModel.heroPreviewState.value as? HeroPreviewState.Ready)?.spec
+                if (current != null && current.key == readyPreview?.key && isScreenResumed) {
+                    PlaybackActivity.startActivity(context, arg)
+                } else PlaybackActivity.discardPreviewContinuation(arg)
+            },
             onReady = { previewFirstFrameReady = true },
             onError = {
                 previewFirstFrameReady = false
@@ -712,7 +722,8 @@ fun HomeScreen(
             accent = heroAccent,
             revealArtwork = previewIdle,
             previewReveal = previewReveal,
-            anticipation = previewAnticipation
+            anticipation = previewAnticipation,
+            entrance = homeEntrance
         )
 
         HeroPanel(
@@ -732,11 +743,7 @@ fun HomeScreen(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(top = 72.dp)
-                .lightweightEntrance(
-                    transitionKey = contentEntranceKey,
-                    reducedMotion = contentEntranceReducedMotion,
-                    durationMillis = 220
-                ),
+                .homeEntrance(homeEntrance),
             onMove = { delta ->
                 if (featured.isNotEmpty()) {
                     autoRotateHero = false
@@ -784,17 +791,14 @@ fun HomeScreen(
                             alpha = rowTransitionAlpha.value
                             translationY = rowTransitionOffset.value.dp.toPx()
                         }
-                        .lightweightEntrance(
-                            transitionKey = contentEntranceKey,
-                            reducedMotion = contentEntranceReducedMotion,
-                            delayMillis = 45,
-                            durationMillis = 240
-                        )
+                        .homeEntrance(homeEntrance, delay = 0.18f, span = 0.34f)
                 ) {
                     MediaRow(
                         title = activeRow.name,
                         videos = activeRow.value,
                         previewActive = previewActive,
+                        previewLoading = previewLoading,
+                        entrance = homeEntrance,
                         previewEnabled = previewEnabled,
                         initialSelectedIndex = savedSelectedIndex,
                         onSelectionChanged = { index ->
@@ -840,17 +844,10 @@ fun HomeScreen(
             }
         }
 
-        PreviewPreparationHint(previewArmed && !previewFirstFrameReady)
         HomeTopBar(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .lightweightEntrance(
-                    transitionKey = contentEntranceKey,
-                    reducedMotion = contentEntranceReducedMotion,
-                    delayMillis = 80,
-                    durationMillis = 220,
-                    offsetY = 5.dp
-                ),
+                .homeEntrance(homeEntrance, span = 0.42f, offsetY = 0.dp),
             chromeAlpha = topChromeAlpha,
             refreshing = refreshInProgress,
             reducedMotion = reducedMotion,
@@ -933,7 +930,8 @@ private fun CinematicBackdrop(
     accent: Color,
     revealArtwork: Boolean,
     previewReveal: State<Float>,
-    anticipation: State<Float>
+    anticipation: State<Float>,
+    entrance: State<Float>
 ) {
     CinematicArtworkBackdrop(
         imageUrl = hero?.imageUrl.orEmpty(),
@@ -941,7 +939,8 @@ private fun CinematicBackdrop(
         accent = accent,
         artworkAlpha = if (revealArtwork) 1f else 0.96f,
         previewReveal = { previewReveal.value },
-        anticipation = { anticipation.value }
+        anticipation = { anticipation.value },
+        modifier = Modifier.homeEntrance(entrance, offsetY = 0.dp)
     )
 }
 
@@ -1250,6 +1249,8 @@ private fun MediaRow(
     title: String,
     videos: List<AnimeData>,
     previewActive: Boolean,
+    previewLoading: Boolean,
+    entrance: State<Float>,
     previewEnabled: Boolean,
     initialSelectedIndex: Int,
     onSelectionChanged: (Int) -> Unit,
@@ -1393,6 +1394,11 @@ private fun MediaRow(
                 ),
                 modifier = Modifier.weight(1f)
             )
+            PreviewPreparationHint(
+                visible = previewLoading,
+                modifier = Modifier.padding(end = 12.dp),
+                reducedMotion = reducedMotion
+            )
             androidx.tv.material3.Text(
                 text = localizedText("${videos.size} 套"),
                 color = AulamaTvColors.TextSecondary,
@@ -1504,6 +1510,8 @@ private fun MediaRow(
                         selected = selected,
                         modifier = Modifier
                             .requiredSize(width = 148.dp, height = 208.dp)
+                            .homeEntrance(entrance,
+                                delay = homeCardEntranceDelay(itemIndex - loopStart), span = 0.28f)
                             .graphicsLayer {
                                 alpha = cardAlpha
                                 val scale = 1f + (AulamaMotion.PosterFocusScale - 1f) * lift

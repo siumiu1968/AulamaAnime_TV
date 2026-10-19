@@ -24,8 +24,22 @@ data class HomeStartupState(
     val completedPosters: Int = 0,
     val totalPosters: Int = 0,
     val canContinue: Boolean = false,
-    val message: String = ""
-)
+    val message: String = "",
+    val completedDataLoads: Int = 0
+) {
+    /** The poster total is final only after both home data sources have settled. */
+    val progressFraction: Float
+        get() = when (stage) {
+            HomeStartupStage.Ready -> 1f
+            HomeStartupStage.LoadingData -> completedDataLoads.coerceIn(0, 2) * 0.1f
+            else -> {
+                val posters = if (totalPosters > 0) {
+                    completedPosters.coerceIn(0, totalPosters).toFloat() / totalPosters
+                } else 0f
+                (completedDataLoads.coerceIn(0, 2) * 0.1f + posters * 0.8f).coerceAtMost(0.99f)
+            }
+        }
+}
 
 data class HomeStartupDataStatus(
     val coreLoading: Boolean = true,
@@ -99,7 +113,9 @@ internal fun homeStartupState(
     val state = HomeStartupState(
         completedPosters = successful,
         totalPosters = plan.targets.size,
-        canContinue = hasContent
+        canContinue = hasContent,
+        completedDataLoads = (if (!data.coreLoading && !data.coreFailed) 1 else 0) +
+            (if (!data.syncedLoading && !data.syncedFailed) 1 else 0)
     )
     return when {
         data.hasFailure -> state.copy(
@@ -168,7 +184,9 @@ internal class HomeStartupReadiness(
         results.filterValues { !it }.keys.forEach(results::remove)
         _state.value = HomeStartupState(
             completedPosters = results.count { it.value }, totalPosters = plan.targets.size,
-            canContinue = hasContent
+            canContinue = hasContent,
+            completedDataLoads = (if (!data.coreLoading && !data.coreFailed) 1 else 0) +
+                (if (!data.syncedLoading && !data.syncedFailed) 1 else 0)
         )
         startDeadline()
         startPreload()

@@ -7,5 +7,6 @@ data class EpisodeUrlAndHistory(
     val videoDuration: Long,
     val lastPlayPosition: Long,
     val headers: Map<String, String> = emptyMap(),
-    val episode: AnimePlayListEpisode
+    val episode: AnimePlayListEpisode,
+    val previewHandoffId: String? = null
 )

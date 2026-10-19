@@ -126,6 +126,7 @@ import com.jing.sakura.compose.common.springScrollToItem
 import com.jing.sakura.compose.common.AulamaMotion
 import com.jing.sakura.compose.common.rememberReducedMotion
 import com.jing.sakura.compose.common.PreviewPreparationHint
+import com.jing.sakura.compose.common.isPreviewPreparationPending
 import com.jing.sakura.compose.common.RetainedHeroPreview
 import com.jing.sakura.compose.common.rememberPreviewReveal
 import com.jing.sakura.compose.common.TvPreviewPreferences
@@ -326,6 +327,13 @@ private fun DetailContent(
         selectedSourceId = selectedRelatedSourceId
     )
 
+    val relatedPreviewLoading = previewEnabled && isScreenResumed && relatedRowFocusState.value &&
+        isPreviewPreparationPending(
+            state = relatedPreviewState,
+            focusedAnimeId = selectedRelatedAnime?.id,
+            focusedSourceId = selectedRelatedSourceId,
+            firstFrameReady = relatedPreviewFirstFrameReady
+        )
     val reducedMotion = rememberReducedMotion()
     val relatedPreviewReveal = rememberPreviewReveal(relatedPreviewActive, reducedMotion)
     val heroSwap = rememberHeroSwap(heroPresentation.showRelatedHero, reducedMotion)
@@ -376,13 +384,7 @@ private fun DetailContent(
         )
     }
 
-    LaunchedEffect(relatedPreviewActive, readyRelatedPreview?.key) {
-        if (!relatedPreviewActive) return@LaunchedEffect
-        delay(DETAIL_RELATED_PREVIEW_LIMIT_MS)
-        relatedPreviewArmed = false
-        relatedPreviewFirstFrameReady = false
-        viewModel.cancelRelatedPreview()
-    }
+
 
     var selectedPlaylistIndex by remember(detail.animeId, history?.episodeId) {
         val historyIndex = history?.episodeId?.let { episodeId ->
@@ -561,6 +563,12 @@ private fun DetailContent(
             reveal = relatedPreviewReveal,
             retainWhileFading = isScreenResumed,
             playbackEnabled = relatedPreviewArmed,
+            onContinuePlayback = { arg ->
+                val current = (viewModel.relatedPreviewState.value as? HeroPreviewState.Ready)?.spec
+                if (current != null && current.key == readyRelatedPreview?.key && isScreenResumed) {
+                    PlaybackActivity.startActivity(context, arg)
+                } else PlaybackActivity.discardPreviewContinuation(arg)
+            },
             onReady = { relatedPreviewFirstFrameReady = true },
             onError = {
                 relatedPreviewArmed = false
@@ -575,7 +583,6 @@ private fun DetailContent(
             modifier = Modifier.fillMaxSize()
         )
         PreviewLegibilityScrim(reveal = { relatedPreviewReveal.value })
-        PreviewPreparationHint(relatedPreviewArmed && !relatedPreviewFirstFrameReady)
         DetailHero(
             detail = detail,
             history = history,
@@ -785,6 +792,7 @@ private fun DetailContent(
                         videos = detail.otherAnimeList,
                         previewEnabled = previewEnabled,
                         previewActive = relatedPreviewActive,
+                        previewLoading = relatedPreviewLoading,
                         horizontalBringIntoViewSpec = horizontalBringIntoViewSpec,
                         onNavigateUp = navigateUp@{
                             if (relatedLoadState is DetailRelatedLoadState.Error) {
@@ -2275,6 +2283,7 @@ private fun RelatedAnimeSection(
     videos: List<AnimeData>,
     previewEnabled: Boolean,
     previewActive: Boolean,
+    previewLoading: Boolean,
     horizontalBringIntoViewSpec: BringIntoViewSpec,
     onNavigateUp: () -> Unit,
     onRowFocusChanged: (Boolean) -> Unit,
@@ -2367,6 +2376,11 @@ private fun RelatedAnimeSection(
                     text = localizedText("${videos.size} 套"),
                     style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp),
                     color = AulamaTvColors.TextSecondary
+                )
+                PreviewPreparationHint(
+                    visible = previewLoading,
+                    modifier = Modifier.padding(start = 12.dp),
+                    reducedMotion = reducedMotion
                 )
             }
             Spacer(modifier = Modifier.height(10.dp))

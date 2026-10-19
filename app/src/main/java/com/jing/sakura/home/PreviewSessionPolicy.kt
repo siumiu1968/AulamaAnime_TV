@@ -1,9 +1,9 @@
 package com.jing.sakura.home
 
-// Prepare quietly once focus settles; reveal is still gated by the same three-second dwell.
-internal const val PREVIEW_PREPARE_DELAY_MS = 400L
-internal const val PREVIEW_DIM_DELAY_MS = 1_500L
-internal const val PREVIEW_START_AFTER_DIM_DELAY_MS = 1_500L
+// Start preparing as soon as focus settles, then reveal after a short shared dwell.
+internal const val PREVIEW_PREPARE_DELAY_MS = 120L
+internal const val PREVIEW_DIM_DELAY_MS = 900L
+internal const val PREVIEW_START_AFTER_DIM_DELAY_MS = 600L
 
 /** Rough time for a preview stream to resolve and render its first frame. */
 internal const val PREVIEW_TYPICAL_LOAD_MS = 1_500L

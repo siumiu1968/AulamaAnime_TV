@@ -19,6 +19,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jing.sakura.home.HeroPreviewSpec
 import com.jing.sakura.home.runPreviewFocusDwell
+import com.jing.sakura.home.PREVIEW_PREPARE_DELAY_MS
+import com.jing.sakura.home.PREVIEW_DIM_DELAY_MS
+import com.jing.sakura.home.PREVIEW_START_AFTER_DIM_DELAY_MS
 import com.jing.sakura.player.NavigateToPlayerArg
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -104,13 +107,13 @@ class HeroPreviewPreparationTest {
                     ignoreFrameDuration = true
                 )
             }
-            advanceTo(399)
+            advanceTo(PREVIEW_PREPARE_DELAY_MS - 1)
             compose.runOnIdle {
                 assertFalse(prepared.value)
                 assertNull(findPlayerView(compose.activity.window.decorView))
             }
             assertEquals(0, server.requests.get())
-            advanceTo(400)
+            advanceTo(PREVIEW_PREPARE_DELAY_MS)
             compose.mainClock.advanceTimeByFrame()
             compose.waitUntil(timeoutMillis = 5_000) {
                 compose.runOnIdle { findPlayerView(compose.activity.window.decorView)?.player != null }
@@ -118,7 +121,7 @@ class HeroPreviewPreparationTest {
             lateinit var player: ExoPlayer
             lateinit var playerView: PlayerView
             compose.runOnIdle {
-                assertEquals(400L, preparedAt.get() - focusAt.get())
+                assertEquals(PREVIEW_PREPARE_DELAY_MS, preparedAt.get() - focusAt.get())
                 assertFalse(armed.value)
                 playerView = checkNotNull(findPlayerView(compose.activity.window.decorView))
                 player = playerView.player as ExoPlayer
@@ -163,7 +166,7 @@ class HeroPreviewPreparationTest {
             val observedInitializations = newVideoDecoders.get()
             val observedReleases = releasedVideoDecoders.get()
             SystemClock.sleep(350)
-            advanceTo(2_999)
+            advanceTo(PREVIEW_DIM_DELAY_MS + PREVIEW_START_AFTER_DIM_DELAY_MS - 1)
             compose.runOnIdle {
                 assertFalse(armed.value)
                 assertFalse(player.playWhenReady)
@@ -173,9 +176,9 @@ class HeroPreviewPreparationTest {
                 assertEquals(paused.third, paused.second.renderedOutputBufferCount)
                 assertEquals(0, audioAdvancing.get())
             }
-            advanceTo(3_000)
+            advanceTo(PREVIEW_DIM_DELAY_MS + PREVIEW_START_AFTER_DIM_DELAY_MS)
             compose.mainClock.advanceTimeByFrame()
-            compose.runOnIdle { assertEquals(3_000L, armedAt.get() - focusAt.get()) }
+            compose.runOnIdle { assertEquals(PREVIEW_DIM_DELAY_MS + PREVIEW_START_AFTER_DIM_DELAY_MS, armedAt.get() - focusAt.get()) }
             compose.waitUntil(timeoutMillis = 5_000) {
                 compose.runOnIdle { player.currentPosition >= paused.first + 250 } && audioAdvancing.get() > 0
             }

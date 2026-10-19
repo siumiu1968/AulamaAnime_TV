@@ -1,6 +1,9 @@
 package com.jing.sakura.compose.common
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.view.LayoutInflater
 import android.view.TextureView
 import android.view.View
@@ -28,7 +31,6 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -39,6 +41,10 @@ import com.jing.sakura.R
 import com.jing.sakura.SakuraApplication
 import com.jing.sakura.home.HeroPreviewSpec
 import com.jing.sakura.home.shouldRetryPreviewLoad
+import com.jing.sakura.player.NavigateToPlayerArg
+import com.jing.sakura.player.PreviewContinuationClock
+import com.jing.sakura.player.PreviewPlaybackHandoff
+import com.jing.sakura.player.PreviewHandoffLoadControl
 import okhttp3.OkHttpClient
 import org.koin.androidx.compose.get
 import org.koin.core.qualifier.qualifier
@@ -52,7 +58,8 @@ fun HeroPreviewPlayer(
     volume: () -> Float = { 1f },
     onReady: () -> Unit = {},
     onError: (String) -> Unit = {},
-    onEnded: () -> Unit = {}
+    onEnded: () -> Unit = {},
+    onContinuePlayback: ((NavigateToPlayerArg) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -62,12 +69,13 @@ fun HeroPreviewPlayer(
     val currentOnReady by rememberUpdatedState(onReady)
     val currentOnError by rememberUpdatedState(onError)
     val currentOnEnded by rememberUpdatedState(onEnded)
+    val currentOnContinuePlayback by rememberUpdatedState(onContinuePlayback)
     val currentVolume by rememberUpdatedState(volume)
     var showPoster by remember { mutableStateOf(true) }
     var displayedKey by remember { mutableStateOf<String?>(null) }
     val controller = remember(context, okHttpClient) {
         HeroPreviewController(
-            context = context,
+            context = context.applicationContext,
             okHttpClient = okHttpClient,
             onReady = {
                 showPoster = false
@@ -80,7 +88,9 @@ fun HeroPreviewPlayer(
             onEnded = {
                 showPoster = true
                 currentOnEnded()
-            }
+            },
+            onContinuePlayback = { currentOnContinuePlayback?.invoke(it) },
+            canContinuePlayback = { currentOnContinuePlayback != null }
         )
     }
 
@@ -107,8 +117,12 @@ fun HeroPreviewPlayer(
             displayedKey = spec.key
             showPoster = true
         }
-        controller.setPlaybackEnabled(playbackEnabled)
         controller.load(spec)
+        controller.setPlaybackEnabled(playbackEnabled)
+    }
+
+    LaunchedEffect(onContinuePlayback != null) {
+        controller.setContinuationEnabled(onContinuePlayback != null)
     }
 
     // Audio follows the visual reveal so previews swell in and duck out instead of popping.
@@ -134,15 +148,19 @@ fun HeroPreviewPlayer(
 }
 
 @UnstableApi
-private class HeroPreviewController(
+internal class HeroPreviewController(
     private val context: Context,
     private val okHttpClient: OkHttpClient,
     private val onReady: () -> Unit,
     private val onError: (String) -> Unit,
-    private val onEnded: () -> Unit
+    private val onEnded: () -> Unit,
+    private val onContinuePlayback: (NavigateToPlayerArg) -> Unit = {},
+    private val canContinuePlayback: () -> Boolean = { true }
 ) {
     private var playerView: PlayerView? = null
     private var player: ExoPlayer? = null
+    private var trackSelector: DefaultTrackSelector? = null
+    private var loadControl: PreviewHandoffLoadControl? = null
     private var pendingSpec: HeroPreviewSpec? = null
     private var loadedKey: String? = null
     private var started = false
@@ -151,21 +169,44 @@ private class HeroPreviewController(
     private var loadGeneration = 0L
     private var volume = 1f
     private var playbackEnabled = true
+    private var continuationEnabled = false
+    private var handedOff = false
+    private val continuationClock = PreviewContinuationClock()
+    private val handler = Handler(Looper.getMainLooper())
+    private val continuationTicker = object : Runnable {
+        override fun run() {
+            updateContinuation()
+            if (started && !handedOff && continuationEnabled && player?.isPlaying == true) {
+                handler.postDelayed(this, CONTINUATION_TICK_MS)
+            }
+        }
+    }
 
     private val playerListener = object : Player.Listener {
         override fun onRenderedFirstFrame() {
             if (firstFrameDispatched) return
             firstFrameDispatched = true
             onReady()
+            updateContinuation()
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            handler.removeCallbacks(continuationTicker)
+            updateContinuation()
+            if (isPlaying && continuationEnabled && !handedOff) handler.post(continuationTicker)
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_ENDED) {
+                continuationClock.reset()
+                handler.removeCallbacks(continuationTicker)
                 onEnded()
             }
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            continuationClock.reset()
+            handler.removeCallbacks(continuationTicker)
             val failedKey = loadedKey
             val retrySpec = pendingSpec
             if (shouldRetryPreviewLoad(
@@ -225,11 +266,25 @@ private class HeroPreviewController(
     }
 
     fun setPlaybackEnabled(enabled: Boolean) {
+        if (!enabled) continuationClock.update(SystemClock.elapsedRealtime(), playing = false)
         playbackEnabled = enabled
         player?.playWhenReady = enabled
+        if (enabled) updateContinuation()
+    }
+
+    fun setContinuationEnabled(enabled: Boolean) {
+        continuationEnabled = enabled
+        if (!enabled) {
+            continuationClock.reset()
+            handler.removeCallbacks(continuationTicker)
+        } else if (player?.isPlaying == true && !handedOff) {
+            handler.removeCallbacks(continuationTicker)
+            handler.post(continuationTicker)
+        }
     }
 
     fun load(spec: HeroPreviewSpec) {
+        if (handedOff && pendingSpec?.key == spec.key) return
         pendingSpec = spec
         if (started && playerView != null) {
             ensurePlayer()
@@ -238,14 +293,19 @@ private class HeroPreviewController(
     }
 
     fun release() {
+        handler.removeCallbacks(continuationTicker)
+        continuationClock.reset()
         started = false
         loadedKey = null
         firstFrameDispatched = false
         playbackRetryCount = 0
         loadGeneration += 1
-        val currentPlayer = player ?: return
+        val currentPlayer = player
         player = null
         playerView?.player = null
+        trackSelector = null
+        loadControl = null
+        if (currentPlayer == null) return
         currentPlayer.removeListener(playerListener)
         currentPlayer.stop()
         currentPlayer.clearMediaItems()
@@ -254,7 +314,7 @@ private class HeroPreviewController(
 
     private fun ensurePlayer(): ExoPlayer {
         player?.let { return it }
-        val trackSelector = DefaultTrackSelector(context).apply {
+        val trackSelector = DefaultTrackSelector(context.applicationContext).apply {
             setParameters(
                 buildUponParameters()
                     .setMaxVideoSize(MAX_VIDEO_WIDTH, MAX_VIDEO_HEIGHT)
@@ -264,16 +324,10 @@ private class HeroPreviewController(
                     .setExceedVideoConstraintsIfNecessary(true)
             )
         }
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                MIN_BUFFER_MS,
-                MAX_BUFFER_MS,
-                BUFFER_FOR_PLAYBACK_MS,
-                BUFFER_AFTER_REBUFFER_MS
-            )
-            .setBackBuffer(0, false)
-            .build()
-        return ExoPlayer.Builder(context)
+        val loadControl = PreviewHandoffLoadControl.create()
+        this.loadControl = loadControl
+        this.trackSelector = trackSelector
+        return ExoPlayer.Builder(context.applicationContext)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
             .build()
@@ -289,6 +343,9 @@ private class HeroPreviewController(
     private fun loadIfNeeded(spec: HeroPreviewSpec, resetRetryCount: Boolean = true) {
         if (loadedKey == spec.key) return
         loadedKey = spec.key
+        handedOff = false
+        continuationClock.reset()
+        handler.removeCallbacks(continuationTicker)
         firstFrameDispatched = false
         if (resetRetryCount) {
             playbackRetryCount = 0
@@ -315,14 +372,52 @@ private class HeroPreviewController(
         }
     }
 
+    private fun updateContinuation() {
+        val current = player ?: return
+        val shouldContinue = continuationClock.update(SystemClock.elapsedRealtime(),
+            started && continuationEnabled && playbackEnabled && firstFrameDispatched &&
+                current.isPlaying && current.playerError == null)
+        if (shouldContinue) continuePlayback()
+    }
+
+    /** Keeps the same buffered player; only its output surface changes in the playback activity. */
+    internal fun continuePlayback() {
+        val current = player ?: return
+        val spec = pendingSpec ?: return
+        val selector = trackSelector ?: return
+        if (!started || handedOff || !continuationEnabled || !canContinuePlayback() || !playbackEnabled || !firstFrameDispatched ||
+            !current.isPlaying || current.playerError != null || loadedKey != spec.key) return
+        handedOff = true
+        handler.removeCallbacks(continuationTicker)
+        current.removeListener(playerListener)
+        val previewView = playerView
+        val surface = previewView?.videoSurfaceView as? TextureView
+        val snapshot = runCatching {
+            surface?.takeIf { it.isAvailable }?.let {
+                val scale = minOf(1f, 1280f / it.width.coerceAtLeast(1), 720f / it.height.coerceAtLeast(1))
+                it.getBitmap((it.width * scale).toInt().coerceAtLeast(1),
+                    (it.height * scale).toInt().coerceAtLeast(1))
+            }
+        }.getOrNull()
+        val continuationLoadControl = loadControl
+        val arg = PreviewPlaybackHandoff.register(spec.navigateToPlayerArg, spec.url, spec.headers,
+            current, selector, snapshot, promoteBuffer = { continuationLoadControl?.promote() }) { previewView?.player = null }
+        player = null
+        trackSelector = null
+        loadControl = null
+        try {
+            onContinuePlayback(arg)
+        } catch (error: RuntimeException) {
+            PreviewPlaybackHandoff.expire(arg.previewHandoffId)
+            onError(error.message ?: "播放器開啟失敗")
+        }
+    }
+
     private companion object {
         const val MAX_VIDEO_WIDTH = 1280
         const val MAX_VIDEO_HEIGHT = 720
         const val MAX_VIDEO_BITRATE = 2_500_000
-        const val MIN_BUFFER_MS = 1_500
-        const val MAX_BUFFER_MS = 5_000
-        const val BUFFER_FOR_PLAYBACK_MS = 400
-        const val BUFFER_AFTER_REBUFFER_MS = 800
         const val PLAYBACK_RETRY_DELAY_MS = 450L
+        const val CONTINUATION_TICK_MS = 200L
     }
 }

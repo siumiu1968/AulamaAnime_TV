@@ -1,10 +1,15 @@
 package com.jing.sakura.player
 
+import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.ImageView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -12,7 +17,11 @@ import androidx.fragment.app.FragmentActivity
 import com.jing.sakura.R
 
 /** Hosts the official Android TV Leanback playback surface and controls. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlaybackActivity : FragmentActivity() {
+    private var previewTransfer: PreviewPlaybackTransfer? = null
+    private var previewSnapshot: ImageView? = null
+    private var previewBitmap: Bitmap? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,6 +33,23 @@ class PlaybackActivity : FragmentActivity() {
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         setContentView(R.layout.activity_playback)
+        @Suppress("DEPRECATION")
+        val arg = intent.getSerializableExtra("video") as? NavigateToPlayerArg
+        if (arg != null) {
+            previewTransfer = PreviewPlaybackHandoff.claim(arg)
+            previewTransfer?.snapshot?.let { bitmap ->
+                previewBitmap = bitmap
+                previewSnapshot = ImageView(this).apply {
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setImageBitmap(bitmap)
+                    isFocusable = false
+                    importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }.also {
+                    findViewById<FrameLayout>(R.id.playback_root).addView(it, 1,
+                        ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                }
+            }
+        }
 
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
@@ -34,6 +60,31 @@ class PlaybackActivity : FragmentActivity() {
                 )
                 .commit()
         }
+    }
+
+    internal fun takePreviewPlayer(): PreviewPlaybackTransfer? = previewTransfer.also { previewTransfer = null }
+
+    internal fun onPlaybackFirstFrame() {
+        val image = previewSnapshot ?: return
+        image.animate().alpha(0f).setDuration(160L).withEndAction { clearPreviewSnapshot() }.start()
+    }
+
+    internal fun clearPreviewSnapshot() {
+        previewSnapshot?.let {
+            it.animate().cancel()
+            it.setImageDrawable(null)
+            (it.parent as? ViewGroup)?.removeView(it)
+        }
+        previewSnapshot = null
+        previewBitmap?.recycle()
+        previewBitmap = null
+    }
+
+    override fun onDestroy() {
+        previewTransfer?.player?.release()
+        previewTransfer = null
+        clearPreviewSnapshot()
+        super.onDestroy()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -47,7 +98,14 @@ class PlaybackActivity : FragmentActivity() {
         private const val TAG_PLAYER = "leanback_player"
 
         fun startActivity(context: Context, arg: NavigateToPlayerArg) {
-            context.startActivity(createIntent(context, arg))
+            val intent = createIntent(context, arg)
+            if (arg.previewHandoffId == null) context.startActivity(intent)
+            else context.startActivity(intent,
+                ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle())
+        }
+
+        fun discardPreviewContinuation(arg: NavigateToPlayerArg) {
+            PreviewPlaybackHandoff.expire(arg.previewHandoffId)
         }
 
         private fun createIntent(context: Context, arg: NavigateToPlayerArg): Intent =

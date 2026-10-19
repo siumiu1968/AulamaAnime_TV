@@ -90,6 +90,7 @@ import com.jing.sakura.compose.common.CinematicArtworkBackdrop
 import com.jing.sakura.compose.common.AutoMarqueeText
 import com.jing.sakura.compose.common.ErrorTip
 import com.jing.sakura.compose.common.PreviewPreparationHint
+import com.jing.sakura.compose.common.isPreviewPreparationPending
 import com.jing.sakura.compose.common.RetainedHeroPreview
 import com.jing.sakura.compose.common.rememberReducedMotion
 import com.jing.sakura.compose.common.rememberPreviewReveal
@@ -104,6 +105,7 @@ import com.jing.sakura.data.Resource
 import com.jing.sakura.data.UpdateTimeLine
 import com.jing.sakura.detail.DetailActivity
 import com.jing.sakura.home.HeroPreviewState
+import com.jing.sakura.player.PlaybackActivity
 import com.jing.sakura.home.runPreviewFocusDwell
 import com.jing.sakura.home.PREVIEW_DIM_DELAY_MS
 import com.jing.sakura.home.PREVIEW_START_AFTER_DIM_DELAY_MS
@@ -224,6 +226,13 @@ fun TimeLine(
         focusedAnimeId = highlightedAnime?.id,
         focusedSourceId = highlightedAnime?.sourceId
     )
+    val previewLoading = previewEnabled && isScreenResumed && rowHasFocus &&
+        isPreviewPreparationPending(
+            state = previewState,
+            focusedAnimeId = highlightedAnime?.id,
+            focusedSourceId = highlightedAnime?.sourceId,
+            firstFrameReady = previewFirstFrameReady
+        )
     val previewReveal = rememberPreviewReveal(previewActive, rememberReducedMotion())
     val chromeAlpha by animateFloatAsState(
         targetValue = if (previewActive) 0.28f else 1f,
@@ -288,6 +297,12 @@ fun TimeLine(
             reveal = previewReveal,
             retainWhileFading = isScreenResumed,
             playbackEnabled = previewArmed,
+            onContinuePlayback = { arg ->
+                val current = (viewModel.previewState.value as? HeroPreviewState.Ready)?.spec
+                if (current != null && current.key == readyPreview?.key && isScreenResumed) {
+                    PlaybackActivity.startActivity(context, arg)
+                } else PlaybackActivity.discardPreviewContinuation(arg)
+            },
             onReady = { previewFirstFrameReady = true },
             onError = {
                 previewArmed = false
@@ -307,7 +322,6 @@ fun TimeLine(
             accent = accent,
             previewReveal = previewReveal
         )
-        PreviewPreparationHint(previewArmed && !previewFirstFrameReady)
         Column(modifier = Modifier.fillMaxSize()) {
             Spacer(Modifier.height(8.dp))
             Box(
@@ -364,6 +378,7 @@ fun TimeLine(
             TimelineStripHeader(
                 count = selectedDay.second.size,
                 isToday = selectedDayIndex == currentDayIndex,
+                previewLoading = previewLoading,
                 modifier = Modifier.graphicsLayer { alpha = chromeAlpha }
             )
 
@@ -471,14 +486,7 @@ fun TimeLine(
         )
     }
 
-    LaunchedEffect(previewActive, readyPreview?.key) {
-        if (!previewActive) return@LaunchedEffect
-        delay(60_000)
-        dimUnselected = true
-        previewArmed = false
-        previewFirstFrameReady = false
-        onCancelPreview()
-    }
+
 
     LaunchedEffect(posterPrefetchUrls) {
         delay(180)
@@ -846,6 +854,7 @@ private fun TimelineFocusSummary(
 private fun TimelineStripHeader(
     count: Int,
     isToday: Boolean,
+    previewLoading: Boolean,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -872,6 +881,10 @@ private fun TimelineStripHeader(
                 lineHeight = 18.sp
             ),
             color = AulamaTvColors.TextSecondary
+        )
+        PreviewPreparationHint(
+            visible = previewLoading,
+            modifier = Modifier.padding(start = 12.dp)
         )
     }
 }

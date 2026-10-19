@@ -21,6 +21,26 @@ class HomeStartupReadinessTest {
     private val readyData = HomeStartupDataStatus(coreLoading = false, syncedLoading = false)
 
     @Test
+    fun progressUsesCompletedDataAndFinalPosterCountAndOnlyReadyReachesFull() {
+        val plan = HomePosterPlan(List(4) { HomePosterTarget("poster-$it") })
+        assertEquals(0f,
+            homeStartupState(HomeStartupDataStatus(), true, plan, 0, 0, false).progressFraction, 0.0001f)
+        // A provisional poster list must not show a full bar before more data can add targets.
+        assertEquals(0.1f,
+            homeStartupState(HomeStartupDataStatus(coreLoading = false), true, plan, 4, 0, false)
+                .progressFraction, 0.0001f)
+        assertEquals(0.2f,
+            homeStartupState(readyData, true, plan, 0, 0, false).progressFraction, 0.0001f)
+        assertEquals(0.8f,
+            homeStartupState(readyData, true, plan, 3, 0, false).progressFraction, 0.0001f)
+        assertEquals(1f,
+            homeStartupState(readyData, true, plan, 4, 0, false).progressFraction, 0f)
+        val failed = homeStartupState(readyData, true, plan, 3, 1, false)
+        assertEquals(HomeStartupStage.NeedsAttention, failed.stage)
+        assertTrue(failed.progressFraction < 1f)
+    }
+
+    @Test
     fun planIncludesTheWholeRenderedHomeAndDeduplicatesRequests() {
         val items = List(60) { anime(it) }
         val plan = homeStartupPosterPlan(items.take(7), listOf(items, items.take(10)))

@@ -80,6 +80,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
     private var player: ExoPlayer? = null
     private var trackSelector: DefaultTrackSelector? = null
+    private var adoptedPreviewHandoffId: String? = null
+    private var previewQualityPromotionPending = false
     private var glue: ProgressTransportControlGlue<LeanbackPlayerAdapter>? = null
     private val progressFocusListener = ViewTreeObserver.OnGlobalFocusChangeListener { old, next ->
         if (old?.id == LeanbackR.id.playback_progress && next !== old) glue?.resetProgressSeek()
@@ -227,9 +229,23 @@ class AnimePlayerFragment : VideoSupportFragment() {
 
         override fun onRenderedFirstFrame() {
             progressBarManager.hide()
+            (activity as? PlaybackActivity)?.onPlaybackFirstFrame()
+            if (previewQualityPromotionPending) {
+                previewQualityPromotionPending = false
+                // Lift preview's 720p cap after the new surface has displayed a frame. No seek,
+                // source replacement or prepare call: adaptive streams can upgrade in place.
+                val constraint = current4kMode.trackConstraint
+                trackSelector?.let { selector ->
+                    selector.setParameters(selector.buildUponParameters()
+                        .setMaxVideoSize(constraint.maxWidth, constraint.maxHeight)
+                        .setMaxVideoBitrate(constraint.maxBitrate)
+                        .setExceedVideoConstraintsIfNecessary(false))
+                }
+            }
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            (activity as? PlaybackActivity)?.clearPreviewSnapshot()
             Log.e(TAG, "playerError=${error.errorCodeName}: ${error.message}", error)
             if (current4kMode.isEnabled && error.isVideoEffectFailure()) {
                 val resumePosition = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
@@ -410,6 +426,36 @@ class AnimePlayerFragment : VideoSupportFragment() {
             failedPlaylistIndexes.clear()
         }
 
+        val retainsPreview = payload.previewHandoffId != null &&
+            payload.previewHandoffId == adoptedPreviewHandoffId &&
+            localPlayer.currentMediaItem?.localConfiguration?.uri?.toString() == payload.videoUrl &&
+            localPlayer.playerError == null && localPlayer.playbackState != Player.STATE_IDLE &&
+            localPlayer.playbackState != Player.STATE_ENDED
+        adoptedPreviewHandoffId = null
+        if (payload.previewHandoffId != null && !retainsPreview) {
+            // The preview can fail after the activity claims it but before this listener binds.
+            // Never strand a READY payload on an already-ended/error player or reuse that URL.
+            (activity as? PlaybackActivity)?.clearPreviewSnapshot()
+            viewModel.retryLoadEpisode()
+            return
+        }
+        if (retainsPreview) {
+            viewModel.changePlayingEpisode(payload.episode)
+            playerHeaderTitle?.text = viewModel.anime.animeName
+            playerHeaderEpisode?.text = payload.episode.episode
+            glue?.title = ""
+            glue?.subtitle = ""
+            localPlayer.volume = 1f
+            localPlayer.playWhenReady = true
+            snapshotPlaybackPosition()
+            viewModel.startSaveHistory()
+            progressBarManager.hide()
+            showPlayerHeader()
+            scheduleControlsAutoHide()
+            return
+        }
+        (activity as? PlaybackActivity)?.clearPreviewSnapshot()
+
         val dataSourceFactory = OkHttpDataSource.Factory { request ->
             okHttpClient.newCall(request)
         }.apply {
@@ -455,6 +501,19 @@ class AnimePlayerFragment : VideoSupportFragment() {
     }
 
     private fun buildPlayer(): ExoPlayer {
+        (activity as? PlaybackActivity)?.takePreviewPlayer()?.let { transfer ->
+            trackSelector = transfer.trackSelector
+            adoptedPreviewHandoffId = viewModel.anime.previewHandoffId
+            previewQualityPromotionPending = true
+            return transfer.player.apply {
+                volume = 1f
+                setSeekParameters(SeekParameters.CLOSEST_SYNC)
+                addListener(playerListener)
+                addAnalyticsListener(analyticsListener)
+                prepareGlue(this)
+                playWhenReady = true
+            }
+        }
         val initialConstraint = current4kMode.trackConstraint
         val selector = DefaultTrackSelector(requireContext()).apply {
             setParameters(
@@ -542,6 +601,8 @@ class AnimePlayerFragment : VideoSupportFragment() {
         }
         player = null
         trackSelector = null
+        adoptedPreviewHandoffId = null
+        previewQualityPromotionPending = false
         glue = null
         current4kMode = Tv4kMode.OFF
     }

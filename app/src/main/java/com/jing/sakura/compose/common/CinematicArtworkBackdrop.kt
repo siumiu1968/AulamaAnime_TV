@@ -66,6 +66,11 @@ fun CinematicArtworkBackdrop(
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val duration = if (reducedMotion) 0 else transitionDurationMillis
+        val ambientReveal by animateFloatAsState(
+            targetValue = if (ready == null) 0f else 1f,
+            animationSpec = tween(duration, easing = FastOutSlowInEasing),
+            label = "cinematic-ambient-reveal"
+        )
         val adaptiveArtworkWidth = minOf(maxWidth, maxHeight * (ready?.aspectRatio ?: DefaultArtworkAspectRatio))
         val artworkStartFraction = if (maxWidth.value > 0f) {
             (1f - adaptiveArtworkWidth.value / maxWidth.value).coerceIn(0f, 1f)
@@ -78,6 +83,7 @@ fun CinematicArtworkBackdrop(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer { alpha = ambientReveal }
                 .drawBehind {
                     drawRect(
                         brush = Brush.radialGradient(
@@ -240,7 +246,7 @@ fun CinematicArtworkBackdrop(
             modifier = Modifier
                 .fillMaxSize()
                 .drawBehind {
-                    val bloomAlpha = 1f - AulamaMotion.unit(reveal())
+                    val bloomAlpha = (1f - AulamaMotion.unit(reveal())) * ambientReveal
                     if (bloomAlpha <= 0f) return@drawBehind
                     drawRect(
                         alpha = bloomAlpha,

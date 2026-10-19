@@ -16,6 +16,7 @@ import com.jing.sakura.repo.WebPageRepository
 import com.jing.sakura.room.VideoHistoryDao
 import com.jing.sakura.room.VideoHistoryEntity
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -111,9 +112,11 @@ class VideoPlayerViewModel(
     private var forcedCompletedEpisodeId: String? = null
 
     private var loadVideoJob: Pair<AnimePlayListEpisode, Job>? = null
+    @Volatile private var videoLoadGeneration = 0L
     private var playbackSegmentsJob: Job? = null
 
     private var pendingRemoteResumeMs = anime.resumePositionMs
+    private var previewSourceConsumed = false
 
     private val _seasonFinale = MutableStateFlow<SeasonFinaleContent?>(null)
     /** Rating and next-watch content, loaded only while the season's last episode plays. */
@@ -159,31 +162,46 @@ class VideoPlayerViewModel(
         }
     }
 
-    private fun fetchVideoUrl(episode: AnimePlayListEpisode) {
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun fetchVideoUrl(episode: AnimePlayListEpisode, force: Boolean = false) {
         val job = loadVideoJob
-        if (job != null && job.first == episode) {
+        if (!force && job != null && job.first == episode) {
             return
         }
         job?.second?.cancel()
-        loadVideoJob = episode to viewModelScope.launch(Dispatchers.IO) {
+        val generation = ++videoLoadGeneration
+        val nextJob = viewModelScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             try {
                 _videoUrl.emit(Resource.Loading)
-                val resp = repository.fetchVideoUrl(
-                    episode.episodeId,
-                    animeId = anime.animeId,
-                    sourceId = anime.sourceId
-                )
+                // Only the initial preview episode can consume its already-resolved stream.
+                // Retries and subsequent episode changes always resolve a fresh URL.
+                val preparedPreview = if (!previewSourceConsumed) {
+                    previewSourceConsumed = true
+                    PreviewPlaybackHandoff.source(anime, episode.episodeId)
+                } else null
+                val resp = if (preparedPreview != null) null else repository.fetchVideoUrl(
+                    episode.episodeId, animeId = anime.animeId, sourceId = anime.sourceId)
                 val history = videoHistoryDao.queryHistoryByEpisodeId(
                     animeId = anime.animeId,
                     episodeId = episode.episodeId,
                     sourceId = anime.sourceId
                 )
+                if (videoLoadGeneration != generation) return@launch
                 val remoteResumeMs = pendingRemoteResumeMs
                     .takeIf { it >= 0L }
                 if (remoteResumeMs != null) {
                     pendingRemoteResumeMs = NavigateToPlayerArg.NO_REMOTE_RESUME_POSITION
                 }
-                when (resp) {
+                if (preparedPreview != null) {
+                    _videoUrl.emit(Resource.Success(EpisodeUrlAndHistory(
+                        videoUrl = preparedPreview.url,
+                        videoDuration = preparedPreview.durationMs,
+                        lastPlayPosition = preparedPreview.positionMs,
+                        headers = preparedPreview.headers,
+                        episode = episode,
+                        previewHandoffId = anime.previewHandoffId
+                    )))
+                } else when (resp) {
                     is Resource.Error -> _videoUrl.emit(Resource.Error(resp.message))
                     is Resource.Success -> _videoUrl.emit(
                         Resource.Success(
@@ -209,9 +227,11 @@ class VideoPlayerViewModel(
                 Log.e(TAG, "fetchVideoUrl: ${e.message}", e)
                 _videoUrl.emit(Resource.Error(e.message ?: ""))
             } finally {
-                loadVideoJob = null
+                if (videoLoadGeneration == generation) loadVideoJob = null
             }
         }
+        loadVideoJob = episode to nextJob
+        nextJob.start()
     }
 
     private fun fetchPlaybackSegments(episode: AnimePlayListEpisode, index: Int) {
@@ -536,7 +556,7 @@ class VideoPlayerViewModel(
     }
 
     fun retryLoadEpisode() {
-        fetchVideoUrl(playList[_playIndex.value])
+        fetchVideoUrl(playList[_playIndex.value], force = true)
     }
 
     companion object {
