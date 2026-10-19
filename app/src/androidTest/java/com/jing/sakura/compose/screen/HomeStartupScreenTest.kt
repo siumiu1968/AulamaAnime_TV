@@ -82,7 +82,8 @@ class HomeStartupScreenTest {
             completedPosters = 3, totalPosters = 4, completedDataLoads = 2))
         var ready = false
         compose.setContent {
-            HomeStartupScreen(state.value, onRetry = {}, onContinue = {}, onReady = { ready = true })
+            HomeStartupScreen(state.value, onRetry = {}, onContinue = {}, onReady = { ready = true },
+                reducedMotion = false)
         }
         compose.runOnIdle {
             assertFalse(ready)

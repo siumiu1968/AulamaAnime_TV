@@ -203,6 +203,8 @@ class PreviewPlaybackHandoffTest {
             val parameters = LoadControl.Parameters(playerId, Timeline.EMPTY, MediaPeriodId(Any()),
                 60_000_000L, 6_000_000L, 1f, true, false, C.TIME_UNSET)
             control.onPrepared(playerId)
+            assertEquals(0L, control.getBackBufferDurationUs(playerId))
+            assertFalse(control.retainBackBufferFromKeyframe(playerId))
             val allocator = control.allocator
             val allocation = allocator.allocate()
             val allocated = allocator.totalBytesAllocated

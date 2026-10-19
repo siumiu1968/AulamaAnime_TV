@@ -47,10 +47,10 @@ internal fun HomeStartupScreen(
     state: HomeStartupState,
     onRetry: () -> Unit,
     onContinue: () -> Unit,
-    onReady: () -> Unit = {}
+    onReady: () -> Unit = {},
+    reducedMotion: Boolean = rememberReducedMotion()
 ) {
     val attention = state.stage == HomeStartupStage.NeedsAttention
-    val reducedMotion = rememberReducedMotion()
     val progress by animateFloatAsState(
         targetValue = state.progressFraction,
         animationSpec = tween(if (reducedMotion) 0 else 120),

@@ -10,6 +10,7 @@ import androidx.media3.exoplayer.analytics.PlayerId
 import androidx.media3.exoplayer.source.MediaSource.MediaPeriodId
 import androidx.media3.exoplayer.source.TrackGroupArray
 import androidx.media3.exoplayer.trackselection.ExoTrackSelection
+import androidx.media3.exoplayer.upstream.Allocator
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 
 /** Both profiles share allocations; promotion changes loading decisions, never the player/buffer. */
@@ -17,11 +18,19 @@ import androidx.media3.exoplayer.upstream.DefaultAllocator
 internal class PreviewHandoffLoadControl private constructor(
     private val normal: LoadControl,
     private val preview: LoadControl
-) : LoadControl by normal {
+) : LoadControl {
     @Volatile private var promoted = false
     private val active: LoadControl get() = if (promoted) normal else preview
 
     fun promote() { promoted = true }
+
+    // Java interface defaults are not forwarded by Kotlin delegation. Implement every current
+    // ExoPlayer entry point explicitly; the legacy defaults deliberately throw at runtime.
+    override fun getAllocator(): Allocator = normal.allocator
+    override fun getBackBufferDurationUs(playerId: PlayerId): Long =
+        normal.getBackBufferDurationUs(playerId)
+    override fun retainBackBufferFromKeyframe(playerId: PlayerId): Boolean =
+        normal.retainBackBufferFromKeyframe(playerId)
 
     override fun onPrepared(playerId: PlayerId) {
         normal.onPrepared(playerId)
