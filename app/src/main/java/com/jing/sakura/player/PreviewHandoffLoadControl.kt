@@ -30,7 +30,7 @@ internal class PreviewHandoffLoadControl private constructor(
 
     override fun onTracksSelected(playerId: PlayerId, timeline: Timeline, mediaPeriodId: MediaPeriodId,
         renderers: Array<out Renderer>, trackGroups: TrackGroupArray,
-        trackSelections: Array<out ExoTrackSelection?>) {
+        trackSelections: Array<out ExoTrackSelection>) {
         normal.onTracksSelected(playerId, timeline, mediaPeriodId, renderers, trackGroups, trackSelections)
         preview.onTracksSelected(playerId, timeline, mediaPeriodId, renderers, trackGroups, trackSelections)
     }

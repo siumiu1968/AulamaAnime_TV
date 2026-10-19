@@ -146,7 +146,10 @@ fun TimelineScreen(viewModel: TimelineViewModel) {
                 onDaySelected = viewModel::prepareDay,
                 onAnimeHighlighted = viewModel::loadSynopsis,
                 onPreparePreview = viewModel::preparePreview,
-                onCancelPreview = viewModel::cancelPreview
+                onCancelPreview = viewModel::cancelPreview,
+                isPreviewCurrent = { key ->
+                    (viewModel.previewState.value as? HeroPreviewState.Ready)?.spec?.key == key
+                }
             )
 
             is Resource.Error -> ErrorTip(message = timeline.message) {
@@ -169,7 +172,8 @@ fun TimeLine(
     onDaySelected: (Int) -> Unit,
     onAnimeHighlighted: (AnimeData) -> Unit,
     onPreparePreview: (AnimeData) -> Unit,
-    onCancelPreview: () -> Unit
+    onCancelPreview: () -> Unit,
+    isPreviewCurrent: (String) -> Boolean = { true }
 ) {
     if (data.timeline.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -298,8 +302,7 @@ fun TimeLine(
             retainWhileFading = isScreenResumed,
             playbackEnabled = previewArmed,
             onContinuePlayback = { arg ->
-                val current = (viewModel.previewState.value as? HeroPreviewState.Ready)?.spec
-                if (current != null && current.key == readyPreview?.key && isScreenResumed) {
+                if (readyPreview?.key?.let(isPreviewCurrent) == true && isScreenResumed) {
                     PlaybackActivity.startActivity(context, arg)
                 } else PlaybackActivity.discardPreviewContinuation(arg)
             },
