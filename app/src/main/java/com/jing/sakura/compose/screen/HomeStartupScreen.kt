@@ -19,6 +19,8 @@ import androidx.compose.foundation.progressSemantics
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -28,6 +30,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -41,6 +44,7 @@ import com.jing.sakura.compose.common.localizedText
 import com.jing.sakura.compose.common.rememberReducedMotion
 import com.jing.sakura.home.HomeStartupStage
 import com.jing.sakura.home.HomeStartupState
+import com.jing.sakura.home.homeEntranceFraction
 
 @Composable
 internal fun HomeStartupScreen(
@@ -119,5 +123,21 @@ internal fun HomeStartupScreen(
                 Spacer(Modifier.height(2.dp))
             }
         }
+    }
+}
+
+/** Keep the last loading frame until the first home frame has actually started its entrance. */
+@Composable
+internal fun HomeStartupTransitionCover(
+    state: HomeStartupState,
+    timeline: State<Float>,
+    reducedMotion: Boolean
+) {
+    val visible by remember(timeline) { derivedStateOf { timeline.value < 0.35f } }
+    if (reducedMotion || !visible) return
+    Box(Modifier.fillMaxSize().graphicsLayer {
+        alpha = 1f - homeEntranceFraction(timeline.value, 0f, 0.35f)
+    }.testTag("home-startup-transition")) {
+        HomeStartupScreen(state, onRetry = {}, onContinue = {}, reducedMotion = true)
     }
 }

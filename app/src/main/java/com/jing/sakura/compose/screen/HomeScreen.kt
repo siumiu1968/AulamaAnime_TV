@@ -322,8 +322,12 @@ fun HomeScreen(
         viewModel.prepareHomeStartup(featured, rows.map { it.value }, startupDataStatus)
     }
     var startupRevealReady by remember { mutableStateOf(startupState.stage == HomeStartupStage.Ready) }
+    var startupWasShown by remember { mutableStateOf(startupState.stage != HomeStartupStage.Ready) }
     LaunchedEffect(startupState.stage) {
-        if (startupState.stage != HomeStartupStage.Ready) startupRevealReady = false
+        if (startupState.stage != HomeStartupStage.Ready) {
+            startupRevealReady = false
+            startupWasShown = true
+        }
     }
     if (startupState.stage != HomeStartupStage.Ready || !startupRevealReady) {
         HomeStartupScreen(
@@ -451,7 +455,7 @@ fun HomeScreen(
     val refreshInProgress = refreshRequested ||
         (homePageDataResource is Resource.Loading && displayData != null)
     val contentEntranceKey = hasRenderableContent to contentEntranceVersion
-    val homeEntrance = rememberHomeEntrance(contentEntranceKey, reducedMotion)
+    val homeEntrance = rememberHomeEntrance(contentEntranceKey, reducedMotion || !startupWasShown)
 
     LaunchedEffect(homePageDataResource) {
         when (homePageDataResource) {
@@ -880,6 +884,10 @@ fun HomeScreen(
             },
             onAccount = { showAccountDialog = true }
         )
+
+        if (startupWasShown && contentEntranceVersion == 0) {
+            HomeStartupTransitionCover(startupState, homeEntrance, reducedMotion)
+        }
 
         if (homePageDataResource is Resource.Error && !hasRenderableContent) {
             ErrorTip(message = "暫時未能載入內容，請稍後再試") {

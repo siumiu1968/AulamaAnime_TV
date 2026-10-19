@@ -101,6 +101,24 @@ class HomeStartupScreenTest {
     }
 
     @Test
+    fun transitionKeepsLogoOverTheFirstHiddenHomeFrameAndThenRemovesIt() {
+        val timeline = mutableStateOf(0f)
+        val reducedMotion = mutableStateOf(false)
+        compose.setContent {
+            HomeStartupTransitionCover(HomeStartupState(HomeStartupStage.Ready), timeline,
+                reducedMotion.value)
+        }
+        compose.onNodeWithTag("home-startup-transition").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Aulama Anime").assertIsDisplayed()
+        compose.runOnIdle { timeline.value = 0.2f }
+        compose.onNodeWithTag("home-startup-transition").assertExists()
+        compose.runOnIdle { timeline.value = 0.35f }
+        compose.onNodeWithTag("home-startup-transition").assertDoesNotExist()
+        compose.runOnIdle { timeline.value = 0f; reducedMotion.value = true }
+        compose.onNodeWithTag("home-startup-transition").assertDoesNotExist()
+    }
+
+    @Test
     fun partialHomeCanContinueExplicitlyButMissingDataCannot() {
         val state = mutableStateOf(HomeStartupState(HomeStartupStage.NeedsAttention,
             canContinue = true, message = "準備首頁需時較長，請重試或先進入已載入內容。"))

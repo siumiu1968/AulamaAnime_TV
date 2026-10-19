@@ -81,7 +81,7 @@ jobs:
             adb pull /sdcard/Android/data/com.codex.ciyuanbox.tv/files/loading-tips.png app/build/release-startup-smoke/loading-tips.png || true
             adb pull /sdcard/Android/data/com.codex.ciyuanbox.tv/files/home-startup-retry.png app/build/release-startup-smoke/home-startup-retry.png || true
             adb pull /sdcard/Android/data/com.codex.ciyuanbox.tv/files/cross-device-campaign.png app/build/release-startup-smoke/cross-device-campaign.png || true
-            grep -q 'OK (27 tests)' app/build/release-startup-smoke/focus-tests.log
+            grep -q 'OK (28 tests)' app/build/release-startup-smoke/focus-tests.log
             adb uninstall com.codex.ciyuanbox.tv
             python3 scripts/smoke_release_apk.py "$SMOKE_APK"
       - name: Upload Android TV startup evidence
