@@ -107,16 +107,24 @@ jobs:
           APK_NAME: ${{ steps.apk.outputs.apk_name }}
         run: |
           RELEASE_FLAGS=()
+          MANIFEST_FLAGS=()
           if [[ "$REF_NAME" =~ -(alpha|beta|rc)(\.|-|$) ]]; then
             RELEASE_FLAGS+=(--prerelease)
           fi
           NOTES_FILE="docs/RELEASE-${REF_NAME#v}.md"
           if [[ -f "$NOTES_FILE" ]]; then
             RELEASE_FLAGS+=(--notes-file "$NOTES_FILE")
+            MANIFEST_FLAGS+=(--notes-file "$NOTES_FILE")
           else
             RELEASE_FLAGS+=(--generate-notes)
           fi
+          python3 scripts/create_update_manifest.py \
+            --apk "$APK_NAME" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$REF_NAME" \
+            "${MANIFEST_FLAGS[@]}"
           gh release create "$REF_NAME" \
             "$APK_NAME" \
+            tv-update-manifest.json \
             --title "Aulama Anime TV ${REF_NAME}" \
             "${RELEASE_FLAGS[@]}"
